@@ -1,7 +1,7 @@
 {
   "id": "dec_18a81c8291",
   "title": "Fail fast on unparseable LLM output; fallback to honest deterministic draft",
-  "status": "proposed",
+  "status": "accepted",
   "context": "The parser was returning hollow/useless LLM drafts (marked \"llm_draft\") when the model output was truncated, refused, or prose-only. Silent degradation eroded reliability and falsely signaled confidence in corrupted records.",
   "decision": "Redesigned to throw on failed JSON extraction, triggering safe wrappers (draftDecisionSafe/draftBugSafe) to return deterministic fallback drafts explicitly labeled \"inferred\" with low confidence. Also hardened the parser itself (string-aware balancing, content-based selection, explicit type coercion) to reduce false positives.",
   "consequences": [
@@ -29,15 +29,15 @@
   "caused_by_bug": null,
   "commit": "4615d5a",
   "provenance": {
-    "source": "llm_draft+summary",
-    "confidence": 0.5,
+    "source": "llm_draft+human_confirmed",
+    "confidence": 0.95,
     "evidence": [
       "commit:4615d5a",
       "src/synthesis/provider.ts",
       "src/synthesis/synthesize.ts",
       "test/provider.test.ts"
     ],
-    "last_verified": "2026-06-15T11:45:35.945Z"
+    "last_verified": "2026-06-15T11:50:20.259Z"
   },
   "date": "2026-06-15T10:24:41+03:00"
 }

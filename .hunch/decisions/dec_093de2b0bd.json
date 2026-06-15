@@ -1,7 +1,7 @@
 {
   "id": "dec_093de2b0bd",
   "title": "Forward-migrate schema before validation to prevent silent record loss",
-  "status": "proposed",
+  "status": "accepted",
   "context": "MVP had no schema versioning. When schema changed, records failing new validation would silently disappear—unrecoverable data loss. Team collaboration blocked by file-level merge conflicts.",
   "decision": "Manifest records on-disk schema_version. loadAll() upgrades raw JSON to current version BEFORE Zod validation so incompatible records can be diagnosed rather than silently dropped. Install git merge driver that merges .brain JSON by record ID semantics instead of file markers. Refuse to rewrite corrupt index; refuse to drop unmigratable records (warn loudly).",
   "consequences": [
@@ -42,8 +42,8 @@
   "caused_by_bug": null,
   "commit": "8ec6d7d",
   "provenance": {
-    "source": "llm_draft+summary",
-    "confidence": 0.5,
+    "source": "llm_draft+human_confirmed",
+    "confidence": 0.95,
     "evidence": [
       "commit:8ec6d7d",
       "src/cli/index.ts",
@@ -55,7 +55,7 @@
       "src/store/jsonStore.ts",
       "src/store/merge.ts"
     ],
-    "last_verified": "2026-06-15T11:45:17.165Z"
+    "last_verified": "2026-06-15T11:50:20.036Z"
   },
   "date": "2026-06-15T11:18:37+03:00"
 }

@@ -1,7 +1,7 @@
 {
   "id": "dec_b971e7a446",
   "title": "Use spawn + STDIN for untrusted content; cmd.exe routing on Windows",
-  "status": "proposed",
+  "status": "accepted",
   "context": "execFile() cannot launch Windows .cmd/.ps1 shims (only *.exe). On Windows, the npm `claude` is a shim, so the provider threw ENOENT, looked unavailable, and every synthesis fell back to low-confidence deterministic heuristic instead of using the subscription LLM.",
   "decision": "Replace execFile with spawn; on Windows route through cmd.exe (shell:true) to resolve .cmd shims; pass untrusted content (prompt/diff) via STDIN, never argv. This decouples shell-routing (needed for Windows) from content delivery (needed for safety): argv stays trusted and space-free, so shell interpretation can't reach user input.",
   "consequences": [
@@ -28,14 +28,14 @@
   "caused_by_bug": null,
   "commit": "0747dce",
   "provenance": {
-    "source": "llm_draft",
-    "confidence": 0.65,
+    "source": "llm_draft+human_confirmed",
+    "confidence": 0.95,
     "evidence": [
       "commit:0747dce",
       "src/synthesis/provider.ts",
       "test/provider-exec.test.ts"
     ],
-    "last_verified": "2026-06-15T11:38:11.295Z"
+    "last_verified": "2026-06-15T11:50:21.302Z"
   },
   "date": "2026-06-15T14:37:53+03:00"
 }

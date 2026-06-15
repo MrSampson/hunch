@@ -1,7 +1,7 @@
 {
   "id": "dec_49916d02c9",
   "title": "Read-only visualization layer over committed .brain/ JSON store",
-  "status": "proposed",
+  "status": "accepted",
   "context": "Engineering Memory OS synthesizes context from git activity into .brain/ JSON files. Need accessible UI for engineers to inspect memory without backend dependency.",
   "decision": "VS Code extension reads directly from committed .brain/ JSON, watches for changes on disk, displays invariants/decisions/bugs/symbols/components in tree view. No synthesis or regeneration—pure read layer.",
   "consequences": [
@@ -47,8 +47,8 @@
   "caused_by_bug": null,
   "commit": "c9a0f2b",
   "provenance": {
-    "source": "llm_draft+summary",
-    "confidence": 0.5,
+    "source": "llm_draft+human_confirmed",
+    "confidence": 0.95,
     "evidence": [
       "commit:c9a0f2b",
       "src/cli/index.ts",
@@ -60,7 +60,7 @@
       "src/store/brainStore.ts",
       "src/store/jsonStore.ts"
     ],
-    "last_verified": "2026-06-15T11:45:50.819Z"
+    "last_verified": "2026-06-15T11:50:20.470Z"
   },
   "date": "2026-06-15T00:10:14+03:00"
 }

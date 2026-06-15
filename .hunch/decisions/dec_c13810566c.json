@@ -1,7 +1,7 @@
 {
   "id": "dec_c13810566c",
   "title": "Git-native reasoning graph for persistent code intent capture",
-  "status": "proposed",
+  "status": "accepted",
   "context": "Claude Code and developers lack persistent access to decision lineage, invariants, and bug patterns. Traditional comments rot; code structure alone doesn't capture intent.",
   "decision": "Build a 'Project Brain'—a queryable graph stored in git that extracts and indexes code relationships (symbols, calls, imports) and captures decisions, bug lineage, and invariants. Expose via MCP, CLI, post-commit hooks, and auto-CLAUDE.md generation. Use native tree-sitter + SQLite/FTS5 for structured storage and lookup.",
   "consequences": [
@@ -61,8 +61,8 @@
   "caused_by_bug": null,
   "commit": "a2d3f81",
   "provenance": {
-    "source": "llm_draft+summary",
-    "confidence": 0.5,
+    "source": "llm_draft+human_confirmed",
+    "confidence": 0.95,
     "evidence": [
       "commit:a2d3f81",
       "src/cli/index.ts",
@@ -74,7 +74,7 @@
       "src/extractors/git.ts",
       "src/extractors/indexer.ts"
     ],
-    "last_verified": "2026-06-15T11:46:26.069Z"
+    "last_verified": "2026-06-15T11:50:20.678Z"
   },
   "date": "2026-06-14T23:33:55+03:00"
 }
