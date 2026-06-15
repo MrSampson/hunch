@@ -11,7 +11,7 @@
 
 ## 0. The thesis in one paragraph
 
-Today's AI coding tools are **stateless**. Every session re-reads the code, re-derives understanding, then throws it away. The codebase itself is a lossy artifact: it records the final state, not the rejected alternatives, the bug that forced a weird workaround, the invariant you must never break, or the reason a module exists. That knowledge lives in people's heads and evaporates when they context-switch or quit. The Engineering Memory OS captures the **derived "why" layer** as a structured, queryable, continuously-updated knowledge graph — the *Project Brain* — and injects the minimal relevant slice into Claude Code at reasoning time. The longer a team uses it, the smarter it gets and the more expensive it is to leave.
+Today's AI coding tools are **stateless**. Every session re-reads the code, re-derives understanding, then throws it away. The codebase itself is a lossy artifact: it records the final state, not the rejected alternatives, the bug that forced a weird workaround, the invariant you must never break, or the reason a module exists. That knowledge lives in people's heads and evaporates when they context-switch or quit. The Engineering Memory OS captures the **derived "why" layer** as a structured, queryable, continuously-updated knowledge graph — the *Hunch* — and injects the minimal relevant slice into Claude Code at reasoning time. The longer a team uses it, the smarter it gets and the more expensive it is to leave.
 
 ---
 
@@ -21,7 +21,7 @@ Today's AI coding tools are **stateless**. Every session re-reads the code, re-d
 - **The institutional memory of an engineering org.** When an engineer leaves, their knowledge doesn't. New hires "ask the codebase why" and get accurate, sourced answers.
 - **A reasoning substrate, not a feature.** Every AI action (fix, refactor, review, plan) is grounded in accumulated decisions, bug history, and constraints — so the AI stops making the same mistakes and stops undoing intentional design.
 - **The system of record for engineering intent.** ADRs, postmortems, tribal Slack threads, and "don't touch this" comments collapse into one structured, living graph that is generated as a byproduct of normal work — not extra documentation toil.
-- **A trust layer for autonomous agents.** As agents take on more work, the bottleneck becomes *grounding and guardrails*. The Brain is the guardrail: constraints are enforced, blast radius is known, regressions are remembered.
+- **A trust layer for autonomous agents.** As agents take on more work, the bottleneck becomes *grounding and guardrails*. The Hunch is the guardrail: constraints are enforced, blast radius is known, regressions are remembered.
 
 ### Why it's fundamentally different from Cursor / Copilot / autocomplete
 | | Cursor / Copilot | Engineering Memory OS |
@@ -55,7 +55,7 @@ flowchart LR
     VAL[Validator\n confidence + provenance + dedup]
   end
 
-  subgraph Brain[Project Brain  .brain/]
+  subgraph Hunch[Hunch  .brain/]
     JSON[(JSON/MD source of truth\n git-tracked)]
     DB[(SQLite index\n FTS5 + graph tables)]
   end
@@ -66,31 +66,31 @@ flowchart LR
     CMD[CLAUDE.md + slash commands]
   end
 
-  Events --> EX --> SYN --> VAL --> Brain
-  Brain --> ASM --> MCP --> CC[Claude Code]
+  Events --> EX --> SYN --> VAL --> Hunch
+  Hunch --> ASM --> MCP --> CC[Claude Code]
   CC -->|actions: edits, commits| Events
-  Brain --> CMD --> CC
+  Hunch --> CMD --> CC
 ```
 
 1. **Ingestion / Watchers** — capture events: file saves (debounced), git hooks (`post-commit`, `post-merge`), test-run results, and (later, remote) PR/CI webhooks.
 2. **Extractors** — deterministic, no-LLM: parse code with tree-sitter into a symbol/dependency graph; analyze commit diffs; compute churn/centrality metrics.
 3. **Synthesis (LLM)** — Claude turns raw diffs/failures into *candidate* memory: "this commit introduced X because Y," "this looks like a recurrence of bug #42."
 4. **Validator** — attaches confidence + provenance, dedups against existing memory, flags conflicts, decides advisory vs. write.
-5. **Project Brain (store)** — JSON/Markdown files on disk are the **source of truth** (git-friendly, reviewable, diffable); a SQLite database is the **derived index** (fast queries, FTS5 search, graph via recursive CTEs).
-6. **Context Assembler** — given a task, selects the *minimal relevant slice* of the Brain (not a context dump).
+5. **Hunch (store)** — JSON/Markdown files on disk are the **source of truth** (git-friendly, reviewable, diffable); a SQLite database is the **derived index** (fast queries, FTS5 search, graph via recursive CTEs).
+6. **Context Assembler** — given a task, selects the *minimal relevant slice* of Hunch (not a context dump).
 7. **Integration layer** — MCP server (structured two-way tools), auto-maintained `CLAUDE.md` (ambient context), and slash commands (user-triggered workflows).
 
 ### 2.2 Data flows
 - **Write path (learning loop):** event → extractor → candidate delta → Claude synthesis → validator → write to JSON source of truth → reindex into SQLite.
-- **Read path (reasoning loop):** user task in Claude Code → MCP tool call → context assembler retrieves relevant Brain slice → injected into prompt → Claude reasons + acts → action triggers the write path again.
+- **Read path (reasoning loop):** user task in Claude Code → MCP tool call → context assembler retrieves relevant Hunch slice → injected into prompt → Claude reasons + acts → action triggers the write path again.
 
 ### 2.3 Local vs. remote
-- **Local (v1, the whole product for a solo dev):** file watchers, extractors, SQLite, MCP server, and the `.brain/` directory committed to the repo. **Team sync is free at v1** because the Brain lives in git — push/pull *is* the sync.
-- **Remote (later, team/enterprise):** hosted sync service for merge/conflict resolution on the Brain, a web dashboard (architecture map, fragility heatmap), PR webhooks, org-wide cross-repo graph, SSO/audit. Nothing here is required to ship value to the first user.
+- **Local (v1, the whole product for a solo dev):** file watchers, extractors, SQLite, MCP server, and the `.brain/` directory committed to the repo. **Team sync is free at v1** because Hunch lives in git — push/pull *is* the sync.
+- **Remote (later, team/enterprise):** hosted sync service for merge/conflict resolution on Hunch, a web dashboard (architecture map, fragility heatmap), PR webhooks, org-wide cross-repo graph, SSO/audit. Nothing here is required to ship value to the first user.
 
 ---
 
-## 3. "Project Brain" Specification
+## 3. "Hunch" Specification
 
 Stored under `.brain/` as JSON (machine source of truth) with optional Markdown mirrors for humans. SQLite mirrors everything for querying. Every record carries **provenance** (`source`, `confidence`, `evidence`) so nothing is a blind assertion.
 
@@ -215,9 +215,9 @@ Stored under `.brain/` as JSON (machine source of truth) with optional Markdown 
 
 ## 4. Continuous Learning Loop
 
-The Brain updates itself from normal developer activity. **Zero extra documentation work** is the product requirement — if it needs babysitting, it dies (see §9).
+The Hunch updates itself from normal developer activity. **Zero extra documentation work** is the product requirement — if it needs babysitting, it dies (see §9).
 
-| Trigger | Deterministic step (no LLM) | Synthesis step (Claude) | Written to Brain |
+| Trigger | Deterministic step (no LLM) | Synthesis step (Claude) | Written to Hunch |
 |---|---|---|---|
 | **File changes** (save) | Re-parse changed files; update `Symbol` graph + metrics; detect if a constraint `scope` was touched | Only if change is significant | Updated symbols/edges; "constraint touched" flag |
 | **Commit** (`post-commit`) | Diff analysis; map files→components | Summarize *what changed and why*; draft a `Decision` if intent is non-trivial | Decision draft (low-confidence until confirmed); component updates |
@@ -230,7 +230,7 @@ The Brain updates itself from normal developer activity. **Zero extra documentat
 - **Supersede, don't delete.** New decisions mark old ones `superseded` — history stays auditable.
 - **Promotion.** A pattern that recurs (e.g., the same class of bug in one module) is *promoted* into a `Constraint` and raises that component's `fragility` score.
 - **Decay + re-validation.** Inferred facts get a staleness timer; on the next relevant change they're re-checked or demoted.
-- **Consolidation pass.** A periodic LLM "memory compaction" merges duplicates, summarizes verbose chains, and prunes dead nodes — keeping the Brain dense and cheap to retrieve.
+- **Consolidation pass.** A periodic LLM "memory compaction" merges duplicates, summarizes verbose chains, and prunes dead nodes — keeping Hunch dense and cheap to retrieve.
 
 ---
 
@@ -243,7 +243,7 @@ The agent always follows: **retrieve relevant memory → reason with it → act 
 sequenceDiagram
   participant U as Dev
   participant CC as Claude Code
-  participant M as MCP / Brain
+  participant M as MCP / Hunch
   U->>CC: fix this bug (error / failing test)
   CC->>M: bug_lineage(similar to symptom)
   M-->>CC: bug_009 root cause + dec_017 + con_004
@@ -276,11 +276,11 @@ The win: the agent **doesn't re-discover** the revocation lesson — it's ground
 **Cut to the bone. The first killer feature:** *persistent decision + bug memory, auto-captured from git commits, queryable by Claude Code via MCP, plus an auto-generated architecture map.*
 
 ### Day-1 "aha"
-Make a commit → the Brain captures a structured `Decision` and updates the architecture map → in the next Claude Code session ask *"why does the Auth module store sessions in Redis?"* and it answers from memory, with the commit as evidence.
+Make a commit → Hunch captures a structured `Decision` and updates the architecture map → in the next Claude Code session ask *"why does the Auth module store sessions in Redis?"* and it answers from memory, with the commit as evidence.
 
 ### MVP scope
 - `.brain/` directory in the repo (git-tracked JSON + Markdown mirrors).
-- **CLI** (`brain`): init, index, sync-on-commit, query, why, fragile.
+- **CLI** (`hunch`): init, index, sync-on-commit, query, why, fragile.
 - **MCP server** exposing read/write tools to Claude Code.
 - **SQLite index** (FTS5 search; graph via recursive CTEs) over the JSON source of truth.
 - Auto-maintained **`CLAUDE.md`** (pointer + top constraints) and a **git `post-commit` hook**.
@@ -310,25 +310,25 @@ brain/
 
 ### CLI commands
 ```bash
-brain init                 # scaffold .brain/, install post-commit hook, write .mcp.json + CLAUDE.md
-brain index                # parse repo -> symbol/dependency graph + components (no LLM)
-brain backfill --since 90d # replay git history -> seed decisions/bugs (cold-start fix)
-brain sync                 # run by post-commit hook: diff -> Claude -> decision/bug write-back
-brain query "<question>"   # FTS + graph query over the Brain
-brain why <path|symbol>    # decisions/bugs/constraints explaining a file or function
-brain fragile              # ranked fragility report with evidence
-brain mcp                  # start the MCP server (Claude Code connects here)
+hunch init                 # scaffold .brain/, install post-commit hook, write .mcp.json + CLAUDE.md
+hunch index                # parse repo -> symbol/dependency graph + components (no LLM)
+hunch backfill --since 90d # replay git history -> seed decisions/bugs (cold-start fix)
+hunch sync                 # run by post-commit hook: diff -> Claude -> decision/bug write-back
+hunch query "<question>"   # FTS + graph query over Hunch
+hunch why <path|symbol>    # decisions/bugs/constraints explaining a file or function
+hunch fragile              # ranked fragility report with evidence
+hunch mcp                  # start the MCP server (Claude Code connects here)
 ```
 
 ### Simplest possible memory system
-JSON file per entity (human-reviewable in PRs) + a SQLite mirror rebuilt by `brain index`. **No vector DB at MVP** — SQLite FTS5 covers search; add `sqlite-vec` embeddings only when keyword search proves insufficient. Graph queries use recursive CTEs over `edges`/`symbols` tables.
+JSON file per entity (human-reviewable in PRs) + a SQLite mirror rebuilt by `hunch index`. **No vector DB at MVP** — SQLite FTS5 covers search; add `sqlite-vec` embeddings only when keyword search proves insufficient. Graph queries use recursive CTEs over `edges`/`symbols` tables.
 
 ### Build order (so there's a usable artifact every couple of days)
-1. `brain init` + `.brain/` schema + SQLite store.
-2. `brain index` (tree-sitter → symbols/edges/components) → `brain why` works locally.
-3. MCP server with `brain_query` / `brain_why` → Claude Code can read the Brain. **First end-to-end value.**
-4. `post-commit` hook → `brain sync` → Claude drafts `Decision`. **The learning loop is alive.**
-5. `brain backfill` (history seed) + `brain fragile` + write-back of bugs from test failures.
+1. `hunch init` + `.brain/` schema + SQLite store.
+2. `hunch index` (tree-sitter → symbols/edges/components) → `hunch why` works locally.
+3. MCP server with `brain_query` / `brain_why` → Claude Code can read Hunch. **First end-to-end value.**
+4. `post-commit` hook → `hunch sync` → Claude drafts `Decision`. **The learning loop is alive.**
+5. `hunch backfill` (history seed) + `hunch fragile` + write-back of bugs from test failures.
 
 ---
 
@@ -343,12 +343,12 @@ JSON file per entity (human-reviewable in PRs) + a SQLite mirror rebuilt by `bra
 | Storage (index) | **SQLite** (`better-sqlite3`) + **FTS5** | Fast queries, full-text search, graph via recursive CTEs. Add `sqlite-vec` later for embeddings. |
 | Synthesis (write path) | **Anthropic SDK** *or* `claude -p` headless | Runs through the existing Claude Code subscription; keep LLM calls on the write path, not every read. |
 | **Integration (decided)** | **MCP server + auto-maintained `CLAUDE.md` + slash commands** | See below. |
-| VS Code | Works **through the Claude Code extension chat** (honors MCP + CLAUDE.md). Optional thin extension later for a Brain visualizer. |
+| VS Code | Works **through the Claude Code extension chat** (honors MCP + CLAUDE.md). Optional thin extension later for a Hunch visualizer. |
 
 ### Integration decision (you asked me to choose) — and why
 Use **all three layers**, because they serve different moments:
-1. **MCP server** — the structured, two-way API. Claude can *query* the Brain (`brain_query`, `brain_why`, `bug_lineage`, `check_constraints`, `get_dependents`) **and write back** (`record_decision`). This is the "OS syscall" layer and the real product surface. Registered via `.mcp.json` / `claude mcp add`.
-2. **`CLAUDE.md`** — *ambient* context loaded every session for free. Auto-maintained to hold a pointer to the Brain + the top blocking constraints, so even a naive prompt is grounded.
+1. **MCP server** — the structured, two-way API. Claude can *query* Hunch (`brain_query`, `brain_why`, `bug_lineage`, `check_constraints`, `get_dependents`) **and write back** (`record_decision`). This is the "OS syscall" layer and the real product surface. Registered via `.mcp.json` / `claude mcp add`.
+2. **`CLAUDE.md`** — *ambient* context loaded every session for free. Auto-maintained to hold a pointer to Hunch + the top blocking constraints, so even a naive prompt is grounded.
 3. **Slash commands** (`.claude/commands/brain-why.md`, `brain-fix.md`) — *user-triggered* ergonomics for the common workflows from §5.
 
 Layering = **ambient (CLAUDE.md) + on-demand structured (MCP) + user-triggered (slash)**. MCP alone misses always-on grounding; CLAUDE.md alone can't do structured queries or write-back. Together they cover every entry point into Claude Code, which is exactly what an "OS" should do.
@@ -360,8 +360,8 @@ Layering = **ambient (CLAUDE.md) + on-demand structured (MCP) + user-triggered (
 ### Why this can compound into a unicorn
 - **A new proprietary data asset.** The customer owns their code; nobody owns the *curated reasoning graph* — because it doesn't exist today. We create it, and it lives where the work happens.
 - **Compounding flywheel.** Every bug, decision, and refactor enriches the graph → better grounding → better AI actions → more captured intent → repeat. Value grows super-linearly with usage while competitors' RAG value stays flat.
-- **High, *earned* switching cost.** After a year, the Brain encodes months of reasoning. Leaving means going blind again. The lock-in is value the customer built, not a contractual trap.
-- **Org network effect.** A team Brain gets more valuable as more engineers contribute and as engineers leave (their knowledge persists). Cross-repo graphs compound at the org level.
+- **High, *earned* switching cost.** After a year, Hunch encodes months of reasoning. Leaving means going blind again. The lock-in is value the customer built, not a contractual trap.
+- **Org network effect.** A team Hunch gets more valuable as more engineers contribute and as engineers leave (their knowledge persists). Cross-repo graphs compound at the org level.
 
 ### Why incumbents will struggle to copy it
 - **Different data model + write path.** Copilot/Cursor are architected around *stateless retrieval over code at edit time*. Capturing *why* requires being in the loop at **commit / PR / test / bug** time and maintaining a curated graph — a different product and a different pipeline, not a feature toggle.
@@ -376,15 +376,15 @@ Solo-dev / OSS wedge (free local core) → bottoms-up team adoption (paid sync +
 ## 9. Brutal Risks
 
 - **Garbage-in memory poisons reasoning.** Bad LLM summaries compound into confidently-wrong "facts." → Mitigate with confidence + provenance, human-confirm for high-stakes items, and cheap-to-discard advisory tiers.
-- **Staleness kills trust.** If the Brain drifts from reality, devs stop believing it and abandon it. → Auto-update must be near-zero-effort and self-healing; show "last verified" + evidence on every claim.
+- **Staleness kills trust.** If Hunch drifts from reality, devs stop believing it and abandon it. → Auto-update must be near-zero-effort and self-healing; show "last verified" + evidence on every claim.
 - **Maintenance toil is fatal.** The moment this feels like writing docs, it's dead. → Capture must be a *byproduct* of commits/tests, never a separate chore.
 - **Token economics.** Injecting memory into every prompt is expensive and pollutes context. → Retrieval must be surgical (the Context Assembler is core, not optional).
 - **"Just use ADRs / comments / git" objection.** Free alternatives exist. → We must be *dramatically* better and effortless, or we're a vitamin, not a painkiller.
 - **Incumbent fast-follow.** Anthropic/Cursor could ship "memory." → Defense is speed, schema depth, git-native trust, and the compounding head start — but this is a real, ongoing threat.
-- **Cold start.** An empty Brain delivers no day-1 value. → `brain backfill` over git history must produce a useful Brain on install.
+- **Cold start.** An empty Hunch delivers no day-1 value. → `hunch backfill` over git history must produce a useful Hunch on install.
 - **Trust of auto-generated facts.** Engineers distrust machine assertions. → Always show provenance + make every record one-keystroke correctable.
 - **Hard CS problems where current AI is *not* enough.** Reliable causal root-cause attribution, accurate fragility inference, and dedup/consolidation at scale are genuinely unsolved. Over-promising here breaks trust fast. → Frame outputs as *evidence-backed hypotheses*, keep the human in the loop, and let confidence be visible.
-- **Scale + heterogeneity.** Huge monorepos, many languages, generated code, and merge conflicts on the Brain itself. → Start single-repo/local; design the schema to be mergeable from day one.
+- **Scale + heterogeneity.** Huge monorepos, many languages, generated code, and merge conflicts on Hunch itself. → Start single-repo/local; design the schema to be mergeable from day one.
 
 ---
 
@@ -399,4 +399,4 @@ brain_record_decision(decision: Decision)  -> write-back (confidence + provenanc
 ```
 
 ## Appendix B — Definition of done for the MVP
-A developer runs `brain init` on a real repo, makes one commit, opens Claude Code, asks *"why is this module built this way?"*, and gets a correct, **evidence-cited** answer drawn from the Brain — with zero manual documentation written.
+A developer runs `hunch init` on a real repo, makes one commit, opens Claude Code, asks *"why is this module built this way?"*, and gets a correct, **evidence-cited** answer drawn from Hunch — with zero manual documentation written.
