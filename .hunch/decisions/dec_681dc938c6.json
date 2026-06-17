@@ -28,8 +28,15 @@
     "test/cliproviders.test.ts"
   ],
   "supersedes": null,
+  "superseded_by": null,
   "caused_by_bug": null,
   "commit": "f72a46b",
+  "valid_from": "2026-06-16T10:44:00+03:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
   "provenance": {
     "source": "llm_draft+human_confirmed",
     "confidence": 0.95,

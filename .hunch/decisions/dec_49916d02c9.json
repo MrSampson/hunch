@@ -44,8 +44,15 @@
     "vscode-extension/src/extension.ts"
   ],
   "supersedes": null,
+  "superseded_by": null,
   "caused_by_bug": null,
   "commit": "c9a0f2b",
+  "valid_from": "2026-06-15T00:10:14+03:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
   "provenance": {
     "source": "llm_draft+human_confirmed",
     "confidence": 0.95,

@@ -33,8 +33,15 @@
     "test/hookpolicy.test.ts"
   ],
   "supersedes": null,
+  "superseded_by": null,
   "caused_by_bug": null,
   "commit": "8b33755",
+  "valid_from": "2026-06-16T13:23:42+03:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
   "provenance": {
     "source": "llm_draft+summary",
     "confidence": 0.5,

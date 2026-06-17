@@ -18,8 +18,15 @@
     "package.json"
   ],
   "supersedes": null,
+  "superseded_by": null,
   "caused_by_bug": null,
   "commit": "adf79b3",
+  "valid_from": "2026-06-15T10:26:38.789Z",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
   "provenance": {
     "source": "human_confirmed",
     "confidence": 0.95,

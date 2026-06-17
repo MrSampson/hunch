@@ -58,8 +58,15 @@
     "test/synthesis.test.ts"
   ],
   "supersedes": null,
+  "superseded_by": null,
   "caused_by_bug": null,
   "commit": "a2d3f81",
+  "valid_from": "2026-06-14T23:33:55+03:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
   "provenance": {
     "source": "llm_draft+human_confirmed",
     "confidence": 0.95,

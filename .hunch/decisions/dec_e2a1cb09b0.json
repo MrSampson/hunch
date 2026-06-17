@@ -26,8 +26,15 @@
     "vscode-extension/src/hunchData.ts"
   ],
   "supersedes": null,
+  "superseded_by": null,
   "caused_by_bug": null,
   "commit": "70c235f",
+  "valid_from": "2026-06-16T10:02:51+03:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
   "provenance": {
     "source": "llm_draft+human_confirmed",
     "confidence": 0.95,

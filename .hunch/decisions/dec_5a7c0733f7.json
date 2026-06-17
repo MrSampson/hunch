@@ -26,8 +26,15 @@
     "src/synthesis/provider.ts"
   ],
   "supersedes": null,
+  "superseded_by": null,
   "caused_by_bug": null,
   "commit": "55253d7",
+  "valid_from": "2026-06-15T09:40:46+03:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
   "provenance": {
     "source": "llm_draft+human_confirmed",
     "confidence": 0.95,
