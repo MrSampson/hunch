@@ -138,3 +138,35 @@ the only real technical exposure.
 - RepoAudit — arXiv 2501.18160 ; MemGovern — arXiv 2601.06789
 
 _Run metadata: 105 agents · ~2.6M subagent tokens · ~16 min · deep-research harness, 2026-06-22._
+
+---
+
+## Addendum — field-commentary input (2026-06-22)
+
+Source: YouTube, **"The most valuable dev skill in the AI era"** (@awesome-coding, `UTKVB_tlyFw`).
+A third-party take that **independently restates Hunch's thesis** — *"LLMs operate on local context
+windows … brilliant at micro-architecture but lack management of the full picture; an agent doesn't
+know its helper duplicates a core dependency introduced three years ago in a different module,"* and
+*"a comment that explains **why** the obvious solution is wrong / which constraint must not be
+violated is valuable context — it helps the next developer **and the next agent session**."* Treat
+as **validation** of the deciding/delivering-layer moat, plus three net-new product ideas:
+
+1. **Redundancy / "this already exists" guard (sprawl detection)** — the video's central failure
+   mode (agents add factories/adapters/duplicate helpers because of the local context window).
+   Hunch's symbol/dep/component graph can flag a diff that re-implements an exported symbol already
+   present elsewhere. Deterministic + **advisory** (heuristic). The *complement* to the existing
+   guards (which catch breaking/reversing); this catches needless **addition**. **→ being built now;
+   see decision `dec_0d5d1f416a`.**
+2. **Inline `why`-comment ↔ constraint/decision capture** — bridge the "valuable comment" (why / a
+   protected business rule) into the graph, and surface graph records back as inline annotations, so
+   intent written in code and the Hunch record stay one and the same. *(proposed)*
+3. **Multi-candidate verdict (`hunch compare`)** — the seniority shift the video names is *"evaluating
+   five solutions in ten minutes — which fits the architecture, which adds coupling, which only looks
+   right because the agent wrote a persuasive explanation."* Extend Causal Merge Verdict to **rank N
+   candidate diffs** against the graph. Pairs with Deep Synthesis (ensemble) on the review side.
+   *(proposed)*
+
+Positioning note: the **LeMessurier / Citigroup Center** anecdote (specified welded joints quietly
+swapped for "good-enough" bolted ones — a plausible optimization that silently broke a load-bearing
+constraint, caught only by ownership) is an apt narrative for what Causal Merge Verdict / veto guard
+against. Good site/README material.
