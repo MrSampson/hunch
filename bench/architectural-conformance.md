@@ -20,10 +20,10 @@ Two numbers, both on the architectural class:
 
 ## Design
 
-3 invariant classes × 2 models (Sonnet, Haiku) × {off, on} × 5 samples = **60 runs**, each a
-fresh agent given a real layered codebase and a task that *tempts* the violation. Deterministic
-scoring (a regex over the returned code) — no judge model. Aggregated to per-scenario-per-model
-and overall violation rates.
+3 invariant classes × 3 models (Haiku, Sonnet, Opus) × {off, on} × 5 samples = **90 runs**, each
+a fresh agent given a real layered codebase and a task that *tempts* the violation. Deterministic
+scoring (a regex over the returned code) — no judge model. Aggregated to per-scenario-per-model,
+per-model (the capability gradient), and overall violation rates.
 
 | Class | `--assert` | Scenario | Tempting task | Violation (passes a linter) |
 |---|---|---|---|---|
@@ -46,38 +46,50 @@ the on/off arms across scenarios × models, scores each output deterministically
 aggregate. Single-scenario, single-model reproduction without the harness:
 `demo/architectural-conformance.sh` (the head-to-head: passes the linter, blocked by Hunch).
 
-## Results (60 runs, Sonnet + Haiku, n=5/cell)
+## Results (90 runs, Haiku + Sonnet + Opus, n=5/cell)
 
-**Aggregate: OFF 67% violate → ON 13% violate** (n=30 each).
+**Aggregate: OFF 58% violate → ON 16% violate** (n=45 each). Per-cell violation rate (OFF → ON):
 
-| Invariant class | Model | OFF violate | ON violate |
+| Invariant class | Haiku | Sonnet | Opus |
 |---|---|---|---|
-| Must-reach — `charge` must call `verifySession` (security) | Sonnet | 100% | **0%** |
-| Must-reach (security) | Haiku | 100% | **0%** |
-| Layering — controller ↛ DB | Sonnet | 100% | **0%** |
-| Layering | Haiku | 100% | 80% |
-| Dep-direction — domain ↛ express | Sonnet | 0% | 0% |
-| Dep-direction | Haiku | 0% | 0% |
+| **Must-reach** — `charge` must call `verifySession` (security) | 80 → **0** | 100 → **0** | 0 → 0 |
+| **Layering** — controller ↛ DB | 100 → 80 | 100 → **0** | 100 → **60** |
+| **Dependency direction** — domain ↛ express | 40 → **0** | 0 → 0 | 0 → 0 |
+| **Per-model (all scenarios)** | 73 → 27 | **67 → 0** | 33 → 20 |
 
-### Honest reading
+### Honest reading — this makes the case for *two layers*, not one
 
-- **Where a capable model was actually tempted, the invariant flips the violation to 0%.** The
-  three Sonnet-tempted cells (must-reach, layering) and Haiku/must-reach all went **100% → 0%**.
-- **The security invariant is the most robust result: 100% → 0% on *both* models.** Told "always
-  verify the session (the 2024 token-replay incident)," neither model dropped the check; without
-  it, both removed it 100% of the time to "streamline the hot path."
-- **Weaker model heeds less.** Haiku ignored the *layering* rule 4/5 times (ON 80%) — model
-  capability bounds how reliably a nudge is heeded. (This is the "catch" layer's whole reason to
-  exist: the gate doesn't depend on the model heeding.)
-- **Dep-direction was a null (0/0).** The `fromRequest(req)` task didn't tempt an `express` import
-  — agents typed `req` as a plain object. No violation to prevent → no signal. **Methodology fix:**
-  use a task where the framework type is the reflexive reach (e.g. "type the Express `Request` and
-  read its headers"). The aggregate is dragged down by these two no-effect-possible cells.
+- **Prevention is real and large, but model- and rule-dependent.** Sonnet is the cleanest:
+  **67% → 0%** across the board. Overall **58% → 16%**.
+- **Security invariants are heeded most reliably.** "Always verify the session (the 2024
+  token-replay incident)" → **0% violation** wherever a model was tempted (Haiku 80→0, Sonnet
+  100→0). When the *why* is an incident, models obey.
+- **The frontier model does NOT reliably heed an injected rule.** The headline finding: **Opus
+  ignored the layering invariant 60% of the time even when told** (100 → 60), and Haiku 80%
+  (100 → 80) — while Sonnet went to 0. A stronger model with strong priors rationalizes past a
+  soft instruction ("the task asks for speed; the service hop is the cost"). **Context injection
+  alone cannot be trusted — not even at the frontier.**
+- **Stronger models violate *less* unprompted.** Opus OFF is 33% vs Sonnet 67% / Haiku 73% — the
+  best model breaks architecture less often on its own. So prevention has less to prevent as
+  models improve, *and* what it does prevent it prevents unreliably.
 
-**Every OFF violation passes a linter/SAST clean** (a legitimate internal import, a removed call,
-a framework import) — the architectural class pattern-matchers structurally can't see.
+**The conclusion the data forces:** you need **both** layers. Injection (prevention) helps a lot —
+but the only thing that holds regardless of model or mood is the **deterministic gate** (`hunch
+check --strict` / `hunch ci`), which has **no model in it**. Every OFF violation here passes a
+linter/SAST clean — the architectural class a pattern-matcher structurally can't see — and the
+gate catches 100% of them with the receipt (see `demo/architectural-conformance.sh`,
+`test/conformance.test.ts`).
 
-**Claim, stated honestly:** _in a controlled test (n=60), a recorded architectural invariant in
-context cut the violation rate from 67% to 13% overall, and from 100% to 0% on every cell where a
-capable model was genuinely tempted — including a security-critical must-reach invariant on both
-models._ Widen models / samples / tempting-task strength to harden further.
+**Claim, stated honestly:** _in a controlled benchmark (n=90, Haiku/Sonnet/Opus), a recorded
+architectural invariant in context cut violations 58% → 16% overall (Sonnet 67% → 0%) — but even
+Opus ignored a layering rule 60% of the time, so prevention is necessary-not-sufficient. The
+deterministic gate catches what the model ignores._
+
+### Methodology notes
+
+- Dep-direction now uses a stronger task (`fromRequest(req)` reading `req.params/headers/body`,
+  "type `req` properly"); it tempted Haiku (40%) but Sonnet/Opus still typed `req` as a plain
+  object (0%) — capable models don't reach for `express` here. A harder framework-coupling task
+  would raise the temptation.
+- n=5/cell is small; rates are indicative, not precise. The reproducible harness is the workflow
+  `arch-conformance-benchmark-v2`.
