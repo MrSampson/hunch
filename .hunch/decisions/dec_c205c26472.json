@@ -45,5 +45,19 @@
       "test/wiki.test.ts"
     ]
   },
-  "date": "2026-07-02T13:25:28.787Z"
+  "date": "2026-07-02T13:25:28.787Z",
+  "conformance": [
+    {
+      "assert": "calls",
+      "subject": "computeWikiDrift",
+      "object": "wikiStatus",
+      "transitive": false
+    },
+    {
+      "assert": "calls",
+      "subject": "generateWiki",
+      "object": "writeFileAtomic",
+      "transitive": true
+    }
+  ]
 }

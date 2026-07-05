@@ -45,5 +45,13 @@
       "test/wiki.test.ts"
     ]
   },
-  "date": "2026-07-02T12:18:04.386Z"
+  "date": "2026-07-02T12:18:04.386Z",
+  "conformance": [
+    {
+      "assert": "not-calls",
+      "subject": "renderHunchSection",
+      "object": "recs",
+      "transitive": false
+    }
+  ]
 }
