@@ -10,8 +10,7 @@
   "rejected_tripwires": [],
   "related_components": [],
   "related_files": [
-    "src/core/conformance.ts",
-    ".hunch/decisions"
+    "src/core/conformance.ts"
   ],
   "supersedes": null,
   "superseded_by": "dec_d3f70263c8",
