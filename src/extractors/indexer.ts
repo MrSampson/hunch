@@ -14,8 +14,7 @@ import { parseSource, attributeCalls } from "./parse.js";
 import { symbolId, componentId, edgeId, sha1 } from "../core/ids.js";
 import { extracted, inferred, type Symbol, type Edge, type Component } from "../core/types.js";
 import { isGitRepo, trackedFiles, fileGitMetrics } from "./git.js";
-
-const CODE_EXTS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
+import { CODE_EXTENSIONS, languageFor } from "./languages.js";
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", ".hunch", "coverage", ".next", "out"]);
 
 export interface IndexResult {
@@ -206,7 +205,7 @@ function listCodeFiles(root: string): string[] {
   if (isGitRepo(root)) {
     // Apply SKIP_DIRS to the git-tracked list too: a repo that (accidentally)
     // tracks node_modules/ or dist/ must not flood the graph with vendored symbols.
-    const tracked = trackedFiles(root, CODE_EXTS)
+    const tracked = trackedFiles(root, CODE_EXTENSIONS)
       .filter((f) => !f.split(/[\\/]/).some((seg) => SKIP_DIRS.has(seg)))
       .map((f) => join(root, f));
     if (tracked.length > 0) return tracked; // else fall through (nothing committed yet)
@@ -218,7 +217,7 @@ function listCodeFiles(root: string): string[] {
       const abs = join(dir, name);
       const st = statSync(abs);
       if (st.isDirectory()) walk(abs);
-      else if (CODE_EXTS.some((e) => name.endsWith(e))) out.push(abs);
+      else if (languageFor(name) !== null) out.push(abs);
     }
   };
   walk(root);
