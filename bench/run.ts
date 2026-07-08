@@ -254,7 +254,8 @@ const rows: Array<Record<string, unknown>> = [];
 for (const task of TASKS) {
   for (const arm of ARMS) {
     for (let rep = 1; rep <= REPS; rep++) {
-      const name = `${task.id}-${arm}-${rep}`;
+      // model in the name so two bench processes (different models) never share a worktree
+      const name = `${task.id}-${arm}-${rep}-${MODEL.replace(/[^a-z0-9]/gi, "")}`;
       process.stdout.write(`▶ ${name} … `);
       const dir = makeWorktree(name, arm, task);
       try {
