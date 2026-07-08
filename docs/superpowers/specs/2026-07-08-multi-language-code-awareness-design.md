@@ -87,9 +87,27 @@ The existing TypeScript/JS behavior becomes the first `LanguageSpec` entry — a
 - **`builtinMethods`:** a Python-specific set (dict/list/str/set builtins: `get`, `append`, `keys`, `values`, `items`, `format`, `join`, `startswith`, `endswith`, `split`, `strip`, `pop`, `update`, `sort`, `copy`, ...) to suppress the same false-call-edge problem the JS list already solves (e.g. a repo-level `get()` function colliding with `dict.get(...)`).
 - **Imports:** captured into `ParsedFile.imports` (feeds `analyzeDiff`'s structural-delta count — satisfies the language-agnostic substance heuristic goal) but **not** resolved to `depends_on` component edges. `indexer.ts`'s `resolveImport()` stays JS/TS-only and is simply never called successfully for a `.py` file's imports (they fail the `.startsWith(".")` / relative-specifier shape check and return `null`, which is already the correct "don't guess" behavior for an unresolvable import).
 
-### Substance heuristic — no change
+### Substance heuristic — `diff.ts` needs Python-aware patterns too
 
-`isSignificant()` already computes off `DiffAnalysis` (structural delta from `analyzeDiff`, churn, file count, commit body length) — all grammar-derived or git-derived, already language-agnostic. Fixing the `CODE_RE` gate ahead of it (so Python files reach `analyzeDiff` at all) is sufficient; no heuristic rework needed.
+Correction from the original draft: `analyzeDiff()` in `src/extractors/diff.ts` is **not** grammar-derived — it's a regex scan of raw unified-diff text (`DECL_PATTERNS` for `function`/`class`/`interface`/`type`/`const` declarations, `IMPORT_RE`/`CONT_IMPORT_RE`/`REQUIRE_RE` for imports), independent of `parse.ts`/tree-sitter. Fixing only `diff.ts`'s `CODE_EXT`/`isCode()` gate (via `CODE_EXTENSIONS` from the registry, same as the other three call sites) lets Python files reach the scanner, but `DECL_PATTERNS`/`IMPORT_RE` still wouldn't recognize `def foo():`, `class Foo:`, `import x`, or `from x import y` as structural changes — `addedSymbols`/`removedSymbols`/`addedDeps` would stay empty for Python diffs even though the files are now "code".
+
+This degrades, but doesn't fully break, `isSignificant()`: its line-count (`SIG_MIN_LINES`) and file-count (`codeFiles.length >= 3`) fallbacks still fire off raw diff stats. But it does defeat the issue's acceptance criterion that the substance signal be language-agnostic, and it starves `summarizeDiff()`'s prose (used in the deterministic, no-LLM decision draft) of any symbol/dependency detail for Python-only commits.
+
+**Fix:** add Python entries to `DECL_PATTERNS` and a Python-aware branch to `importOf()` in `diff.ts`, analogous to the existing JS/TS ones — a flat regex-list extension, not a rewire through the tree-sitter `LanguageSpec` registry (that registry is for grammar-based parsing; `diff.ts`'s heuristic is deliberately lightweight text scanning and stays that way):
+
+```ts
+// added to DECL_PATTERNS:
+{ kind: "function", re: /^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(/ },
+{ kind: "class", re: /^\s*class\s+([A-Za-z_]\w*)\s*[:(]/ },
+```
+
+```ts
+// new regexes, checked in importOf() alongside the existing ones:
+const PY_IMPORT_RE = /^\s*import\s+([A-Za-z_][\w.]*)/;          // "import os" / "import a.b.c"
+const PY_FROM_IMPORT_RE = /^\s*from\s+([.\w]+)\s+import\s+/;    // "from os import path" / "from . import x" / "from ..pkg import y"
+```
+
+Python's relative-import convention (a leading `.`) already matches the existing `addedDeps`/`removedDeps` filter (`!imp.startsWith(".")` — only non-relative specifiers count as an external "dep"), so no change is needed there.
 
 ## Testing
 
@@ -97,7 +115,8 @@ Mirror the existing `test/parse.test.ts` pattern with a parallel Python fixture 
 
 - `test/parse.test.ts`: add Python cases alongside existing TS cases (or a sibling `test/parse.python.test.ts` if the plan finds that cleaner).
 - `test/indexer.test.ts`: extend with a Python fixture confirming `hunch index` produces non-zero Python symbols/edges (component-level, same-file call edges) and confirming no `depends_on` edges are fabricated across Python files.
-- Wherever `CODE_RE`/`isSignificant` are currently tested in `synthesize.test.ts` (or equivalent): add a Python-commit fixture confirming `syncCommit` no longer skips with `no code files changed`.
+- `test/upgrades.test.ts` (where `analyzeDiff`/`summarizeDiff` are unit-tested against real unified-diff text today): add Python diff fixtures confirming `def`/`class`/`import`/`from ... import` are recognized as structural changes.
+- `test/synthesis.test.ts`: add a Python-commit fixture confirming `syncCommit` no longer skips with `no code files changed`.
 
 ## Acceptance criteria (from issue #2, restated against this design)
 
