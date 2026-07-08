@@ -13,6 +13,13 @@
  * the child env (see ClaudeCliProvider.run) to force the CLI down to subscription
  * OAuth / CLAUDE_CODE_OAUTH_TOKEN. There is intentionally NO API-key provider.
  *
+ * A fourth, OPT-IN provider (name "openai-compat", alias "ollama") speaks the
+ * OpenAI chat-completions format over HTTP to a self-hosted endpoint instead of a
+ * subscription CLI. con_2ce3f2a547 scopes "subscription, never pay-per-token" to
+ * the Anthropic API specifically — a self-hosted/local model is neither, so it
+ * doesn't conflict — but it stays off unless HUNCH_SYNTH_BASE_URL and
+ * HUNCH_SYNTH_MODEL are both explicitly set.
+ *
  * Every provider returns the same shape so the rest of the system never knows
  * (or cares) which one ran.
  */
@@ -240,13 +247,14 @@ const VERIFY_TOOL = {
 };
 
 // --------------------------------------------------------------------------
-// Base for headless-CLI SUBSCRIPTION providers. Each one drives a coding-assistant
-// CLI billed to the user's own subscription (never a pay-per-token API key — see
-// dec_5a7c0733f7). The prompt always goes over STDIN (never argv — keeps untrusted
-// diff content out of any shell pexecIn uses on Windows), and the CLI's text output
-// is handed to the SAME mappers, so the rest of the system is provider-agnostic.
+// Base for any provider whose interface reduces to "turn one prompt string into
+// text" — the three subscription-CLI providers below (spawn, stdin, subscription
+// billing — see dec_5a7c0733f7) AND the opt-in local/self-hosted HTTP provider
+// further down (OpenAICompatProvider). Neither transport nor billing model is
+// part of the contract; only run()'s shape is. Every implementation's text output
+// is handed to the SAME mappers, so the rest of the system stays provider-agnostic.
 // --------------------------------------------------------------------------
-abstract class CliSynthProvider implements SynthProvider {
+abstract class PromptSynthProvider implements SynthProvider {
   abstract readonly name: string;
   abstract available(): Promise<boolean>;
   protected abstract run(prompt: string): Promise<string>;
@@ -324,10 +332,20 @@ export function safeModel(v: string | undefined, fallback: string | undefined): 
   return v && MODEL_RE.test(v) ? v : fallback;
 }
 
+// A timeout comes from a HUNCH_*_TIMEOUT_MS env var and feeds AbortController's
+// delay directly (never a shell argv token, unlike safeModel's model id) — but a
+// non-numeric or nonsensical value (negative, zero, NaN, Infinity) would either
+// abort immediately or never abort at all, so validate the same way: fall back to
+// the provider's default rather than propagate garbage.
+export function safeTimeout(v: string | undefined, fallback: number): number {
+  const n = Number(v);
+  return v && Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 // --------------------------------------------------------------------------
 // Provider A: headless `claude -p` CLI — billed to the user's Claude subscription
 // --------------------------------------------------------------------------
-class ClaudeCliProvider extends CliSynthProvider {
+class ClaudeCliProvider extends PromptSynthProvider {
   readonly name = "claude-cli";
   // Default to the `haiku` alias (cheap/fast, and survives model retirements)
   // rather than a pinned dated id; override with HUNCH_SYNTH_MODEL if needed.
@@ -389,7 +407,7 @@ class ClaudeCliProvider extends CliSynthProvider {
 // --------------------------------------------------------------------------
 // Provider B1: OpenAI Codex CLI (`codex exec`) — billed to the ChatGPT subscription
 // --------------------------------------------------------------------------
-class CodexCliProvider extends CliSynthProvider {
+class CodexCliProvider extends PromptSynthProvider {
   readonly name = "codex-cli";
   private model = safeModel(process.env.HUNCH_CODEX_MODEL, undefined); // omit → codex uses its configured default
 
@@ -415,7 +433,7 @@ class CodexCliProvider extends CliSynthProvider {
 // --------------------------------------------------------------------------
 // Provider B2: Cursor Agent CLI (`cursor-agent -p`) — billed to the Cursor subscription
 // --------------------------------------------------------------------------
-class CursorCliProvider extends CliSynthProvider {
+class CursorCliProvider extends PromptSynthProvider {
   readonly name = "cursor-agent";
   private model = safeModel(process.env.HUNCH_CURSOR_MODEL, undefined);
 
@@ -436,6 +454,67 @@ class CursorCliProvider extends CliSynthProvider {
     // Shorter timeout than the others: cursor-agent -p is reported to hang in some
     // headless setups; cap the stall before degrading to the deterministic provider.
     return this.runCli("cursor-agent", args, [], prompt, 45_000);
+  }
+}
+
+// --------------------------------------------------------------------------
+// Provider D: OpenAI-compatible / local model endpoint (Ollama, vLLM, LM
+// Studio, llama.cpp server, ...) — opt-in, NOT a subscription CLI. Speaks the
+// OpenAI chat-completions wire format over HTTP, so ONE implementation covers
+// any self-hosted server that implements it (Ollama's /v1 compatibility layer
+// included — no separate native /api/chat client). Off by default: available()
+// requires BOTH HUNCH_SYNTH_BASE_URL and HUNCH_SYNTH_MODEL, so an installation
+// with neither set behaves exactly as it did before this provider existed.
+//
+// Exported (unlike the CLI providers) so tests can construct fresh instances and
+// read process.env at CALL time — see run()/available() below, which read env
+// vars directly rather than caching them in constructor fields. That mirrors
+// selectProvider()'s own style (it re-reads HUNCH_SYNTH_PROVIDER on every call)
+// and avoids a stale-field trap: a module-level PROVIDERS singleton constructed
+// once at import time would otherwise never see env vars a test (or a long-lived
+// process) sets afterward.
+// --------------------------------------------------------------------------
+export class OpenAICompatProvider extends PromptSynthProvider {
+  readonly name = "openai-compat";
+
+  async available(): Promise<boolean> {
+    return !!process.env.HUNCH_SYNTH_BASE_URL && !!safeModel(process.env.HUNCH_SYNTH_MODEL, undefined);
+  }
+
+  protected async run(prompt: string): Promise<string> {
+    const baseUrl = process.env.HUNCH_SYNTH_BASE_URL?.replace(/\/+$/, "");
+    const model = safeModel(process.env.HUNCH_SYNTH_MODEL, undefined);
+    if (!baseUrl || !model) throw new Error("openai-compat: HUNCH_SYNTH_BASE_URL/HUNCH_SYNTH_MODEL not set");
+    const apiKey = process.env.HUNCH_SYNTH_API_KEY;
+    const timeoutMs = safeTimeout(process.env.HUNCH_SYNTH_TIMEOUT_MS, 300_000);
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          response_format: { type: "json_object" },
+          stream: false,
+        }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        throw new Error(`openai-compat endpoint returned ${res.status}: ${(await res.text()).slice(0, 300)}`);
+      }
+      const body = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+      const content = body.choices?.[0]?.message?.content;
+      if (!content) throw new Error("openai-compat endpoint returned no message content");
+      return content;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }
 
@@ -525,11 +604,12 @@ export function extractCodexText(out: string): string {
 
 // Priority order: try each subscription CLI, then the always-available heuristic.
 // HUNCH_SYNTH_PROVIDER forces one by name (claude-cli / codex-cli / cursor-agent /
-// deterministic).
+// openai-compat / ollama / deterministic).
 const PROVIDERS: SynthProvider[] = [
   new ClaudeCliProvider(),
   new CodexCliProvider(),
   new CursorCliProvider(),
+  new OpenAICompatProvider(),
   new DeterministicProvider(),
 ];
 
@@ -547,9 +627,25 @@ function isAvailable(p: SynthProvider): Promise<boolean> {
   return v;
 }
 
-/** Choose the first available provider, honoring HUNCH_SYNTH_PROVIDER override. */
+/** Test-only: clears the availability memoization cache so a test that toggles
+ *  env vars mid-process (e.g. HUNCH_SYNTH_BASE_URL) isn't served a stale result
+ *  cached by an earlier call in the same process. Never call from production code. */
+export function __resetAvailabilityCacheForTests(): void {
+  availCache.clear();
+}
+
+/** "ollama" is accepted as an alias for "openai-compat" — the provider is not
+ *  Ollama-specific (it speaks the OpenAI chat-completions format any self-hosted
+ *  server can implement), but Ollama is the most common self-hosted target and
+ *  users reach for that name first. */
+function normalizeProviderName(v: string | undefined): string | undefined {
+  return v === "ollama" ? "openai-compat" : v;
+}
+
+/** Choose the first available provider, honoring HUNCH_SYNTH_PROVIDER override
+ *  ("ollama" normalizes to "openai-compat"). */
 export async function selectProvider(): Promise<SynthProvider> {
-  const forced = process.env.HUNCH_SYNTH_PROVIDER;
+  const forced = normalizeProviderName(process.env.HUNCH_SYNTH_PROVIDER);
   if (forced) {
     const p = PROVIDERS.find((x) => x.name === forced);
     if (p && (await isAvailable(p))) return p;
@@ -560,14 +656,18 @@ export async function selectProvider(): Promise<SynthProvider> {
   return new DeterministicProvider();
 }
 
-// ---- Deep Synthesis: ensemble of subscription CLIs ------------------------
-// Opt-in (backfill/sync --deep): fan a commit out to EVERY available subscription
-// CLI, drop failures, and reconcile the drafts. Subscription-only (the workers are
-// the same CLI providers, so ANTHROPIC_API_KEY stripping is inherited). NEVER used on
-// the guard path; confidence is capped below the strict gate so output stays advisory.
+// ---- Deep Synthesis: ensemble of subscription CLIs (+ opt-in openai-compat) ----
+// Opt-in (backfill/sync --deep): fan a commit out to EVERY available worker —
+// the subscription CLIs (ANTHROPIC_API_KEY stripping inherited from them) plus the
+// opt-in openai-compat HTTP provider when configured, which is outside that
+// stripping scope entirely (con_2ce3f2a547 governs the Anthropic API specifically,
+// not a user-configured self-hosted endpoint) — drop failures, reconcile the
+// drafts. NEVER used on the guard path; confidence is capped below the strict gate
+// so output stays advisory.
 
-/** All available subscription-CLI workers (claude/codex/cursor), excluding the
- *  deterministic fallback — the pool Deep Synthesis fans a commit out to. */
+/** All available subscription-CLI workers (claude/codex/cursor, plus the opt-in
+ *  openai-compat), excluding the deterministic fallback — the pool Deep Synthesis
+ *  fans a commit out to. */
 export async function selectWorkers(): Promise<SynthProvider[]> {
   const out: SynthProvider[] = [];
   for (const p of PROVIDERS) {
@@ -672,9 +772,10 @@ export async function selectEnsemble(opts: { samples?: number } = {}): Promise<E
   return workers.length ? new EnsembleProvider(workers, { samples: opts.samples ?? DEFAULT_SAMPLES }) : null;
 }
 
-/** Pick a CLI provider to run the Critic pass (subscription-only, like the workers).
- *  Returns null when no assistant CLI is installed — verification then no-ops and the
- *  un-audited draft stands (graceful degradation; dec_18a81c8291). */
+/** Pick a subscription CLI to run the Critic pass (like selectWorkers, including
+ *  openai-compat when configured). Returns null when no assistant CLI is installed —
+ *  verification then no-ops and the un-audited draft stands (graceful degradation;
+ *  dec_18a81c8291). */
 export async function selectVerifier(): Promise<SynthProvider | null> {
   const workers = await selectWorkers();
   return workers[0] ?? null;
