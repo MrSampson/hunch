@@ -451,6 +451,67 @@ class CursorCliProvider extends PromptSynthProvider {
 }
 
 // --------------------------------------------------------------------------
+// Provider D: OpenAI-compatible / local model endpoint (Ollama, vLLM, LM
+// Studio, llama.cpp server, ...) — opt-in, NOT a subscription CLI. Speaks the
+// OpenAI chat-completions wire format over HTTP, so ONE implementation covers
+// any self-hosted server that implements it (Ollama's /v1 compatibility layer
+// included — no separate native /api/chat client). Off by default: available()
+// requires BOTH HUNCH_SYNTH_BASE_URL and HUNCH_SYNTH_MODEL, so an installation
+// with neither set behaves exactly as it did before this provider existed.
+//
+// Exported (unlike the CLI providers) so tests can construct fresh instances and
+// read process.env at CALL time — see run()/available() below, which read env
+// vars directly rather than caching them in constructor fields. That mirrors
+// selectProvider()'s own style (it re-reads HUNCH_SYNTH_PROVIDER on every call)
+// and avoids a stale-field trap: a module-level PROVIDERS singleton constructed
+// once at import time would otherwise never see env vars a test (or a long-lived
+// process) sets afterward.
+// --------------------------------------------------------------------------
+export class OpenAICompatProvider extends PromptSynthProvider {
+  readonly name = "openai-compat";
+
+  async available(): Promise<boolean> {
+    return !!process.env.HUNCH_SYNTH_BASE_URL && !!safeModel(process.env.HUNCH_SYNTH_MODEL, undefined);
+  }
+
+  protected async run(prompt: string): Promise<string> {
+    const baseUrl = process.env.HUNCH_SYNTH_BASE_URL?.replace(/\/+$/, "");
+    const model = safeModel(process.env.HUNCH_SYNTH_MODEL, undefined);
+    if (!baseUrl || !model) throw new Error("openai-compat: HUNCH_SYNTH_BASE_URL/HUNCH_SYNTH_MODEL not set");
+    const apiKey = process.env.HUNCH_SYNTH_API_KEY;
+    const timeoutMs = safeTimeout(process.env.HUNCH_SYNTH_TIMEOUT_MS, 300_000);
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          response_format: { type: "json_object" },
+          stream: false,
+        }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        throw new Error(`openai-compat endpoint returned ${res.status}: ${(await res.text()).slice(0, 300)}`);
+      }
+      const body = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+      const content = body.choices?.[0]?.message?.content;
+      if (!content) throw new Error("openai-compat endpoint returned no message content");
+      return content;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
+// --------------------------------------------------------------------------
 // Provider C: deterministic fallback (no LLM, always available)
 // --------------------------------------------------------------------------
 export class DeterministicProvider implements SynthProvider {
