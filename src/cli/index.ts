@@ -2192,6 +2192,34 @@ program
     }
   });
 
+/** The doctor command's synthesis-status line(s) for a resolved provider name.
+ *  Exported for testing — the previous inline version had zero test coverage,
+ *  which is how issue #8 (openai-compat misreported as "no assistant CLI
+ *  found") shipped unnoticed through three review passes. */
+export function synthesisStatusLines(providerName: string, env: NodeJS.ProcessEnv): string[] {
+  const SUB: Record<string, { label: string; strip?: string }> = {
+    "claude-cli": { label: "Claude subscription (claude CLI)", strip: "ANTHROPIC_API_KEY" },
+    "codex-cli": { label: "ChatGPT subscription (codex CLI)", strip: "OPENAI_API_KEY" },
+    "cursor-agent": { label: "Cursor subscription (cursor-agent CLI)" },
+  };
+  const sub = SUB[providerName];
+  if (sub) {
+    const hadKey = sub.strip && !!env[sub.strip];
+    return [`            ↳ LLM synthesis billed to your ${sub.label}` +
+      (hadKey ? ` (${sub.strip} in env is stripped — never billed to the API)` : ``)];
+  }
+  if (providerName === "openai-compat") {
+    const base = env.HUNCH_SYNTH_BASE_URL ?? "(unset)";
+    const model = env.HUNCH_SYNTH_MODEL ?? "(unset)";
+    const keyNote = env.HUNCH_SYNTH_API_KEY ? " (HUNCH_SYNTH_API_KEY set)" : " (no API key)";
+    return [`            ↳ LLM synthesis via local/self-hosted endpoint ${base} (model: ${model})${keyNote}`];
+  }
+  return [
+    dim(`            ↳ no assistant CLI found — synthesis uses the offline heuristic (advisory, low-confidence)`),
+    dim(`              for full synthesis install one: Claude Code (\`claude /login\`), Codex (\`codex login\`), or Cursor (\`cursor-agent login\`)`),
+  ];
+}
+
 // ---- doctor ---------------------------------------------------------------
 program
   .command("doctor")
@@ -2205,22 +2233,10 @@ program
     console.log(`schema:     v${onDisk} (hunch v${SCHEMA_VERSION})${schemaNote}`);
     const provider = await selectProvider();
     console.log(`synthesis:  ${provider.name}`);
-    // Synthesis is billed to the user's SUBSCRIPTION via a coding-assistant CLI,
-    // never a pay-per-token API key. Surface which one — or what's missing.
-    const SUB: Record<string, { label: string; strip?: string }> = {
-      "claude-cli": { label: "Claude subscription (claude CLI)", strip: "ANTHROPIC_API_KEY" },
-      "codex-cli": { label: "ChatGPT subscription (codex CLI)", strip: "OPENAI_API_KEY" },
-      "cursor-agent": { label: "Cursor subscription (cursor-agent CLI)" },
-    };
-    const sub = SUB[provider.name];
-    if (sub) {
-      const hadKey = sub.strip && !!process.env[sub.strip];
-      console.log(`            ↳ LLM synthesis billed to your ${sub.label}` +
-        (hadKey ? ` (${sub.strip} in env is stripped — never billed to the API)` : ``));
-    } else {
-      console.log(dim(`            ↳ no assistant CLI found — synthesis uses the offline heuristic (advisory, low-confidence)`));
-      console.log(dim(`              for full synthesis install one: Claude Code (\`claude /login\`), Codex (\`codex login\`), or Cursor (\`cursor-agent login\`)`));
-    }
+    // Synthesis is billed to the user's SUBSCRIPTION via a coding-assistant CLI
+    // (or run through a configured local/self-hosted endpoint), never a
+    // pay-per-token API key. Surface which one — or what's missing.
+    for (const line of synthesisStatusLines(provider.name, process.env)) console.log(line);
     const c = store.reindex().counts;
     console.log(`hunch:      ${c.symbols} symbols, ${c.edges} edges, ${c.components} components, ${c.decisions} decisions, ${c.bugs} bugs, ${c.constraints} constraints`);
     // Overlay status speaks the TRUE mode, and a dead pointer is a loud finding, not a
@@ -2365,12 +2381,15 @@ function emitDeny(reason: string): void {
   );
 }
 
-program.parseAsync().catch((e) => {
-  try {
-    openStore?.close();
-  } catch {
-    /* ignore */
-  }
-  console.error(`hunch: ${e instanceof Error ? e.message : String(e)}`);
-  process.exit(1);
-});
+// Only run the CLI if this file is the entry point, not when imported for testing/reuse
+if (import.meta.url === `file://${process.argv[1]}`) {
+  program.parseAsync().catch((e) => {
+    try {
+      openStore?.close();
+    } catch {
+      /* ignore */
+    }
+    console.error(`hunch: ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(1);
+  });
+}
