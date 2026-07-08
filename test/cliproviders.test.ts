@@ -1,6 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractCodexText, safeModel, safeTimeout, selectProvider, OpenAICompatProvider } from "../src/synthesis/provider.js";
+import {
+  extractCodexText,
+  safeModel,
+  safeTimeout,
+  selectProvider,
+  selectWorkers,
+  OpenAICompatProvider,
+  __resetAvailabilityCacheForTests,
+} from "../src/synthesis/provider.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -205,5 +213,60 @@ test("OpenAICompatProvider.draftDecision rejects when the endpoint exceeds HUNCH
     delete process.env.HUNCH_SYNTH_MODEL;
     delete process.env.HUNCH_SYNTH_TIMEOUT_MS;
     await server.close();
+  }
+});
+
+test("selectProvider does not pick openai-compat when its env vars are unset (default behavior unchanged)", async () => {
+  __resetAvailabilityCacheForTests();
+  delete process.env.HUNCH_SYNTH_PROVIDER;
+  delete process.env.HUNCH_SYNTH_BASE_URL;
+  delete process.env.HUNCH_SYNTH_MODEL;
+  const p = await selectProvider();
+  assert.notEqual(p.name, "openai-compat");
+});
+
+test("selectProvider resolves openai-compat when forced and BASE_URL+MODEL are set", async () => {
+  __resetAvailabilityCacheForTests();
+  process.env.HUNCH_SYNTH_BASE_URL = "http://127.0.0.1:1/v1"; // unreachable; available() checks env presence, not reachability
+  process.env.HUNCH_SYNTH_MODEL = "m";
+  process.env.HUNCH_SYNTH_PROVIDER = "openai-compat";
+  try {
+    const p = await selectProvider();
+    assert.equal(p.name, "openai-compat");
+  } finally {
+    delete process.env.HUNCH_SYNTH_BASE_URL;
+    delete process.env.HUNCH_SYNTH_MODEL;
+    delete process.env.HUNCH_SYNTH_PROVIDER;
+    __resetAvailabilityCacheForTests();
+  }
+});
+
+test("HUNCH_SYNTH_PROVIDER=ollama is accepted as an alias for openai-compat", async () => {
+  __resetAvailabilityCacheForTests();
+  process.env.HUNCH_SYNTH_BASE_URL = "http://127.0.0.1:1/v1";
+  process.env.HUNCH_SYNTH_MODEL = "m";
+  process.env.HUNCH_SYNTH_PROVIDER = "ollama";
+  try {
+    const p = await selectProvider();
+    assert.equal(p.name, "openai-compat");
+  } finally {
+    delete process.env.HUNCH_SYNTH_BASE_URL;
+    delete process.env.HUNCH_SYNTH_MODEL;
+    delete process.env.HUNCH_SYNTH_PROVIDER;
+    __resetAvailabilityCacheForTests();
+  }
+});
+
+test("selectWorkers includes openai-compat once available — deep-synthesis and the Critic pass participate for free", async () => {
+  __resetAvailabilityCacheForTests();
+  process.env.HUNCH_SYNTH_BASE_URL = "http://127.0.0.1:1/v1";
+  process.env.HUNCH_SYNTH_MODEL = "m";
+  try {
+    const workers = await selectWorkers();
+    assert.ok(workers.some((w) => w.name === "openai-compat"));
+  } finally {
+    delete process.env.HUNCH_SYNTH_BASE_URL;
+    delete process.env.HUNCH_SYNTH_MODEL;
+    __resetAvailabilityCacheForTests();
   }
 });

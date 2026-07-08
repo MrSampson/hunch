@@ -13,6 +13,13 @@
  * the child env (see ClaudeCliProvider.run) to force the CLI down to subscription
  * OAuth / CLAUDE_CODE_OAUTH_TOKEN. There is intentionally NO API-key provider.
  *
+ * A fourth, OPT-IN provider (name "openai-compat", alias "ollama") speaks the
+ * OpenAI chat-completions format over HTTP to a self-hosted endpoint instead of a
+ * subscription CLI. con_2ce3f2a547 scopes "subscription, never pay-per-token" to
+ * the Anthropic API specifically — a self-hosted/local model is neither, so it
+ * doesn't conflict — but it stays off unless HUNCH_SYNTH_BASE_URL and
+ * HUNCH_SYNTH_MODEL are both explicitly set.
+ *
  * Every provider returns the same shape so the rest of the system never knows
  * (or cares) which one ran.
  */
@@ -602,6 +609,7 @@ const PROVIDERS: SynthProvider[] = [
   new ClaudeCliProvider(),
   new CodexCliProvider(),
   new CursorCliProvider(),
+  new OpenAICompatProvider(),
   new DeterministicProvider(),
 ];
 
@@ -619,9 +627,25 @@ function isAvailable(p: SynthProvider): Promise<boolean> {
   return v;
 }
 
-/** Choose the first available provider, honoring HUNCH_SYNTH_PROVIDER override. */
+/** Test-only: clears the availability memoization cache so a test that toggles
+ *  env vars mid-process (e.g. HUNCH_SYNTH_BASE_URL) isn't served a stale result
+ *  cached by an earlier call in the same process. Never call from production code. */
+export function __resetAvailabilityCacheForTests(): void {
+  availCache.clear();
+}
+
+/** "ollama" is accepted as an alias for "openai-compat" — the provider is not
+ *  Ollama-specific (it speaks the OpenAI chat-completions format any self-hosted
+ *  server can implement), but Ollama is the most common self-hosted target and
+ *  users reach for that name first. */
+function normalizeProviderName(v: string | undefined): string | undefined {
+  return v === "ollama" ? "openai-compat" : v;
+}
+
+/** Choose the first available provider, honoring HUNCH_SYNTH_PROVIDER override
+ *  ("ollama" normalizes to "openai-compat"). */
 export async function selectProvider(): Promise<SynthProvider> {
-  const forced = process.env.HUNCH_SYNTH_PROVIDER;
+  const forced = normalizeProviderName(process.env.HUNCH_SYNTH_PROVIDER);
   if (forced) {
     const p = PROVIDERS.find((x) => x.name === forced);
     if (p && (await isAvailable(p))) return p;
