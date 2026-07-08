@@ -604,7 +604,7 @@ export function extractCodexText(out: string): string {
 
 // Priority order: try each subscription CLI, then the always-available heuristic.
 // HUNCH_SYNTH_PROVIDER forces one by name (claude-cli / codex-cli / cursor-agent /
-// deterministic).
+// openai-compat / ollama / deterministic).
 const PROVIDERS: SynthProvider[] = [
   new ClaudeCliProvider(),
   new CodexCliProvider(),
@@ -662,8 +662,9 @@ export async function selectProvider(): Promise<SynthProvider> {
 // the same CLI providers, so ANTHROPIC_API_KEY stripping is inherited). NEVER used on
 // the guard path; confidence is capped below the strict gate so output stays advisory.
 
-/** All available subscription-CLI workers (claude/codex/cursor), excluding the
- *  deterministic fallback — the pool Deep Synthesis fans a commit out to. */
+/** All available subscription-CLI workers (claude/codex/cursor, plus the opt-in
+ *  openai-compat), excluding the deterministic fallback — the pool Deep Synthesis
+ *  fans a commit out to. */
 export async function selectWorkers(): Promise<SynthProvider[]> {
   const out: SynthProvider[] = [];
   for (const p of PROVIDERS) {
@@ -768,9 +769,10 @@ export async function selectEnsemble(opts: { samples?: number } = {}): Promise<E
   return workers.length ? new EnsembleProvider(workers, { samples: opts.samples ?? DEFAULT_SAMPLES }) : null;
 }
 
-/** Pick a CLI provider to run the Critic pass (subscription-only, like the workers).
- *  Returns null when no assistant CLI is installed — verification then no-ops and the
- *  un-audited draft stands (graceful degradation; dec_18a81c8291). */
+/** Pick a subscription CLI to run the Critic pass (like selectWorkers, including
+ *  openai-compat when configured). Returns null when no assistant CLI is installed —
+ *  verification then no-ops and the un-audited draft stands (graceful degradation;
+ *  dec_18a81c8291). */
 export async function selectVerifier(): Promise<SynthProvider | null> {
   const workers = await selectWorkers();
   return workers[0] ?? null;
