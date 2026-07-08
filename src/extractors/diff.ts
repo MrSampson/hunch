@@ -46,11 +46,12 @@ const DECL_PATTERNS: Array<{ kind: SymbolChange["kind"]; re: RegExp }> = [
   { kind: "const", re: /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/ },
   { kind: "const", re: /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?function/ },
 ];
+import { CODE_EXTENSIONS } from "./languages.js";
+
 const IMPORT_RE = /^\s*import\s+(?:[^'"]*from\s+)?['"]([^'"]+)['"]/;
 const CONT_IMPORT_RE = /^\s*\}?\s*from\s+['"]([^'"]+)['"]/; // multi-line: "} from 'x'"
 const REQUIRE_RE = /\brequire\(\s*['"]([^'"]+)['"]\s*\)/;
-const CODE_EXT = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
-const isCode = (p: string) => !!p && CODE_EXT.test(p);
+const isCode = (p: string) => !!p && CODE_EXTENSIONS.some((ext) => p.endsWith(ext));
 
 function declOf(line: string): SymbolChange | null {
   for (const { kind, re } of DECL_PATTERNS) {
