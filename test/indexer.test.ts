@@ -158,7 +158,11 @@ function pythonFixtureRepo(): string {
   mkdirSync(join(root, "src/billing"), { recursive: true });
   writeFileSync(
     join(root, "src/auth/session.py"),
-    `from .jwt import decode_token\n\ndef verify_session(t):\n    return decode_token(t)\n`,
+    // same-file (same-component) import used in a call — should yield a same-file
+    // call edge — PLUS a cross-component import (billing) that is never called,
+    // so Python cross-file import resolution (out of scope, issue #5) genuinely
+    // gets exercised rather than trivially having nothing to resolve.
+    `from .jwt import decode_token\nfrom ..billing.charge import charge\n\ndef verify_session(t):\n    return decode_token(t)\n`,
   );
   writeFileSync(join(root, "src/auth/jwt.py"), `def decode_token(t):\n    return t\n`);
   writeFileSync(
@@ -186,14 +190,19 @@ test("indexRepo builds symbols and same-file call edges for a Python repo", () =
   const decode = syms.find((s) => s.name === "decode_token");
   assert.ok(decode, "decode_token indexed");
 
+  // verify_session -> decode_token resolved as a same-file call edge
+  const deps = store.getDependents(decode!.id).map((d) => d.via);
+  assert.ok(deps.some((v) => v.includes("verify_session")), "verify_session is a dependent of decode_token");
+
   // components derived from src/<dir>, same as TS
   const comps = store.json.loadAll("components").map((c) => c.name).sort();
   assert.deepEqual(comps, ["Auth", "Billing"]);
 
-  // NO depends_on edge from Python's `from .jwt import decode_token` — cross-file
-  // Python import resolution is explicitly out of scope (issue #5). auth.session
-  // and auth.jwt are in the SAME component (src/auth) anyway, so this also
-  // confirms no same-component false edge is fabricated.
+  // NO depends_on edge from Python's `from ..billing.charge import charge` even
+  // though it genuinely crosses the Auth/Billing component boundary — cross-file
+  // Python import resolution is explicitly out of scope (issue #5), so this
+  // assertion actually probes that no fabricated edge is produced rather than
+  // passing vacuously because nothing ever referenced billing.
   const edges = store.json.loadAll("edges");
   assert.ok(
     !edges.some((e) => e.type === "depends_on" && (e.from.includes("billing") || e.to.includes("billing"))),
