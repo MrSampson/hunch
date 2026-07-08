@@ -102,7 +102,11 @@ const TSX: LanguageSpec = {
 const PY_QUERY = `
   (class_definition
     name: (identifier) @class.name
-    body: (block (function_definition name: (identifier) @method.name) @method.def)) @class.def
+    body: (block
+      [
+        (function_definition name: (identifier) @method.name) @method.def
+        (decorated_definition definition: (function_definition name: (identifier) @method.name) @method.def)
+      ])) @class.def
   (function_definition name: (identifier) @fn.name) @fn.def
   (import_statement name: (dotted_name) @import.src)
   (import_statement name: (aliased_import name: (dotted_name) @import.src))

@@ -213,6 +213,53 @@ test("indexRepo builds symbols and same-file call edges for a Python repo", () =
   rmSync(root, { recursive: true, force: true });
 });
 
+function pythonDecoratedMethodFixtureRepo(): string {
+  const root = mkdtempSync(join(tmpdir(), "hunch-idx-py-decorated-"));
+  mkdirSync(join(root, "src/auth"), { recursive: true });
+  mkdirSync(join(root, "src/billing"), { recursive: true });
+  // A decorated method (kind must classify as "method", not "function" — Finding 1)
+  // defined in one component and called via member access from a DIFFERENT file/
+  // component. Cross-file Python import resolution is out of scope (issue #5), so
+  // this relies on the same global-name resolveName() fallback every other
+  // cross-file Python call edge in this codebase relies on.
+  writeFileSync(
+    join(root, "src/auth/session.py"),
+    `class Base:\n    @classmethod\n    def create(cls):\n        return cls()\n`,
+  );
+  writeFileSync(
+    join(root, "src/billing/charge.py"),
+    `def use_it(b):\n    return b.create()\n`,
+  );
+  return root;
+}
+
+test("cross-file member call to a decorated Python method creates a call edge (regression: Finding 1)", () => {
+  const root = pythonDecoratedMethodFixtureRepo();
+  const store = new HunchStore(hunchPaths(root));
+  store.json.ensureDirs();
+  indexRepo(store, root, { churn: false });
+  store.reindex();
+
+  const syms = store.json.loadAll("symbols");
+  const create = syms.find((s) => s.name === "create");
+  assert.ok(create, "create indexed");
+  assert.equal(create!.kind, "method", "decorated method classifies as kind \"method\"");
+  assert.equal(create!.file, "src/auth/session.py");
+
+  const useIt = syms.find((s) => s.name === "use_it");
+  assert.ok(useIt, "use_it indexed");
+  assert.notEqual(useIt!.file, create!.file, "caller and callee are in different files");
+
+  // the cross-file member call edge must exist — before the fix, the misclassified
+  // "function" symbol was neither `kind === "method"` nor same-file, so the edge
+  // was silently dropped.
+  const deps = store.getDependents(create!.id).map((d) => d.via);
+  assert.ok(deps.some((v) => v.includes("use_it")), "use_it is a dependent of the decorated method create");
+
+  store.close();
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("indexing is deterministic — same ids on re-run", () => {
   const root = fixtureRepo();
   const store = new HunchStore(hunchPaths(root));

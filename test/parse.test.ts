@@ -109,3 +109,41 @@ test("parses a >=32KB Python file without throwing", () => {
   assert.ok(p, "did not return null/throw on a large Python file");
   assert.ok(p!.symbols.some((s) => s.name === "f0"));
 });
+
+const PY_DECORATED_SRC = `
+class Base:
+    @classmethod
+    def create(cls):
+        return cls()
+
+    @property
+    def value(self):
+        return self._value
+
+    @staticmethod
+    def util():
+        return 1
+
+    @some.dotted.decorator
+    def custom(self):
+        return 1
+
+    @some_decorator(arg=1)
+    def with_args(self):
+        return 1
+
+    def plain(self):
+        return 1
+`;
+
+test("decorated Python methods (@classmethod/@property/@staticmethod/dotted/with-args) still classify as kind \"method\" (regression: Finding 1)", () => {
+  const p = parseSource("src/models/base.py", PY_DECORATED_SRC)!;
+  assert.ok(p, "python file did not parse");
+  const kindOf = (n: string) => p.symbols.find((s) => s.name === n)?.kind;
+  for (const name of ["create", "value", "util", "custom", "with_args", "plain"]) {
+    assert.equal(kindOf(name), "method", `${name} should classify as "method", got "${kindOf(name)}"`);
+  }
+  // exactly one symbol per definition — no duplicate from the general fn.def pattern
+  const names = p.symbols.map((s) => s.name);
+  assert.equal(names.filter((n) => n === "create").length, 1, "no duplicate symbol for a decorated method");
+});
