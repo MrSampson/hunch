@@ -45,12 +45,16 @@ const DECL_PATTERNS: Array<{ kind: SymbolChange["kind"]; re: RegExp }> = [
   { kind: "type", re: /^\s*(?:export\s+)?type\s+([A-Za-z_$][\w$]*)\s*[=<]/ },
   { kind: "const", re: /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/ },
   { kind: "const", re: /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?function/ },
+  { kind: "function", re: /^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(/ },
+  { kind: "class", re: /^\s*class\s+([A-Za-z_]\w*)\s*[:(]/ },
 ];
 import { CODE_EXTENSIONS } from "./languages.js";
 
 const IMPORT_RE = /^\s*import\s+(?:[^'"]*from\s+)?['"]([^'"]+)['"]/;
 const CONT_IMPORT_RE = /^\s*\}?\s*from\s+['"]([^'"]+)['"]/; // multi-line: "} from 'x'"
 const REQUIRE_RE = /\brequire\(\s*['"]([^'"]+)['"]\s*\)/;
+const PY_IMPORT_RE = /^\s*import\s+([A-Za-z_][\w.]*)/; // "import os" / "import a.b.c"
+const PY_FROM_IMPORT_RE = /^\s*from\s+([.\w]+)\s+import\s+/; // "from os import path" / "from . import x"
 const isCode = (p: string) => !!p && CODE_EXTENSIONS.some((ext) => p.endsWith(ext));
 
 function declOf(line: string): SymbolChange | null {
@@ -61,7 +65,12 @@ function declOf(line: string): SymbolChange | null {
   return null;
 }
 function importOf(line: string): string | null {
-  const m = IMPORT_RE.exec(line) ?? CONT_IMPORT_RE.exec(line) ?? REQUIRE_RE.exec(line);
+  const m =
+    IMPORT_RE.exec(line) ??
+    CONT_IMPORT_RE.exec(line) ??
+    REQUIRE_RE.exec(line) ??
+    PY_FROM_IMPORT_RE.exec(line) ??
+    PY_IMPORT_RE.exec(line);
   return m ? m[1]! : null;
 }
 function stripAB(p: string): string {
