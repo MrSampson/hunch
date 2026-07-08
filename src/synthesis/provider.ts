@@ -656,11 +656,14 @@ export async function selectProvider(): Promise<SynthProvider> {
   return new DeterministicProvider();
 }
 
-// ---- Deep Synthesis: ensemble of subscription CLIs ------------------------
-// Opt-in (backfill/sync --deep): fan a commit out to EVERY available subscription
-// CLI, drop failures, and reconcile the drafts. Subscription-only (the workers are
-// the same CLI providers, so ANTHROPIC_API_KEY stripping is inherited). NEVER used on
-// the guard path; confidence is capped below the strict gate so output stays advisory.
+// ---- Deep Synthesis: ensemble of subscription CLIs (+ opt-in openai-compat) ----
+// Opt-in (backfill/sync --deep): fan a commit out to EVERY available worker —
+// the subscription CLIs (ANTHROPIC_API_KEY stripping inherited from them) plus the
+// opt-in openai-compat HTTP provider when configured, which is outside that
+// stripping scope entirely (con_2ce3f2a547 governs the Anthropic API specifically,
+// not a user-configured self-hosted endpoint) — drop failures, reconcile the
+// drafts. NEVER used on the guard path; confidence is capped below the strict gate
+// so output stays advisory.
 
 /** All available subscription-CLI workers (claude/codex/cursor, plus the opt-in
  *  openai-compat), excluding the deterministic fallback — the pool Deep Synthesis
