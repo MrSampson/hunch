@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Docs — Hunch · Engineering Memory OS</title>
-<meta name="description" content="Hunch documentation — install, initialize, wire up your coding assistant over MCP, and use the guards (Never Twice, Causal Merge Verdict, Decision Guard, Redundancy Guard, CI Constraint Guard). Complete CLI and MCP reference." />
+<title>Cookbook — Hunch · Engineering Memory OS</title>
+<meta name="description" content="Hunch cookbook — copy-paste recipes: install, firmness levels, the verification pipeline, decision capture, doc anchors, CI wiring, skill delivery, benchmarking, private overlay." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -178,7 +178,7 @@ if(!matchMedia('(prefers-reduced-motion: reduce)').matches)document.documentElem
     <div style="display:flex;align-items:center;gap:14px">
       <button class="menu-btn" id="menuBtn" aria-label="Toggle navigation"><span></span></button>
       <a class="brand" href="/">
-        <span class="dot" aria-hidden="true"></span> hunch <span class="tag">docs</span>
+        <span class="dot" aria-hidden="true"></span> hunch <span class="tag">cookbook</span>
       </a>
     </div>
     <nav class="top-links">
@@ -197,485 +197,127 @@ if(!matchMedia('(prefers-reduced-motion: reduce)').matches)document.documentElem
   <!-- ──────────────── SIDEBAR ──────────────── -->
   <aside class="side" id="side">
     <div class="nav-group">
-      <h4>Getting started</h4>
-      <a href="#overview">Overview</a>
-      <a href="#install">Install</a>
-      <a href="#initialize">Initialize a repo</a>
-      <a href="#first-query">Your first query</a>
+      <h4>Cookbook</h4>
+      <a href="#start">First install</a>
+      <a href="#firmness">Enforcement levels</a>
+      <a href="#pipeline">Verification pipeline</a>
+      <a href="#capture">Capture a decision</a>
+      <a href="#correction">Corrections → rules</a>
     </div>
     <div class="nav-group">
-      <h4>Setup</h4>
-      <a href="#synthesis">Synthesis &amp; billing</a>
-      <a href="#mcp">MCP &amp; assistants</a>
-      <a href="#reload">Reload your assistant</a>
-      <a href="#private">Private memory</a>
-      <a href="#windows">Windows note</a>
+      <h4>Keeping it true</h4>
+      <a href="#anchors">Doc anchors</a>
+      <a href="#ci">Wire CI</a>
     </div>
     <div class="nav-group">
-      <h4>Concepts</h4>
-      <a href="#graph">The reasoning graph</a>
-      <a href="#provenance">Provenance &amp; confidence</a>
-      <a href="#time-travel">Time-travel</a>
-      <a href="#grounding">Decision-grounding</a>
-      <a href="#wiki">The component wiki</a>
+      <h4>Advanced</h4>
+      <a href="#skills">Skills that fire</a>
+      <a href="#bench">Benchmark your setup</a>
+      <a href="#private">Private overlay</a>
     </div>
     <div class="nav-group">
-      <h4>Using Hunch</h4>
-      <a href="#mcp-tools">MCP tools</a>
-      <a href="#slash">Slash commands</a>
-      <a href="#firmness">Firmness levels</a>
+      <h4>More</h4>
+      <a href="/docs">Full documentation</a>
+      <a href="/changelog">Changelog</a>
     </div>
-    <div class="nav-group">
-      <h4>Guards</h4>
-      <a href="#never-twice">Never Twice</a>
-      <a href="#merge-verdict">Causal Merge Verdict</a>
-      <a href="#veto">Decision Guard</a>
-      <a href="#regression">Regression Guard</a>
-      <a href="#redundancy">Redundancy Guard</a>
-      <a href="#ci">CI Constraint Guard</a>
-    </div>
-    <div class="nav-group">
-      <h4>Reference</h4>
-      <a href="#cli">CLI reference</a>
-      <a href="#recipes">Common workflows</a>
-      <a href="/cookbook">Cookbook ↗</a>
-      <a href="#storage">Where it's stored</a>
-    </div>
-    <div class="nav-group">
-      <h4>Operations</h4>
-      <a href="#doctor">Doctor &amp; troubleshooting</a>
-      <a href="#team">Working as a team</a>
-      <a href="#maintenance">Maintenance</a>
-      <a href="#develop">Develop &amp; contribute</a>
-    </div>
-  </aside>
+</aside>
 
   <!-- ──────────────── CONTENT ──────────────── -->
   <main>
-    <section class="first" id="overview">
-      <div class="eyebrow">Documentation</div>
-      <h1 class="page">Hunch — Engineering Memory OS</h1>
-      <p class="lead">Git stores <em>what</em> the code is. Hunch stores <em>why</em> — a persistent, git-native reasoning graph of decisions, bugs, and invariants, surfaced to your coding assistant at reasoning time so it stops re-deriving understanding and stops undoing intentional design.</p>
-      <p>Hunch is a CLI plus a local MCP server. It captures the “why” as a byproduct of normal work — commits and test failures — stores it as git-tracked JSON in <code>.hunch/</code>, and feeds the minimal relevant slice back to <strong>any</strong> MCP assistant (Claude Code, Cursor, Copilot, Windsurf, Codex). Local-first, no SaaS, and synthesis is billed to your existing coding-assistant subscription — never a pay-per-token API key.</p>
-      <div class="note tip"><span class="ic">⚡</span><b>In a hurry?</b> <code>npm i -g @davesheffer/hunch</code> → <code>cd your-repo &amp;&amp; hunch init &amp;&amp; hunch backfill --since 90d</code> → reload your assistant and ask “why is X built this way?”. The rest of this page is the full tour.</div>
-    </section>
+    <section class="first" id="start">
+      <div class="eyebrow">Cookbook</div>
+      <h1 class="page">Recipes for running Hunch</h1>
+      <p class="lead">Copy-paste recipes for day-to-day Hunch. Every recipe says what you should <em>observe</em> when it works — a passing gate, an injected block, a red CI — never "it's configured".</p>
 
-    <section id="install">
-      <h2>Install<a class="anchor" href="#install">#</a></h2>
-      <p>Hunch needs <strong>Node ≥ 22.13</strong>. Install the CLI globally — that puts a <code>hunch</code> binary on your PATH:</p>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">npm</span> install -g @davesheffer/hunch</pre></div>
-      <p>Or run from source (for hacking on Hunch itself):</p>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">git</span> clone https://github.com/davesheffer/hunch &amp;&amp; <span class="k">cd</span> hunch
-<span class="k">npm</span> install
-<span class="k">npm</span> run build        <span class="c"># compile to dist/</span>
-<span class="k">npm</span> link             <span class="c"># optional: global `hunch` from source</span></pre></div>
-    </section>
-
-    <section id="initialize">
-      <h2>Initialize a repo<a class="anchor" href="#initialize">#</a></h2>
-      <p>Run <code>hunch init</code> in the repo you want a memory for. One command scaffolds everything:</p>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> init               <span class="c"># scaffold .hunch/, index, install hooks, wire up assistants</span>
-<span class="k">hunch</span> backfill --since 90d <span class="c"># cold start: seed decisions from recent git history</span></pre></div>
-      <p><code>hunch init</code> does the following, idempotently (re-running is safe and merges into existing files):</p>
-      <ul>
-        <li>Scaffolds <code>.hunch/</code> and indexes the repo into a symbol/dependency graph.</li>
-        <li>Installs a <strong>post-commit hook</strong> (the learning loop) and a <strong>pre-commit Constraint Guard</strong>.</li>
-        <li>Writes <code>.mcp.json</code> + slash commands + an auto-maintained <code>CLAUDE.md</code>, and registers a git <strong>merge driver</strong> for the graph.</li>
-        <li>Wires up every detected assistant — Claude Code, Cursor, VS&nbsp;Code (Copilot), Windsurf, Codex — to the same <code>.hunch/</code> graph.</li>
-      </ul>
-      <div class="note"><span class="ic">ℹ</span><code>init</code> writes a <code>.mcp.json</code> pointing at <em>this machine’s</em> Node + Hunch, so each teammate runs <code>hunch init</code> once to wire up their own clone. The captured <code>.hunch/</code> content is shared via git.</div>
-    </section>
-
-    <section id="first-query">
-      <h2>Your first query<a class="anchor" href="#first-query">#</a></h2>
-      <p>Ask the codebase why — from the CLI, or in your assistant once the MCP server is registered:</p>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> why src/auth/session.ts   <span class="c"># decisions / bugs / invariants behind a file</span>
-<span class="k">hunch</span> doctor                    <span class="c"># git, schema version, synthesis mode</span></pre></div>
-      <p>…and in your assistant: <em>“why is the session module built this way?”</em> — Claude consults Hunch and answers with citations (record ids + provenance).</p>
-    </section>
-
-    <section id="synthesis">
-      <h2>Synthesis &amp; billing<a class="anchor" href="#synthesis">#</a></h2>
-      <p>When Hunch turns a commit into a structured Decision, the LLM call is billed to <strong>your coding-assistant subscription</strong> through its CLI — <strong>never</strong> a pay-per-token API key. Hunch auto-detects the first CLI present, in order:</p>
-      <table class="tbl">
-        <thead><tr><th>CLI</th><th>Subscription</th><th>Detected by</th></tr></thead>
-        <tbody>
-          <tr><td><code>claude</code> (Claude Code)</td><td>Claude Pro / Max</td><td><code>claude --version</code></td></tr>
-          <tr><td><code>codex</code> (OpenAI Codex)</td><td>ChatGPT Plus / Pro</td><td><code>codex --version</code></td></tr>
-          <tr><td><code>cursor-agent</code> (Cursor)</td><td>Cursor</td><td><code>cursor-agent --version</code></td></tr>
-        </tbody>
-      </table>
-      <p>If none is installed, Hunch still works with a deterministic structural heuristic (lower-confidence drafts). <code>hunch doctor</code> tells you which mode you’re in; force one with the <code>HUNCH_SYNTH_PROVIDER</code> env var:</p>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">export</span> HUNCH_SYNTH_PROVIDER=claude-cli   <span class="c"># | codex-cli | cursor-agent | deterministic</span></pre></div>
-      <p><strong>Deep Synthesis <span class="pill ok">v0.19</span>.</strong> <code>--deep</code> gathers several independent takes on a change and reconciles them into one note — trusting it more when they agree. <code>--verify</code> then fact-checks the note against the actual commit and drops anything the change doesn't support. The result is a more trustworthy note, and it always stays <em>advisory</em> until you confirm it. Subscription-only; falls back to a single draft when only one assistant is available.</p>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> backfill --deep        <span class="c"># higher-quality notes across history</span>
-<span class="k">hunch</span> sync &lt;sha&gt; --deep       <span class="c"># a single commit (fact-check on)</span>
-<span class="k">hunch</span> sync &lt;sha&gt; --verify     <span class="c"># fact-check a single note</span></pre></div>
-    </section>
-
-    <section id="mcp">
-      <h2>MCP &amp; assistants<a class="anchor" href="#mcp">#</a></h2>
-      <p>The Hunch MCP server is <strong>client-agnostic</strong>: one <code>.hunch/</code> graph powers every assistant. <code>hunch init</code> scaffolds each tool’s MCP config plus an ambient grounding file so they all consult the same memory.</p>
-      <table class="tbl">
-        <thead><tr><th>Assistant</th><th>MCP config</th><th>Grounding file</th></tr></thead>
-        <tbody>
-          <tr><td>Claude Code</td><td><code>.mcp.json</code></td><td><code>CLAUDE.md</code> + <code>/hunch-*</code> commands</td></tr>
-          <tr><td>Cursor</td><td><code>.cursor/mcp.json</code></td><td><code>.cursor/rules/hunch.mdc</code></td></tr>
-          <tr><td>VS Code (Copilot)</td><td><code>.vscode/mcp.json</code></td><td><code>.github/copilot-instructions.md</code></td></tr>
-          <tr><td>Windsurf</td><td><code>.windsurf/mcp_config.json</code></td><td><code>.windsurf/rules/hunch.md</code></td></tr>
-          <tr><td>Codex / any</td><td><code>.codex/config.toml</code></td><td><code>AGENTS.md</code></td></tr>
-        </tbody>
-      </table>
-      <p>The server runs over stdio and exposes the <code>hunch_*</code> tools. You can start it manually to verify:</p>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> mcp   <span class="c"># serves Hunch over stdio (this is what .mcp.json launches)</span></pre></div>
-      <div class="note tip"><span class="ic">★</span><b>Prefer <code>hunch init</code> over a global <code>claude mcp add</code>.</b> <code>.mcp.json</code> is registered by file path, so it’s robust and travels with the repo.</div>
-    </section>
-
-    <section id="reload">
-      <h2>Reload your assistant<a class="anchor" href="#reload">#</a></h2>
-      <p>After <code>hunch init</code> (or after pulling new Hunch versions), the MCP server config has changed but a running assistant session still holds the old process. <strong>Reload your assistant in the repo</strong> — reload the window / restart the session — so it respawns the server and picks up the <code>hunch_*</code> tools.</p>
-      <div class="note"><span class="ic">ℹ</span>The on-disk directory is <code>.hunch/</code> and the tools are <code>hunch_*</code>. If the tools don’t appear after a reload, run <code>hunch doctor</code>.</div>
-    </section>
-
-    <section id="private">
-      <h2>Private memory <span class="pill ok">v0.17</span><a class="anchor" href="#private">#</a></h2>
-      <p>Open-source your code without open-sourcing your <em>reasoning</em>. Keep sensitive decisions/bugs/constraints in a <strong>separate private location</strong> and Hunch unions it into every query and guard <strong>locally</strong> — your MCP tools and the pre-edit hook see it — while your public <code>.hunch/</code> stays clean.</p>
-      <p><strong>One command sets it up</strong> (no env var, no shell-profile edit):</p>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> private                       <span class="c"># default ./.hunch-private (gitignored)</span>
-<span class="k">hunch</span> private ~/work/secret-memory   <span class="c"># or a path you choose</span>
-<span class="k">hunch</span> private --repo git@github.com:you/mem-private.git   <span class="c"># or clone a private repo</span></pre></div>
-      <p>It writes a gitignored <code>.hunch/local.json</code> pointing at the store, installs the <code>--private</code> post-commit hook, and that’s it — Hunch (and the MCP server) <strong>auto-detect</strong> it; <code>hunch doctor</code> shows <code>private: on → …</code>. It’s <strong>opt-in and default-off</strong>: no <code>local.json</code> (and no <code>HUNCH_PRIVATE_DIR</code>) means the overlay is completely inert.</p>
-      <p>Record sensitive items with <code>private: true</code> on <code>hunch_record_decision</code> / <code>hunch_record_correction</code>; they’re written to the overlay, never the committed repo. Post-commit synthesis routes its auto-captured decisions there too, so a private-memory repo’s auto-decisions never land in the public tree. <code>HUNCH_PRIVATE_DIR</code> overrides <code>local.json</code> per-shell (e.g. for portability); the git hook lives in <code>.git/hooks/</code> and is never committed.</p>
-      <p><strong>Auto-commit (on by default, every mode).</strong> Each capture is auto-committed to the store it lands in: a private/shared <em>overlay repo</em> is committed <em>and pushed</em>; the public <code>.hunch/</code> in a regular repo is committed <em>only</em> and rides your next push — Hunch never pushes or merges your code branch. It stages only the <code>.hunch/</code> dir (never your other changes) and is recursion-safe. Opt out with <code>--no-auto-commit</code> on <code>hunch init</code> / <code>private</code> / <code>shared</code>.</p>
-      <div class="note"><span class="ic">ℹ</span><strong>Leak-safe by construction.</strong> Committed files (the auto <code>CLAUDE.md</code> grounding) and the CI PR comment render <em>public-only</em> — a private record can’t reach a public surface. A private constraint is still <em>enforced</em> on your machine (pre-edit hook + local <code>hunch check</code>), just never posted. Keep the var <strong>unset in CI</strong>; the scaffolded guard also passes <code>--public-only</code> and neutralizes it as defense-in-depth.</div>
-    </section>
-
-    <section id="windows">
-      <h2>Windows note<a class="anchor" href="#windows">#</a></h2>
-      <p>On Windows, a global <code>claude mcp add</code> writes to <code>~/.claude.json</code> keyed by the raw working-directory string. Drive letters are case-insensitive (<code>c:\</code> and <code>C:\</code> are the same folder) but Claude Code compares the key case-sensitively — so it can create two project blocks for one directory, and a session that resolves to the <em>other</em> casing sees no <code>hunch_*</code> tools.</p>
-      <p>If you hit this, run <code>hunch doctor</code> — on Windows it detects the split and heals it (merging the MCP servers across both casings, after backing up <code>~/.claude.json</code>). <code>hunch init</code> runs the same heal automatically.</p>
-    </section>
-
-    <section id="graph">
-      <h2>The reasoning graph<a class="anchor" href="#graph">#</a></h2>
-      <p>Hunch stores four kinds of record as git-tracked JSON, plus the code graph that links them:</p>
-      <table class="tbl">
-        <thead><tr><th>Record</th><th>What it captures</th></tr></thead>
-        <tbody>
-          <tr><td><strong>Decision</strong></td><td>Why a change was made — an ADR auto-drafted from each commit (context, decision, alternatives, consequences).</td></tr>
-          <tr><td><strong>Bug</strong></td><td>A root cause + its history (introduced → fixed → recurred), captured from a failing test.</td></tr>
-          <tr><td><strong>Constraint</strong></td><td>A do-not-break rule. Recurring or severe bugs become one; corrections create one directly.</td></tr>
-          <tr><td><strong>Code map</strong></td><td>How your code connects — functions, files, and components — so Hunch can see the ripple effect of a change.</td></tr>
-        </tbody>
-      </table>
-      <p>It's all saved as plain, readable files in your repo, with a fast local search index built from them on demand.</p>
-    </section>
-
-    <section id="provenance">
-      <h2>Provenance &amp; confidence<a class="anchor" href="#provenance">#</a></h2>
-      <p>Every record is tagged with where it came from and how sure Hunch is — so nothing is a blind assertion. A quick auto-guess is marked low-confidence and stays <em>advisory</em>; only what you've personally confirmed is trusted enough to <em>block</em> a change (see <a class="link" href="#firmness">firmness</a>). Triage drafts with <code>hunch review</code>.</p>
-    </section>
-
-    <section id="time-travel">
-      <h2>Time-travel<a class="anchor" href="#time-travel">#</a></h2>
-      <p>Decisions and constraints carry a git-anchored <strong>valid-time window</strong>. Supersession closes a window instead of deleting the record, so history stays auditable. Ask the graph what was believed at any past commit or tag:</p>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> why src/auth/session.ts --as-of v0.7.0
-<span class="k">hunch</span> timeline src/auth/session.ts   <span class="c"># the full decision history, newest first</span></pre></div>
-      <p>The <code>hunch_why</code> and <code>hunch_context</code> MCP tools take the same optional <code>as_of</code> ref.</p>
-    </section>
-
-    <section id="grounding">
-      <h2>Decision-grounding<a class="anchor" href="#grounding">#</a></h2>
-      <p>Architectural Conformance keeps the <em>code</em> honest to the graph; decision-grounding keeps your <em>docs</em> honest to it. A decision can be anchored to a <strong>topic</strong> (e.g. <code>auth.session</code>), and a topic always has one live answer — the <strong>current</strong> decision, its <strong>history</strong>, and what was <strong>rejected</strong> along the way.</p>
-      <p><strong>Capture with <code>/capture</code>.</strong> It interviews the decision to a resolved state — topic, rationale, rejected alternatives — before anything is written, and the graph refuses to hold two live decisions on one topic. A git merge is the one thing that can create two; <code>hunch reconcile-topics</code> catches it for human resolution.</p>
-      <h3>Markdown topic anchors — AGENTS.md as a drift surface</h3>
-      <p>Anchor a section of <code>AGENTS.md</code>, <code>CLAUDE.md</code>, or any repo markdown to a topic with an HTML comment:</p>
-      <div class="code" data-lang="markdown"><div class="code-head"><span class="lbl">AGENTS.md</span><button class="copy">Copy</button></div><pre><span class="c">&lt;!-- hunch:topic auth.session --&gt;</span>                 <span class="c"># grounds only</span>
-<span class="c">&lt;!-- hunch:topic auth.session dec_a1b2c3d4e5 --&gt;</span>  <span class="c"># pinned: prose written against that decision</span></pre></div>
-      <ul>
-        <li><strong>Grounding:</strong> whenever an assistant edits the file, the pre-edit hook injects each declared topic's <em>current</em> decision and what it rejected — follow the graph, not the stale prose being edited.</li>
-        <li><strong>Drift:</strong> a <em>pinned</em> marker whose decision has been superseded fires <code>doc-anchor-stale</code>; a pin to a missing decision fires <code>doc-anchor-dangling</code>. Only an explicit pin can fire — never a semantic guess. Unpinned markers ground but never drift.</li>
-        <li><strong>Heal:</strong> <code>hunch heal</code> lists each drifted section with the decision to reconcile toward, then you update the pin. Read-only — it never rewrites your prose.</li>
-      </ul>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> drift             <span class="c"># ⛔ exits non-zero on any anchor-stale drift or topic collision — wire into CI</span>
-<span class="k">hunch</span> heal              <span class="c"># what to reconcile, and toward which decision</span>
-<span class="k">hunch</span> reconcile-topics  <span class="c"># &gt;1 live decision on a topic (post-merge) — exits non-zero</span></pre></div>
-    </section>
-
-    <section id="wiki">
-      <h2>The component wiki &amp; specs ledger<a class="anchor" href="#wiki">#</a></h2>
-      <p><code>hunch wiki</code> renders a component wiki <em>from</em> the graph — one page per component (why it's shaped this way, invariants, structure, bug history, relations) plus a <strong>specs ledger</strong> that grades every markdown doc in your repo deterministically: <strong>✅ grounded</strong> (anchored to current decisions — safe to trust), <strong>⚠ stale</strong> (pinned to a superseded decision, says "proposed" about shipped code, or references only deleted files), <strong>◻ unverified</strong> (no anchors — Hunch can't vouch either way). No LLM in any grade.</p>
-      <p><strong>Stale docs get adopted.</strong> The wiki copies a stale doc into <code>wiki/docs/</code> as a wiki-managed page healed against the graph — every stale pin re-pinned to the current decision with a 🧭 correction inline quoting what changed and what was rejected. Your <em>original file is never touched</em>; heal it (or delete it) and the copy retires automatically. The ledger routes readers to the trustworthy version either way.</p>
-      <p><strong>Freshness is drift, not a cron job.</strong> Each page's graph inputs are content-hashed into a manifest; when the graph moves, <code>hunch drift</code> names exactly which pages went stale and <code>hunch wiki --heal</code> regenerates only those. Hand-editing a generated page trips the same wire (the graph is the source of truth — edit records, not pages).</p>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> wiki            <span class="c"># generate/refresh wiki/ + the specs ledger</span>
-<span class="k">hunch</span> wiki --check    <span class="c"># CI gate: non-zero if any page is stale (green no-op if never adopted)</span>
-<span class="k">hunch</span> wiki --heal     <span class="c"># regenerate ONLY the stale pages; retire orphans</span>
-<span class="k">hunch</span> wiki --private  <span class="c"># render the FULL graph (private overlay included) into the OVERLAY repo</span></pre></div>
-      <p>With a <a class="link" href="#private">private overlay</a>, the public wiki is built from the committed store only — a private record can never reach a committed page, by construction. <code>--private</code> writes the full-graph wiki into the overlay repo instead; nothing lands here.</p>
-    </section>
-
-    <section id="mcp-tools">
-      <h2>MCP tools<a class="anchor" href="#mcp-tools">#</a></h2>
-      <p>The tools your assistant calls under the hood. Read tools answer “why / what-must-not-break / blast radius”; write tools persist new memory.</p>
-      <table class="tbl">
-        <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
-        <tbody>
-          <tr><td><code>hunch_query</code></td><td>Full-text + graph search across all records, ranked with provenance.</td></tr>
-          <tr><td><code>hunch_why</code></td><td>Decisions, bugs &amp; constraints behind a file/symbol (accepts <code>as_of</code>).</td></tr>
-          <tr><td><code>hunch_check_constraints</code></td><td>Invariants whose scope matches a path/glob — call before editing.</td></tr>
-          <tr><td><code>hunch_get_dependents</code></td><td>Transitive dependents of a symbol — the blast radius.</td></tr>
-          <tr><td><code>hunch_blast_radius</code></td><td>Dependent files + near-violations a change could break indirectly.</td></tr>
-          <tr><td><code>hunch_structure</code></td><td>The indexed shape of the repo / a dir / a file / a symbol — orient from the graph instead of grep rounds; tells the agent exactly which file to read.</td></tr>
-          <tr><td><code>hunch_pr_impact</code></td><td>The impact surface of a change (staged / branch / commit): dependent files reached, invariants direct &amp; near, decisions concerned. Advisory — the gate stays <code>hunch_merge_verdict</code>.</td></tr>
-          <tr><td><code>hunch_path</code></td><td>Shortest dependency chain between two symbols/files/components, either direction — "how does A reach B?".</td></tr>
-          <tr><td><code>hunch_bug_lineage</code></td><td>Bugs matching a symptom/symbol with their introduced→fixed→recurred lineage.</td></tr>
-          <tr><td><code>hunch_context</code></td><td>The minimal relevant slice for a task — invariants, why, bug history, blast radius.</td></tr>
-          <tr><td><code>hunch_timeline</code></td><td>A target’s decision history over time, with valid-time windows.</td></tr>
-          <tr><td><code>hunch_merge_verdict</code></td><td>A cited <b>BLOCK / WARN / PASS</b> over a diff (see <a class="link" href="#merge-verdict">below</a>).</td></tr>
-          <tr><td><code>hunch_record_decision</code></td><td>Write-back: persist a new Decision (ADR) with provenance. Gated by <b>topic</b> — refuses a second live decision for a topic that already has one (never silently two); accepts an optional <code>capture_token</code>.</td></tr>
-          <tr><td><code>hunch_capture_decision</code></td><td>Start a capture session — returns a one-question-at-a-time grilling protocol plus a <code>capture_token</code> to hand back to <code>hunch_record_decision</code>.</td></tr>
-          <tr><td><code>hunch_current_decision</code></td><td>The single in-force decision for a <b>topic</b> — the drift-detection anchor (with what it rejected).</td></tr>
-          <tr><td><code>hunch_record_correction</code></td><td>Write-back: turn a correction into an enforced invariant (see <a class="link" href="#never-twice">Never Twice</a>).</td></tr>
-          <tr><td><code>hunch_runbook</code></td><td>The proven steps for a recurring task (e.g. “add an MCP tool”) — kind-scoped retrieval over runbooks.</td></tr>
-          <tr><td><code>hunch_compare</code></td><td>Rank N candidate branches/commits by architectural fit (fewest invariant hits) — the “evaluate 5 solutions” check.</td></tr>
-          <tr><td><code>hunch_conformance</code></td><td>Does the code still <b>satisfy</b> recorded intent? (e.g. <code>pay</code> still reaches <code>verifySession</code>) — deterministic, over the graph.</td></tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section id="slash">
-      <h2>Slash commands<a class="anchor" href="#slash">#</a></h2>
-      <p>For Claude Code, <code>hunch init</code> also writes ergonomic slash commands:</p>
-      <table class="tbl">
-        <thead><tr><th>Command</th><th>What it does</th></tr></thead>
-        <tbody>
-          <tr><td><code>/hunch-why &lt;file|symbol&gt;</code></td><td>The decisions, invariants, and bug history behind it — with citations.</td></tr>
-          <tr><td><code>/hunch-fix &lt;bug&gt;</code></td><td>Fix a bug grounded in past root causes, blast radius, and constraints.</td></tr>
-          <tr><td><code>/hunch-fragile</code></td><td>A fragility report — the riskiest code, with evidence.</td></tr>
-          <tr><td><code>/capture</code></td><td>Grill you through a decision one question at a time, then persist it against its <b>topic</b> (via <code>hunch_capture_decision</code>).</td></tr>
-          <tr><td><code>/heal</code></td><td>Read-only doc↔graph reconciliation — surface where a doc disagrees with the graph; never rewrites prose silently.</td></tr>
-        </tbody>
-      </table>
+      <h2>1 · First install on a repo<a class="anchor" href="#start">#</a></h2>
+      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">npm</span> i -g @davesheffer/hunch
+<span class="k">cd</span> your-repo
+<span class="k">hunch</span> init --firmness advisory   <span class="c"># start gentle; raise later</span>
+<span class="k">hunch</span> backfill --since 90d       <span class="c"># cold start: seed from history</span></pre></div>
+      <p><b>Observe:</b> <code>.hunch/</code> appears (git-tracked JSON), <code>.claude/settings.json</code> gains five hook events (<code>PreToolUse</code>, <code>UserPromptSubmit</code>, <code>SessionStart</code>, <code>PostToolUse</code>, <code>Stop</code>), and the next assistant session opens with a 🧠 orientation block.</p>
     </section>
 
     <section id="firmness">
-      <h2>Firmness levels<a class="anchor" href="#firmness">#</a></h2>
-      <p>Telling an assistant “consult Hunch first” in a prompt drifts. Instead, <code>hunch init</code> installs agent hooks so grounding is enforced by the harness. How hard it pushes is one committed knob — set it once, it applies to the whole team:</p>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> firmness          <span class="c"># print the current level</span>
-<span class="k">hunch</span> firmness strict   <span class="c"># change it (takes effect on the next edit; no restart)</span></pre></div>
-      <table class="tbl">
-        <thead><tr><th>Level</th><th>Before an edit</th></tr></thead>
+      <h2>2 · Choose an enforcement level<a class="anchor" href="#firmness">#</a></h2>
+      <table>
+        <thead><tr><th>firmness</th><th>pre-edit grounding</th><th>blocking invariants deny edits</th><th>verification stop-gate</th></tr></thead>
         <tbody>
-          <tr><td><code>off</code></td><td>nothing (the hook is a no-op)</td></tr>
-          <tr><td><code>advisory</code> <span class="pill">default</span></td><td>inject the relevant Hunch slice as context</td></tr>
-          <tr><td><code>firm</code></td><td>advisory + explicitly flag invariants in the file’s scope</td></tr>
-          <tr><td><code>strict</code></td><td>firm + <b>deny</b> an edit that hits a <em>blocking</em> invariant (directly or via blast radius), feeding the invariant back as the refusal reason</td></tr>
+          <tr><td><code>off</code></td><td>—</td><td>—</td><td>—</td></tr>
+          <tr><td><code>advisory</code></td><td>✔</td><td>—</td><td>nag only</td></tr>
+          <tr><td><code>firm</code></td><td>✔</td><td>—</td><td>✔ blocks unverified turn-end</td></tr>
+          <tr><td><code>strict</code></td><td>✔</td><td>✔</td><td>✔</td></tr>
         </tbody>
       </table>
-      <div class="note"><span class="ic">ℹ</span>The hook never breaks your flow: any error or unrecognized input emits nothing and exits 0, and it stays silent on files Hunch hasn’t learned. <code>strict</code> only bites once you have <strong>blocking</strong> constraints recorded.</div>
+      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> firmness firm</pre></div>
+      <p>No restart needed — the hook reads firmness at run time.</p>
     </section>
 
-    <section id="never-twice">
-      <h2>Never Twice <span class="pill ok">v0.13</span><a class="anchor" href="#never-twice">#</a></h2>
-      <p>The most expensive failure in AI coding is being corrected and then <em>re-corrected</em>: you say “no, never call X here”, the agent complies once, and next session it does it again — because the feedback was stored as advisory text, not enforced. Hunch closes that loop.</p>
-      <p>When you correct the agent, it captures the rule as a first-class <strong>Constraint</strong> (provenance <code>human_confirmed</code>) via <code>hunch_record_correction</code> — and from then on the <em>same</em> pre-edit hook + CI guard hold <strong>every</strong> assistant to it.</p>
-      <div class="code" data-lang="text"><div class="code-head"><span class="lbl">in your assistant</span><button class="copy">Copy</button></div><pre>You:   "no — never import lodash, we ship our own utils"
-Agent: hunch_record_correction({ rule: "never import lodash; use src/utils",
-                                 scope_hint_file: "src/cart.ts", severity: "blocking" })
-<span class="d">→</span> con_… recorded. A later edit that adds `import _ from "lodash"` to that scope is
-  DENIED (strict) and the PR fails CI — in Cursor, Copilot, Windsurf, or Claude Code alike.</pre></div>
-      <p>The <code>UserPromptSubmit</code> hook nudges the agent to persist a rule whenever your prompt reads like a correction. Scoping is conservative by default (the file you were in); a repo-wide rule is only <em>blocking</em> when you pass <code>applies_to_all</code>, so one correction can’t silently gate the whole tree.</p>
+    <section id="pipeline">
+      <h2>3 · The verification pipeline (v1.4.0+)<a class="anchor" href="#pipeline">#</a></h2>
+      <p>The operating loop — <b>scope → evidence → change → verify → attack → report</b> — is injected at session start and <em>enforced</em> at turn end. Facts, not claims: <code>PostToolUse</code> records which product files were edited and whether a verify-shaped command (test / build / typecheck / plan) ran afterwards. At <code>firm</code>/<code>strict</code>, the <code>Stop</code> hook refuses to end a turn with unverified product edits — at most twice per turn, so a broken gate can never trap you.</p>
+      <div class="note"><span class="ic">📊</span><b>Why it exists (measured, 2026-07-08):</b> instruction skills installed as files were read in <b>0/20</b> benchmark sessions — pass rates identical to no skill at all. Guaranteed delivery of the same content flipped hard-bug diagnosis FAIL→PASS on every discriminating cell (Opus <em>and</em> Haiku). Delivery, not content, is the bottleneck — and hooks are the one delivery mechanism the model can't ignore.</div>
+      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre>HUNCH_PIPELINE=0          <span class="c"># kill switch, per env</span>
+<span class="k">hunch</span> firmness advisory   <span class="c"># keep grounding, drop the gate</span></pre></div>
+      <p>Docs and <code>.claude/</code> / <code>.hunch/</code> edits never arm the gate.</p>
     </section>
 
-    <section id="merge-verdict">
-      <h2>Causal Merge Verdict <span class="pill ok">v0.14</span><a class="anchor" href="#merge-verdict">#</a></h2>
-      <p>A diff-only reviewer sees <em>what</em> changed. It can’t see that the line you’re deleting is the fix for an incident, that the symbol you’re re-adding was deliberately retired, or that the helper you’re adding already exists three modules over. Hunch can — because it holds the <em>why</em> and the whole graph.</p>
-      <p><code>hunch_merge_verdict</code> (and <code>hunch check</code> / the CI guard) replays a diff against the graph and returns one cited verdict — <b>BLOCK / WARN / PASS</b> — that shows the reasoning, not just the rule:</p>
-      <div class="code" data-lang="text"><div class="code-head"><span class="lbl">hunch_merge_verdict</span><button class="copy">Copy</button></div><pre><span class="d">VERDICT: ⛔ BLOCK</span> — this change breaks a recorded invariant or re-opens a known bug.
-
-⛔ pay() must verify the session before charging — con_pay
-   🧠 why: "Charge must verify the session first" (dec_pay)
-   🐞 guards against: Double-charge on unverified session — pay() charged without verifying (bug_…)</pre></div>
-      <p>No model in the loop, so it’s safe as a merge gate: it blocks only on a high-confidence rule you’ve confirmed, and warns on everything softer. Call it with <code>{}</code> to check staged changes, or pass <code>base: "origin/main"</code> for a PR range.</p>
+    <section id="capture">
+      <h2>4 · Capture a decision that survives the session<a class="anchor" href="#capture">#</a></h2>
+      <p>After any non-trivial choice, in your assistant:</p>
+      <div class="code" data-lang="text"><div class="code-head"><span class="lbl">text</span><button class="copy">Copy</button></div><pre>/capture     <span class="c"># grilling interview: topic, rationale, rejected alternatives</span></pre></div>
+      <p>Or mid-flow: <code>hunch_capture_decision(topic)</code> → answer the questions → <code>hunch_record_decision(...)</code> with the returned token.</p>
+      <p><b>Observe:</b> the decision shows in <code>hunch now</code>, and editing a file it governs injects it — including what was <b>rejected</b>, so the next session doesn't re-litigate it.</p>
     </section>
 
-    <section id="veto">
-      <h2>Decision Guard (Veto) <span class="pill ok">v0.15</span><a class="anchor" href="#veto">#</a></h2>
-      <p>Decisions record not just what you chose but the alternatives you <em>rejected</em>. The Decision Guard flags a change that <strong>reverses</strong> a decision — re-introducing an approach an in-force decision rejected — so the agent can’t quietly walk back a deliberate call.</p>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> veto              <span class="c"># flag changes that reverse a rejected alternative</span></pre></div>
-      <p>Like the other gates: it warns by default and blocks under strict only on a rejected approach you’ve confirmed. Use <code>hunch review</code> to choose which reversals should block.</p>
+    <section id="correction">
+      <h2>5 · Turn a human correction into a permanent rule<a class="anchor" href="#correction">#</a></h2>
+      <div class="code" data-lang="text"><div class="code-head"><span class="lbl">text</span><button class="copy">Copy</button></div><pre>hunch_record_correction({ rule, scope_hint_file, severity: "blocking" })</pre></div>
+      <p><b>Observe:</b> at <code>strict</code>, an edit violating the rule is denied with the rule quoted back. Never&nbsp;Twice.</p>
     </section>
 
-    <section id="regression">
-      <h2>Regression Guard<a class="anchor" href="#regression">#</a></h2>
-      <p>Re-adding a symbol or dependency that an in-force decision deliberately <strong>retired</strong> gets flagged — warns always, fails a strict commit only when the retirement is tied to a blocking invariant. The agent stops undoing intentional design. The pre-edit hook also surfaces what a decision retired from a file (“don’t re-add <code>login</code> here — dec_017 removed it”), and the commit-time <code>hunch check</code> does the actual gating.</p>
-    </section>
-
-    <section id="redundancy">
-      <h2>Redundancy Guard <span class="pill ok">v0.16</span><a class="anchor" href="#redundancy">#</a></h2>
-      <p>Coding agents work from a <em>local</em> context window, so they re-implement a helper that already lives three modules over, or re-add a dependency the codebase already has — sprawl a diff-only reviewer can’t see. Hunch holds the whole symbol graph, so a diff that adds a function or class already defined elsewhere is flagged with its existing location.</p>
-      <div class="code" data-lang="text"><div class="code-head"><span class="lbl">hunch check</span><button class="copy">Copy</button></div><pre>Possibly re-implements 1 symbol(s) that already exist (advisory — review, never blocks):
-
-  ⟲ adds function `formatDate` — already defined in src/util/date.ts</pre></div>
-      <p>It’s <strong>advisory</strong> — it never blocks a commit; it surfaces in <code>hunch check</code>, the CI guard, and the merge verdict. It’s tuned to stay quiet, so a refactor that just moves code around isn’t mistaken for a duplicate.</p>
+    <section id="anchors">
+      <h2>6 · Keep docs honest (doc≠graph)<a class="anchor" href="#anchors">#</a></h2>
+      <p>Anchor a doc to a topic:</p>
+      <div class="code" data-lang="markdown"><div class="code-head"><span class="lbl">markdown</span><button class="copy">Copy</button></div><pre>&lt;!-- hunch:topic auth.session-storage --&gt;</pre></div>
+      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> drift              <span class="c"># CI-gateable: stale anchors fail</span>
+<span class="k">hunch</span> heal               <span class="c"># guided reconciliation — never rewrites prose silently</span>
+<span class="k">hunch</span> reconcile-topics   <span class="c"># after merges: one live decision per topic</span></pre></div>
     </section>
 
     <section id="ci">
-      <h2>CI Constraint Guard<a class="anchor" href="#ci">#</a></h2>
-      <p>Memory that can hold a merge — when you've asked it to. <code>hunch ci</code> scaffolds a GitHub Action that runs <code>hunch check</code> on every PR and comments the affected invariants and decisions (with <code>con_</code>/<code>dec_</code> ids and the causal <em>why</em>). The check fails only on a direct, high-confidence, non-stale blocking invariant — a rule you confirmed yourself.</p>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> ci    <span class="c"># scaffold .github/workflows/ + the PR comment action</span></pre></div>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">run a check locally</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> check --staged --strict      <span class="c"># gate staged changes</span>
-<span class="k">hunch</span> check --base origin/main      <span class="c"># gate a PR range (used in CI)</span></pre></div>
+      <h2>7 · Wire CI<a class="anchor" href="#ci">#</a></h2>
+      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> ci                 <span class="c"># constraint guard on the diff</span>
+<span class="k">hunch</span> drift              <span class="c"># doc anchors still current</span>
+<span class="k">hunch</span> reconcile-topics   <span class="c"># merge didn't fork a topic</span></pre></div>
+      <p>All exit non-zero on violation — make them required checks.</p>
     </section>
 
-    <section id="cli">
-      <h2>CLI reference<a class="anchor" href="#cli">#</a></h2>
-      <p>Run <code>hunch &lt;command&gt; --help</code> for full flags. The everyday commands:</p>
-      <table class="tbl">
-        <thead><tr><th>Command</th><th>What it does</th></tr></thead>
-        <tbody>
-          <tr><td><code>init</code></td><td>Scaffold <code>.hunch/</code>, index, install hooks, wire up assistants.</td></tr>
-          <tr><td><code>index</code></td><td>Parse the repo into a symbol/dependency graph (deterministic, no LLM).</td></tr>
-          <tr><td><code>backfill</code></td><td>Replay git history to seed decisions (cold-start fix). <code>--since 90d</code></td></tr>
-          <tr><td><code>sync</code></td><td>Capture a decision from a commit (run by the post-commit hook).</td></tr>
-          <tr><td><code>query</code></td><td>Full-text + graph search. Add <code>--semantic</code> for embeddings recall.</td></tr>
-          <tr><td><code>why</code></td><td>Explain why a file/symbol is the way it is. <code>--as-of &lt;ref&gt;</code></td></tr>
-          <tr><td><code>timeline</code></td><td>The decision history for a file/symbol over time.</td></tr>
-          <tr><td><code>context</code></td><td>Assemble the minimal relevant Hunch slice for a task.</td></tr>
-          <tr><td><code>fragile</code></td><td>Ranked fragility report with evidence.</td></tr>
-          <tr><td><code>check</code></td><td>Flag changes that touch a do-not-break invariant (local + CI guard); also flags (advisory) symbols you add that already exist elsewhere.</td></tr>
-          <tr><td><code>status</code></td><td>Enforcement readiness at a glance — what's enforcing, what's waiting for confirmation, what went stale.</td></tr>
-          <tr><td><code>veto</code></td><td>Decision Guard — flag changes that reverse a rejected alternative.</td></tr>
-          <tr><td><code>structure</code></td><td>Repo map / dir contents / file outline / symbol definition — from the graph, no grep. <code>hunch structure src/auth</code></td></tr>
-          <tr><td><code>impact</code></td><td>The impact surface of a change — dependents reached, invariants, decisions concerned. <code>hunch impact origin/main</code>, <code>--commit &lt;sha&gt;</code>, or staged by default. Advisory.</td></tr>
-          <tr><td><code>path</code></td><td>Shortest dependency chain between two points: <code>hunch path chargeUser verifySession</code>.</td></tr>
-          <tr><td><code>drift</code></td><td>Flag doc≠graph drift — a file anchored to a <em>superseded</em> decision (<code>anchor-stale</code>), a markdown pin to a superseded/missing decision (<a class="link" href="#grounding">topic anchors</a>), plus topic collisions. Deterministic; exits non-zero for CI.</td></tr>
-          <tr><td><code>reconcile-topics</code></td><td>Scan for &gt;1 live decision per <b>topic</b> (an invariant a git merge can violate) and exit non-zero. Wire into a post-merge hook / CI.</td></tr>
-          <tr><td><code>heal</code></td><td>Read-only doc↔graph reconciliation — report where prose and the graph disagree; never rewrites docs silently.</td></tr>
-          <tr><td><code>wiki</code></td><td>Generate the <a class="link" href="#wiki">component wiki + specs ledger</a> from the graph. <code>--check</code> CI gate, <code>--heal</code> regenerates only stale pages, <code>--private</code> renders the full graph into the overlay repo.</td></tr>
-          <tr><td><code>ci</code></td><td>Scaffold the CI Constraint Guard (GitHub Action).</td></tr>
-          <tr><td><code>record-constraint</code></td><td>Record an invariant the codebase must not break.</td></tr>
-          <tr><td><code>record-bug</code></td><td>Capture a Bug from a failing test (symptom + suspects).</td></tr>
-          <tr><td><code>test</code></td><td>Run tests; capture failures as Bugs, promote recurrences to Constraints.</td></tr>
-          <tr><td><code>supersede</code></td><td>Mark one decision as replaced by another (invalidate, don’t delete).</td></tr>
-          <tr><td><code>stale</code></td><td>List decisions/constraints whose files changed after last verified (drift).</td></tr>
-          <tr><td><code>review</code></td><td>Triage low-confidence drafts: list, accept, or reject.</td></tr>
-          <tr><td><code>firmness</code></td><td>Get or set how firmly the agent hook enforces Hunch.</td></tr>
-          <tr><td><code>embed</code></td><td>Generate local embeddings for semantic search (opt-in).</td></tr>
-          <tr><td><code>compact</code></td><td>Prune low-value auto-captured records.</td></tr>
-          <tr><td><code>migrate</code></td><td>Upgrade <code>.hunch/</code> records to the current schema version.</td></tr>
-          <tr><td><code>mcp</code></td><td>Start the MCP server over stdio.</td></tr>
-          <tr><td><code>doctor</code></td><td>Diagnose the environment (git, synthesis provider, index freshness) + flag memory drift (dead refs, dangling supersedes, stale “proposed” docs).</td></tr>
-          <tr><td><code>conform</code></td><td>Intent-conformance — prove the code still satisfies each decision’s recorded intent over the graph. <code>--strict</code> to fail.</td></tr>
-          <tr><td><code>compare</code></td><td>Rank candidate branches/commits by architectural fit. <code>hunch compare feat-a feat-b --base main</code></td></tr>
-          <tr><td><code>runbook</code></td><td>Distill a reusable runbook from a commit range, or <code>--find &lt;query&gt;</code> to look one up.</td></tr>
-          <tr><td><code>eval</code></td><td>Score retrieval quality (Recall@k, MRR) over a golden set; A/B the graph stream. <code>--kind runbooks</code></td></tr>
-          <tr><td><code>capture-comments</code></td><td>Lift inline <code>hunch-why:</code> / <code>hunch-rule:</code> comments into the graph (decisions + constraints).</td></tr>
-          <tr><td><code>hook</code></td><td>The agent pre-edit hook handler (installed by <code>init</code>; reads the event JSON on stdin) — injects relevant memory before an edit, and at <a class="link" href="#firmness">strict firmness</a> denies edits that hit a blocking invariant. Never blocks on its own failure.</td></tr>
-          <tr><td><code>merge-driver</code></td><td>(internal) git merge driver for <code>.hunch/</code> JSON — resolves concurrent edits by record id, no conflict markers. Wired by <code>init</code>.</td></tr>
-        </tbody>
-      </table>
+    <section id="skills">
+      <h2>8 · Make an instruction skill actually fire<a class="anchor" href="#skills">#</a></h2>
+      <p>Measured: models under-trigger skills badly — 0/20 sessions read an installed skill whose description was polite prose. If you ship a skill:</p>
+      <ul>
+        <li>Write the <code>description</code> as a <b>pushy trigger</b>: “MANDATORY before X — invoke FIRST, do not skip because the task looks simple.” This alone took Opus from never-reads to reads-and-passes.</li>
+        <li>Weaker models (Haiku-class) ignore even pushy descriptions — name the skill in the prompt, or inject the content via hooks (recipe 3 is exactly this, productized).</li>
+        <li>Never conclude a skill “doesn't help” without checking the transcript for an actual <code>Skill</code> invocation — availability ≠ delivery.</li>
+      </ul>
     </section>
 
-    <section id="recipes">
-      <h2>Common workflows<a class="anchor" href="#recipes">#</a></h2>
-      <p>Copy-paste sequences for the everyday tasks. Run <code>hunch &lt;command&gt; --help</code> for every flag.</p>
-
-      <h3>Set up a new repo</h3>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> init                          <span class="c"># scaffold, index, install hooks, wire up assistants</span>
-<span class="k">hunch</span> backfill --since 90d          <span class="c"># seed decisions from recent history (no empty day-1)</span>
-<span class="c"># …reload your assistant, then ask: "why is X built this way?"</span></pre></div>
-
-      <h3>Join a repo that already uses Hunch</h3>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">git</span> pull                            <span class="c"># the .hunch/ graph travels with the code</span>
-<span class="k">hunch</span> init                          <span class="c"># wire YOUR assistants to the shared graph (idempotent)</span>
-<span class="c"># …reload your assistant — the team's memory is now in context</span></pre></div>
-
-      <h3>Ask why a file is the way it is</h3>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> why src/auth/session.ts                  <span class="c"># decisions, bugs &amp; rules behind it</span>
-<span class="k">hunch</span> timeline src/auth/session.ts             <span class="c"># how the thinking changed over time</span>
-<span class="k">hunch</span> why src/auth/session.ts --as-of v1.2.0   <span class="c"># what was believed at a past release</span></pre></div>
-
-      <h3>Turn a correction into an enforced rule</h3>
-      <p>Tell your assistant the rule (it records it for you), or do it from the CLI — then confirm it so it actually blocks. Name the actual violation with <code>--forbid-dep</code> (or <code>--forbid-symbol</code>): the rule then blocks the real change <em>across the file's whole life</em> and stays quiet on edits that don't break it, where a scope-only rule relaxes to advisory once the file is edited again.</p>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> record-constraint "never import lodash; use src/utils" \
-      --scope "src/**" --severity blocking --forbid-dep "lodash"
-<span class="k">hunch</span> review --accept &lt;id&gt;            <span class="c"># confirm → now held against every assistant</span></pre></div>
-      <p class="muted" style="font-size:.86em"><code>--forbid-dep</code> matches the <em>parsed</em> import (a comment or string naming the module can't trip it; a submodule like <code>lodash/groupBy</code> is caught). A correction your assistant records is given the same matcher automatically. <code>--match &lt;regex&gt;</code> remains as a lint-grade textual fallback. None of these are bypass-proof — deliberate indirection can still route around any rule.</p>
-
-      <h3>Curate the draft queue</h3>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> review                        <span class="c"># segmented: ready-to-confirm vs needs-scrutiny</span>
-<span class="k">hunch</span> review --accept-verified      <span class="c"># batch-accept the well-grounded ones</span>
-<span class="k">hunch</span> compact                       <span class="c"># prune rejected / superseded / stale low-value drafts</span></pre></div>
-
-      <h3>Check a change before you merge</h3>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> check --staged --strict       <span class="c"># does this break a do-not-break rule?</span>
-<span class="k">hunch</span> veto --staged                 <span class="c"># does it reverse a rejected decision?</span>
-<span class="k">hunch</span> conform --strict              <span class="c"># does the code still honor recorded intent?</span>
-<span class="c"># …or check a whole PR range instead of staged files:</span>
-<span class="k">hunch</span> check --base origin/main</pre></div>
-
-      <h3>Add the CI merge gate</h3>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> ci                            <span class="c"># scaffold the GitHub Action (runs on every PR)</span>
-<span class="k">git</span> add .github &amp;&amp; <span class="k">git</span> commit -m "ci: add Hunch constraint guard"</pre></div>
-
-      <h3>Capture a higher-quality note for an important commit</h3>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> sync &lt;sha&gt; --deep             <span class="c"># reconcile several drafts + fact-check the note</span>
-<span class="k">hunch</span> review                        <span class="c"># then confirm it</span></pre></div>
-
-      <h3>Make an existing public repo's memory private</h3>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> private --repo git@github.com:you/mem-private.git --migrate
-<span class="c"># moves existing memory into the private store, makes this repo code-only,</span>
-<span class="c"># and prints the one git command to commit the now-clean public repo</span></pre></div>
-
-      <h3>Work across branches &amp; worktrees</h3>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> worktree ../feature-x -b feature-x   <span class="c"># new worktree, already sharing memory</span>
-<span class="k">hunch</span> doctor                        <span class="c"># confirms "worktree: linked — sharing the repo's memory"</span></pre></div>
-
-      <h3>It's not working</h3>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> doctor                        <span class="c"># git, synthesis provider, index freshness, drift</span>
-<span class="k">hunch</span> index                         <span class="c"># rebuild the code map from current source</span>
-<span class="k">hunch</span> migrate                       <span class="c"># after an upgrade, bring records to the latest schema</span></pre></div>
+    <section id="bench">
+      <h2>9 · Benchmark your own setup<a class="anchor" href="#bench">#</a></h2>
+      <p>The repo ships harnesses under <code>bench/</code>:</p>
+      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">npx</span> tsx bench/run.ts --arms A,C --model claude-sonnet-5
+<span class="k">npx</span> tsx bench/external/run-zod.ts --arms A,S --no-repro
+<span class="k">npx</span> tsx bench/external/run-zod.ts --arms S --force-skill --only zod-5937</pre></div>
+      <p>Rules learned the hard way: use <code>--no-repro</code> (diagnosis mode) or everything ceilings at PASS; drop tasks that fail for <em>every</em> arm (they measure spec-guessing, not diagnosis); verify skill invocations in transcripts before comparing arms.</p>
     </section>
 
-    <section id="storage">
-      <h2>Where it’s stored<a class="anchor" href="#storage">#</a></h2>
-      <p>Everything lives under <code>.hunch/</code> in your repo as plain, readable JSON — one file per note — so your memory is the source of truth: diffable, reviewable in PRs, and synced for free over <code>git push</code> / <code>pull</code>. A fast local search index is built from it and is gitignored (regenerable any time), so only the readable files are ever committed.</p>
+    <section id="private">
+      <h2>10 · Private overlay (public repo, private memory)<a class="anchor" href="#private">#</a></h2>
+      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> init --private-sync   <span class="c"># captures go to the HUNCH_PRIVATE_DIR overlay</span>
+<span class="k">hunch</span> private               <span class="c"># point a clone at the overlay</span></pre></div>
+      <p><b>Observe:</b> <code>hunch_*</code> tools see the union; the public repo carries only what you curate.</p>
     </section>
-
-    <section id="doctor">
-      <h2>Doctor &amp; troubleshooting<a class="anchor" href="#doctor">#</a></h2>
-      <p><code>hunch doctor</code> is the first stop for anything that looks off — it reports git status, the resolved synthesis provider, schema version, index freshness, and record counts (and on Windows, heals the <code>~/.claude.json</code> casing split).</p>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> doctor</pre></div>
-      <table class="tbl">
-        <thead><tr><th>Symptom</th><th>Fix</th></tr></thead>
-        <tbody>
-          <tr><td>Assistant shows no <code>hunch_*</code> tools</td><td>Reload the assistant in the repo; if still missing, <code>hunch doctor</code>.</td></tr>
-          <tr><td>Synthesis is <code>deterministic</code></td><td>Log into a coding-assistant CLI (e.g. <code>claude /login</code>); drafts become high-confidence.</td></tr>
-          <tr><td>Graph looks stale</td><td><code>hunch index</code> to rebuild the symbol graph from current source.</td></tr>
-          <tr><td>Schema mismatch after upgrade</td><td><code>hunch migrate</code> to upgrade <code>.hunch/</code> records.</td></tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section id="team">
-      <h2>Working as a team<a class="anchor" href="#team">#</a></h2>
-      <p>The <code>.hunch/</code> memory is plain files in git — diffable, reviewable in PRs, synced for free over <code>git push</code> / <code>pull</code>. <code>hunch init</code> sets things up so concurrent edits from different teammates merge cleanly instead of throwing conflict markers, and it’s OS-agnostic — teammates on Windows, macOS, or Linux share the same memory with no per-machine fixups.</p>
-    </section>
-
-    <section id="maintenance">
-      <h2>Maintenance<a class="anchor" href="#maintenance">#</a></h2>
-      <p>Two housekeeping commands keep the graph healthy over time:</p>
-      <div class="code" data-lang="bash"><div class="code-head"><span class="lbl">terminal</span><button class="copy">Copy</button></div><pre><span class="k">hunch</span> compact   <span class="c"># prune rejected/superseded/stale low-value drafts</span>
-<span class="k">hunch</span> stale     <span class="c"># list records whose files changed after they were last verified</span></pre></div>
-      <p>Use <code>hunch review</code> to triage low-confidence drafts before they accumulate — accept the good ones (promoting them to higher confidence) and reject the noise.</p>
-    </section>
-
-    <section id="develop">
-      <h2>Develop &amp; contribute<a class="anchor" href="#develop">#</a></h2>
-      <p>Hunch is open source under <strong>Apache-2.0</strong>. Contributions are welcome — see <a class="link" href="https://github.com/davesheffer/hunch/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener">CONTRIBUTING.md</a> and the <a class="link" href="https://github.com/davesheffer/hunch" target="_blank" rel="noopener">repo</a> to get started.</p>
-    </section>
-  </main>
+</main>
 
   <!-- ──────────────── ON THIS PAGE ──────────────── -->
   <nav class="toc" id="toc" aria-label="On this page">
