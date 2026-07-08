@@ -6,6 +6,7 @@
  * four files.
  */
 import TS from "tree-sitter-typescript";
+import Python from "tree-sitter-python";
 
 const { typescript, tsx } = TS as unknown as { typescript: unknown; tsx: unknown };
 
@@ -98,7 +99,43 @@ const TSX: LanguageSpec = {
   loadGrammar: () => tsx,
 };
 
-export const LANGUAGES: LanguageSpec[] = [TYPESCRIPT, TSX];
+const PY_QUERY = `
+  (class_definition
+    name: (identifier) @class.name
+    body: (block (function_definition name: (identifier) @method.name) @method.def)) @class.def
+  (function_definition name: (identifier) @fn.name) @fn.def
+  (import_statement name: (dotted_name) @import.src)
+  (import_statement name: (aliased_import name: (dotted_name) @import.src))
+  (import_from_statement module_name: (dotted_name) @import.src)
+  (import_from_statement module_name: (relative_import) @import.src)
+  (call function: (identifier) @call.id)
+  (call function: (attribute attribute: (identifier) @call.member))
+`;
+
+const PY_BUILTIN_METHODS = new Set([
+  "get", "set", "keys", "values", "items", "pop", "popitem", "update", "setdefault", "copy", "clear",
+  "append", "extend", "insert", "remove", "reverse", "sort", "count", "index",
+  "add", "discard", "union", "intersection", "difference",
+  "format", "join", "split", "rsplit", "splitlines", "strip", "lstrip", "rstrip",
+  "startswith", "endswith", "replace", "find", "rfind", "lower", "upper", "title", "capitalize",
+  "encode", "decode", "isdigit", "isalpha", "isalnum", "isspace",
+  "read", "write", "close", "open", "readline", "readlines",
+  "run", "wait", "poll", "communicate",
+]);
+
+const PYTHON: LanguageSpec = {
+  id: "python",
+  extensions: [".py", ".pyi"],
+  grammarKey: "python",
+  loadGrammar: () => Python,
+  query: PY_QUERY,
+  defNodeTypes: new Set(["function_definition", "class_definition"]),
+  defKindOf: { "fn.def": "function", "method.def": "method", "class.def": "class" },
+  nameToDef: { "fn.name": "fn.def", "method.name": "method.def", "class.name": "class.def" },
+  builtinMethods: PY_BUILTIN_METHODS,
+};
+
+export const LANGUAGES: LanguageSpec[] = [TYPESCRIPT, TSX, PYTHON];
 
 export const CODE_EXTENSIONS: string[] = [...new Set(LANGUAGES.flatMap((l) => l.extensions))];
 

@@ -3,14 +3,14 @@ import assert from "node:assert/strict";
 import { LANGUAGES, CODE_EXTENSIONS, languageFor } from "../src/extractors/languages.js";
 
 test("LANGUAGES has typescript entries covering both grammars (plain + tsx)", () => {
-  assert.ok(LANGUAGES.length >= 2, "expected a plain-TS entry and a TSX entry");
-  assert.ok(LANGUAGES.every((l) => l.id === "typescript"));
+  const ts = LANGUAGES.filter((l) => l.id === "typescript");
+  assert.ok(ts.length >= 2, "expected a plain-TS entry and a TSX entry");
 });
 
-test("CODE_EXTENSIONS matches the existing TS/JS extension list", () => {
+test("CODE_EXTENSIONS matches the existing TS/JS/Python extension list", () => {
   assert.deepEqual(
     [...CODE_EXTENSIONS].sort(),
-    [".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"].sort(),
+    [".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx", ".py", ".pyi"].sort(),
   );
 });
 
