@@ -22,7 +22,13 @@ try {
   if (input.tool_name === "Bash" || input.tool_name === "PowerShell") {
     const cmd = String(input.tool_input?.command ?? "");
     const resp = JSON.stringify(input.tool_response ?? "");
-    if (verifyPatternFor(state, profiles).test(cmd)) {
+    // 1.4.1 credit rules: generic runners and commands naming an edited file
+    // are verification too — uncredited real checks breed gate fatigue.
+    const editedNamed = state.editedFiles.some((f) => {
+      const base = String(f).replace(/\\/g, "/").split("/").pop();
+      return !!base && cmd.includes(base);
+    });
+    if (verifyPatternFor(state, profiles).test(cmd) || /node (--test|-e\b)/.test(cmd) || editedNamed) {
       if (state.lastEditTs > 0) state.verifyAfterEdit = true;
       else state.evidenceObserved = true;
     }
