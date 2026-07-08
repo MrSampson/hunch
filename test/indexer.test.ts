@@ -152,6 +152,58 @@ test("member call to a top-level function does NOT create an edge; method calls 
   rmSync(root, { recursive: true, force: true });
 });
 
+function pythonFixtureRepo(): string {
+  const root = mkdtempSync(join(tmpdir(), "hunch-idx-py-"));
+  mkdirSync(join(root, "src/auth"), { recursive: true });
+  mkdirSync(join(root, "src/billing"), { recursive: true });
+  writeFileSync(
+    join(root, "src/auth/session.py"),
+    `from .jwt import decode_token\n\ndef verify_session(t):\n    return decode_token(t)\n`,
+  );
+  writeFileSync(join(root, "src/auth/jwt.py"), `def decode_token(t):\n    return t\n`);
+  writeFileSync(
+    join(root, "src/billing/charge.py"),
+    `def charge(t):\n    return t\n`,
+  );
+  return root;
+}
+
+test("indexRepo builds symbols and same-file call edges for a Python repo", () => {
+  const root = pythonFixtureRepo();
+  const store = new HunchStore(hunchPaths(root));
+  store.json.ensureDirs();
+  const res = indexRepo(store, root, { churn: false });
+  store.reindex();
+
+  assert.equal(res.files, 3);
+  assert.ok(res.symbols >= 3);
+
+  const syms = store.json.loadAll("symbols");
+  const verify = syms.find((s) => s.name === "verify_session");
+  assert.ok(verify, "verify_session indexed");
+  assert.equal(verify!.file, "src/auth/session.py");
+
+  const decode = syms.find((s) => s.name === "decode_token");
+  assert.ok(decode, "decode_token indexed");
+
+  // components derived from src/<dir>, same as TS
+  const comps = store.json.loadAll("components").map((c) => c.name).sort();
+  assert.deepEqual(comps, ["Auth", "Billing"]);
+
+  // NO depends_on edge from Python's `from .jwt import decode_token` — cross-file
+  // Python import resolution is explicitly out of scope (issue #5). auth.session
+  // and auth.jwt are in the SAME component (src/auth) anyway, so this also
+  // confirms no same-component false edge is fabricated.
+  const edges = store.json.loadAll("edges");
+  assert.ok(
+    !edges.some((e) => e.type === "depends_on" && (e.from.includes("billing") || e.to.includes("billing"))),
+    "no fabricated cross-component depends_on edge for Python imports",
+  );
+
+  store.close();
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("indexing is deterministic — same ids on re-run", () => {
   const root = fixtureRepo();
   const store = new HunchStore(hunchPaths(root));
