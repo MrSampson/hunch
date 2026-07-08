@@ -17,7 +17,7 @@ import { pathMatchesGlob } from "../core/glob.js";
 import { draftTripwires, knownRepoDeps } from "./tripwires.js";
 import type { Decision, Bug, Constraint, Component, Symbol } from "../core/types.js";
 import type { TestReport } from "../extractors/testreport.js";
-import { CODE_EXTENSIONS } from "../extractors/languages.js";
+import { languageFor } from "../extractors/languages.js";
 const SKIP_SUBJECT = /^(merge|revert|bump|chore\(deps\)|format|lint|wip)\b/i;
 
 export interface SyncResult {
@@ -61,7 +61,7 @@ export async function syncCommit(
   if (!meta) return { status: "skipped", reason: "commit not found" };
 
   if (SKIP_SUBJECT.test(meta.subject)) return { status: "skipped", reason: `trivial subject: ${meta.subject}` };
-  const codeFiles = meta.files.filter((f) => CODE_EXTENSIONS.some((ext) => f.endsWith(ext)));
+  const codeFiles = meta.files.filter((f) => languageFor(f) !== null);
   if (codeFiles.length === 0) return { status: "skipped", reason: "no code files changed" };
 
   // Seed the id from the COMMIT (stable across runs), not the LLM-generated title

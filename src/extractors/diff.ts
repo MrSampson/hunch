@@ -51,7 +51,7 @@ const DECL_PATTERNS: Array<{ kind: SymbolChange["kind"]; re: RegExp }> = [
   // `class Foo(Bar):` header too, and — since declOf() returns on the first match —
   // always wins for Python class lines before any Python-specific pattern would run.
 ];
-import { CODE_EXTENSIONS } from "./languages.js";
+import { languageFor } from "./languages.js";
 
 const IMPORT_RE = /^\s*import\s+(?:[^'"]*from\s+)?['"]([^'"]+)['"]/;
 const CONT_IMPORT_RE = /^\s*\}?\s*from\s+['"]([^'"]+)['"]/; // multi-line: "} from 'x'"
@@ -64,7 +64,7 @@ const REQUIRE_RE = /\brequire\(\s*['"]([^'"]+)['"]\s*\)/;
 const PY_IMPORT_RE =
   /^\s*import\s+([A-Za-z_][\w.]*)(?:\s+as\s+\w+)?(?:\s*,\s*[A-Za-z_][\w.]*(?:\s+as\s+\w+)?)*\s*(?:#.*)?$/;
 const PY_FROM_IMPORT_RE = /^\s*from\s+([.\w]+)\s+import\s+/; // "from os import path" / "from . import x"
-const isCode = (p: string) => !!p && CODE_EXTENSIONS.some((ext) => p.endsWith(ext));
+const isCode = (p: string) => !!p && languageFor(p) !== null;
 
 function declOf(line: string): SymbolChange | null {
   for (const { kind, re } of DECL_PATTERNS) {

@@ -14,7 +14,7 @@ import { parseSource, attributeCalls } from "./parse.js";
 import { symbolId, componentId, edgeId, sha1 } from "../core/ids.js";
 import { extracted, inferred, type Symbol, type Edge, type Component } from "../core/types.js";
 import { isGitRepo, trackedFiles, fileGitMetrics } from "./git.js";
-import { CODE_EXTENSIONS } from "./languages.js";
+import { CODE_EXTENSIONS, languageFor } from "./languages.js";
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", ".hunch", "coverage", ".next", "out"]);
 
 export interface IndexResult {
@@ -217,7 +217,7 @@ function listCodeFiles(root: string): string[] {
       const abs = join(dir, name);
       const st = statSync(abs);
       if (st.isDirectory()) walk(abs);
-      else if (CODE_EXTENSIONS.some((e) => name.endsWith(e))) out.push(abs);
+      else if (languageFor(name) !== null) out.push(abs);
     }
   };
   walk(root);
