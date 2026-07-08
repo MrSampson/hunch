@@ -240,13 +240,14 @@ const VERIFY_TOOL = {
 };
 
 // --------------------------------------------------------------------------
-// Base for headless-CLI SUBSCRIPTION providers. Each one drives a coding-assistant
-// CLI billed to the user's own subscription (never a pay-per-token API key — see
-// dec_5a7c0733f7). The prompt always goes over STDIN (never argv — keeps untrusted
-// diff content out of any shell pexecIn uses on Windows), and the CLI's text output
-// is handed to the SAME mappers, so the rest of the system is provider-agnostic.
+// Base for any provider whose interface reduces to "turn one prompt string into
+// text" — the three subscription-CLI providers below (spawn, stdin, subscription
+// billing — see dec_5a7c0733f7) AND the opt-in local/self-hosted HTTP provider
+// further down (OpenAICompatProvider). Neither transport nor billing model is
+// part of the contract; only run()'s shape is. Every implementation's text output
+// is handed to the SAME mappers, so the rest of the system stays provider-agnostic.
 // --------------------------------------------------------------------------
-abstract class CliSynthProvider implements SynthProvider {
+abstract class PromptSynthProvider implements SynthProvider {
   abstract readonly name: string;
   abstract available(): Promise<boolean>;
   protected abstract run(prompt: string): Promise<string>;
@@ -327,7 +328,7 @@ export function safeModel(v: string | undefined, fallback: string | undefined): 
 // --------------------------------------------------------------------------
 // Provider A: headless `claude -p` CLI — billed to the user's Claude subscription
 // --------------------------------------------------------------------------
-class ClaudeCliProvider extends CliSynthProvider {
+class ClaudeCliProvider extends PromptSynthProvider {
   readonly name = "claude-cli";
   // Default to the `haiku` alias (cheap/fast, and survives model retirements)
   // rather than a pinned dated id; override with HUNCH_SYNTH_MODEL if needed.
@@ -389,7 +390,7 @@ class ClaudeCliProvider extends CliSynthProvider {
 // --------------------------------------------------------------------------
 // Provider B1: OpenAI Codex CLI (`codex exec`) — billed to the ChatGPT subscription
 // --------------------------------------------------------------------------
-class CodexCliProvider extends CliSynthProvider {
+class CodexCliProvider extends PromptSynthProvider {
   readonly name = "codex-cli";
   private model = safeModel(process.env.HUNCH_CODEX_MODEL, undefined); // omit → codex uses its configured default
 
@@ -415,7 +416,7 @@ class CodexCliProvider extends CliSynthProvider {
 // --------------------------------------------------------------------------
 // Provider B2: Cursor Agent CLI (`cursor-agent -p`) — billed to the Cursor subscription
 // --------------------------------------------------------------------------
-class CursorCliProvider extends CliSynthProvider {
+class CursorCliProvider extends PromptSynthProvider {
   readonly name = "cursor-agent";
   private model = safeModel(process.env.HUNCH_CURSOR_MODEL, undefined);
 
