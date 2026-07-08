@@ -116,7 +116,7 @@ Mirror the existing `test/parse.test.ts` pattern with a parallel Python fixture 
 - `test/parse.test.ts`: add Python cases alongside existing TS cases (or a sibling `test/parse.python.test.ts` if the plan finds that cleaner).
 - `test/indexer.test.ts`: extend with a Python fixture confirming `hunch index` produces non-zero Python symbols/edges (component-level, same-file call edges) and confirming no `depends_on` edges are fabricated across Python files.
 - `test/upgrades.test.ts` (where `analyzeDiff`/`summarizeDiff` are unit-tested against real unified-diff text today): add Python diff fixtures confirming `def`/`class`/`import`/`from ... import` are recognized as structural changes.
-- `test/synthesis.test.ts`: add a Python-commit fixture confirming `syncCommit` no longer skips with `no code files changed`.
+- `test/integration.test.ts` (where `syncCommit` is exercised end-to-end against real git commits today): add a Python-commit fixture confirming `syncCommit` no longer skips with `no code files changed`.
 
 ## Acceptance criteria (from issue #2, restated against this design)
 
