@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractCodexText, safeModel, selectProvider } from "../src/synthesis/provider.js";
+import { extractCodexText, safeModel, safeTimeout, selectProvider } from "../src/synthesis/provider.js";
 
 test("extractCodexText returns the LAST assistant text from codex --json JSONL", () => {
   const jsonl = [
@@ -68,5 +68,20 @@ test("HUNCH_SYNTH_PROVIDER=deterministic forces the offline heuristic", async ()
     assert.equal((await selectProvider()).name, "deterministic");
   } finally {
     delete process.env.HUNCH_SYNTH_PROVIDER;
+  }
+});
+
+// HUNCH_SYNTH_TIMEOUT_MS feeds AbortController's delay directly. A non-numeric or
+// nonsensical value (negative, zero, NaN, Infinity) would either abort immediately
+// or never abort, so validate the same way safeModel does: fall back rather than
+// propagate garbage.
+test("safeTimeout passes a valid positive number through unchanged", () => {
+  assert.equal(safeTimeout("60000", 300_000), 60000);
+  assert.equal(safeTimeout("1", 300_000), 1);
+});
+
+test("safeTimeout falls back to the default on unset/invalid/non-positive values", () => {
+  for (const bad of [undefined, "", "0", "-5", "abc", "NaN", "Infinity"]) {
+    assert.equal(safeTimeout(bad, 300_000), 300_000);
   }
 });

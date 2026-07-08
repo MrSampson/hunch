@@ -325,6 +325,16 @@ export function safeModel(v: string | undefined, fallback: string | undefined): 
   return v && MODEL_RE.test(v) ? v : fallback;
 }
 
+// A timeout comes from a HUNCH_*_TIMEOUT_MS env var and feeds AbortController's
+// delay directly (never a shell argv token, unlike safeModel's model id) — but a
+// non-numeric or nonsensical value (negative, zero, NaN, Infinity) would either
+// abort immediately or never abort at all, so validate the same way: fall back to
+// the provider's default rather than propagate garbage.
+export function safeTimeout(v: string | undefined, fallback: number): number {
+  const n = Number(v);
+  return v && Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 // --------------------------------------------------------------------------
 // Provider A: headless `claude -p` CLI — billed to the user's Claude subscription
 // --------------------------------------------------------------------------
