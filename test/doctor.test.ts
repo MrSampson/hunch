@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { synthesisStatusLines } from "../src/cli/index.js";
+import { synthesisStatusLines } from "../src/cli/invocation.js";
 
 test("synthesisStatusLines: claude-cli reports the subscription and notes when ANTHROPIC_API_KEY is stripped", () => {
   assert.deepEqual(

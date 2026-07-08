@@ -82,7 +82,7 @@ import { mergeHunchJson } from "../store/merge.js";
 import { movePublicMemoryToPrivate } from "../store/privateMigrate.js";
 import { ENTITY_KINDS } from "../core/types.js";
 import { planCompaction } from "../store/compact.js";
-import { resolveInvocation } from "./invocation.js";
+import { resolveInvocation, dim, synthesisStatusLines } from "./invocation.js";
 
 const program = new Command();
 program.name("hunch").description("Hunch — an Engineering Memory OS: a git-native reasoning graph for your codebase.").version(HUNCH_VERSION);
@@ -2192,34 +2192,6 @@ program
     }
   });
 
-/** The doctor command's synthesis-status line(s) for a resolved provider name.
- *  Exported for testing — the previous inline version had zero test coverage,
- *  which is how issue #8 (openai-compat misreported as "no assistant CLI
- *  found") shipped unnoticed through three review passes. */
-export function synthesisStatusLines(providerName: string, env: NodeJS.ProcessEnv): string[] {
-  const SUB: Record<string, { label: string; strip?: string }> = {
-    "claude-cli": { label: "Claude subscription (claude CLI)", strip: "ANTHROPIC_API_KEY" },
-    "codex-cli": { label: "ChatGPT subscription (codex CLI)", strip: "OPENAI_API_KEY" },
-    "cursor-agent": { label: "Cursor subscription (cursor-agent CLI)" },
-  };
-  const sub = SUB[providerName];
-  if (sub) {
-    const hadKey = sub.strip && !!env[sub.strip];
-    return [`            ↳ LLM synthesis billed to your ${sub.label}` +
-      (hadKey ? ` (${sub.strip} in env is stripped — never billed to the API)` : ``)];
-  }
-  if (providerName === "openai-compat") {
-    const base = env.HUNCH_SYNTH_BASE_URL ?? "(unset)";
-    const model = env.HUNCH_SYNTH_MODEL ?? "(unset)";
-    const keyNote = env.HUNCH_SYNTH_API_KEY ? " (HUNCH_SYNTH_API_KEY set)" : " (no API key)";
-    return [`            ↳ LLM synthesis via local/self-hosted endpoint ${base} (model: ${model})${keyNote}`];
-  }
-  return [
-    dim(`            ↳ no assistant CLI found — synthesis uses the offline heuristic (advisory, low-confidence)`),
-    dim(`              for full synthesis install one: Claude Code (\`claude /login\`), Codex (\`codex login\`), or Cursor (\`cursor-agent login\`)`),
-  ];
-}
-
 // ---- doctor ---------------------------------------------------------------
 program
   .command("doctor")
@@ -2317,9 +2289,6 @@ function reportClaudeConfigHeal(): void {
   }
   console.log(dim(`  ↳ backup: ${res.backup}`));
 }
-function dim(s: string): string {
-  return `\x1b[2m${s}\x1b[0m`;
-}
 function fail(msg: string): void {
   console.error(`error: ${msg}`);
   process.exitCode = 1;
@@ -2381,15 +2350,12 @@ function emitDeny(reason: string): void {
   );
 }
 
-// Only run the CLI if this file is the entry point, not when imported for testing/reuse
-if (import.meta.url === `file://${process.argv[1]}`) {
-  program.parseAsync().catch((e) => {
-    try {
-      openStore?.close();
-    } catch {
-      /* ignore */
-    }
-    console.error(`hunch: ${e instanceof Error ? e.message : String(e)}`);
-    process.exit(1);
-  });
-}
+program.parseAsync().catch((e) => {
+  try {
+    openStore?.close();
+  } catch {
+    /* ignore */
+  }
+  console.error(`hunch: ${e instanceof Error ? e.message : String(e)}`);
+  process.exit(1);
+});
