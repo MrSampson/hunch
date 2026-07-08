@@ -35,7 +35,7 @@ This is actively misleading: it tells a self-hosted user their setup is degraded
 
 ### Extract the message logic into a small, pure, exported function
 
-`src/cli/index.ts` currently has no exports — this is a Commander entry point only. The fix introduces its first: a pure formatting function, the same low-risk shape as `provider.ts`'s already-exported `safeModel`/`pexecIn`, not a rework of the CLI wiring.
+**Shipped home: `src/cli/invocation.ts`, not `index.ts`.** This section originally proposed exporting `synthesisStatusLines()` directly from `src/cli/index.ts` (its first export). Implementation surfaced why that doesn't work: `index.ts` calls `program.parseAsync()` unconditionally at module scope, so a test importing it to reach the function would also execute the real CLI against the test runner's `argv`. A first attempt guarded that call behind an ESM "only run if this is the entry point" check (`import.meta.url === \`file://${process.argv[1]}\``) — task review caught that this guard breaks the real npm-installed binary (symlink invocation, as `npm install -g`/`npm link` use, makes `import.meta.url` and `process.argv[1]` diverge). The fix relocates `synthesisStatusLines()` (and its `dim()` dependency, also moved) to `src/cli/invocation.ts` instead — an existing, already side-effect-free module this codebase uses for shared CLI logic — so no test ever needs to import `index.ts`, and `index.ts`'s `program.parseAsync()` call stays exactly as unconditional as it was before this fix ever touched it. The design intent below (pure function, `openai-compat` branch, unchanged other branches) is unaffected — only the host module differs from the original proposal.
 
 ```ts
 /** The doctor command's synthesis-status line(s) for a resolved provider name.
