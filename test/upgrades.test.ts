@@ -50,6 +50,18 @@ test("analyzeDiff recognizes Python def/class declarations and import/from-impor
   assert.ok(sum.includes("verify_session") && sum.includes("redis"));
 });
 
+test("analyzeDiff does not treat TS import-equals syntax as a Python import (PY_IMPORT_RE false-positive fix)", () => {
+  const diff = [
+    "diff --git a/src/ns.ts b/src/ns.ts",
+    "--- a/src/ns.ts",
+    "+++ b/src/ns.ts",
+    "@@ -1 +1 @@",
+    "+import Foo = Bar.Baz;",
+  ].join("\n");
+  const a = analyzeDiff(diff);
+  assert.deepEqual(a.addedDeps, [], "import-equals is not a Python import and not a JS module-string import");
+});
+
 test("analyzeDiff ignores .py files just like other code files pre-registry (sanity: extension gate wired)", () => {
   const diff = [
     "diff --git a/notes.txt b/notes.txt",

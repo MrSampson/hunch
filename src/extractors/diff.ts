@@ -46,14 +46,23 @@ const DECL_PATTERNS: Array<{ kind: SymbolChange["kind"]; re: RegExp }> = [
   { kind: "const", re: /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/ },
   { kind: "const", re: /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?function/ },
   { kind: "function", re: /^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(/ },
-  { kind: "class", re: /^\s*class\s+([A-Za-z_]\w*)\s*[:(]/ },
+  // No Python-specific class pattern needed: the generic TS `class` pattern above has no
+  // trailing-syntax requirement (no `{`/`:`), so it already matches Python's
+  // `class Foo(Bar):` header too, and — since declOf() returns on the first match —
+  // always wins for Python class lines before any Python-specific pattern would run.
 ];
 import { CODE_EXTENSIONS } from "./languages.js";
 
 const IMPORT_RE = /^\s*import\s+(?:[^'"]*from\s+)?['"]([^'"]+)['"]/;
 const CONT_IMPORT_RE = /^\s*\}?\s*from\s+['"]([^'"]+)['"]/; // multi-line: "} from 'x'"
 const REQUIRE_RE = /\brequire\(\s*['"]([^'"]+)['"]\s*\)/;
-const PY_IMPORT_RE = /^\s*import\s+([A-Za-z_][\w.]*)/; // "import os" / "import a.b.c"
+// "import os" / "import a.b.c" / "import os as o" / "import os, sys" / trailing "# comment".
+// Anchored to the END of the line (optional "as alias", comma-separated modules, comment)
+// so it matches a COMPLETE Python import statement only — this deliberately rejects
+// TypeScript's `import Foo = Bar.Baz;` (import-equals), which would otherwise falsely
+// look like a Python "import Foo" prefix match.
+const PY_IMPORT_RE =
+  /^\s*import\s+([A-Za-z_][\w.]*)(?:\s+as\s+\w+)?(?:\s*,\s*[A-Za-z_][\w.]*(?:\s+as\s+\w+)?)*\s*(?:#.*)?$/;
 const PY_FROM_IMPORT_RE = /^\s*from\s+([.\w]+)\s+import\s+/; // "from os import path" / "from . import x"
 const isCode = (p: string) => !!p && CODE_EXTENSIONS.some((ext) => p.endsWith(ext));
 
