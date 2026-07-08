@@ -28,7 +28,7 @@ const flag = (name: string, dflt: string): string => {
 };
 const MODEL = flag("model", "claude-sonnet-5");
 // A = bare, C = +cold hunch graph, S = +fable-mode skill (no graph)
-const ARMS = flag("arms", "A,C").split(",") as Array<"A" | "C" | "S">;
+const ARMS = flag("arms", "A,C").split(",") as Array<"A" | "C" | "S" | "P">;
 // --no-repro: the agent gets ONLY the issue text — no failing test handed over.
 // The real regression tests are applied at SCORING time. This is diagnosis mode.
 const NO_REPRO = argv.includes("--no-repro");
@@ -53,7 +53,7 @@ const TASKS = ALL.filter((t) => (ONLY || DRY_FIX ? t.id === (ONLY || DRY_FIX) : 
 
 const sh = (cmd: string, cwd = ZOD): string => execSync(cmd, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 
-function makeWorktree(name: string, arm: "A" | "C" | "S", task: Task): string {
+function makeWorktree(name: string, arm: "A" | "C" | "S" | "P", task: Task): string {
   const dir = join(tmpdir(), "zod-bench", name);
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(join(tmpdir(), "zod-bench"), { recursive: true });
@@ -72,6 +72,14 @@ function makeWorktree(name: string, arm: "A" | "C" | "S", task: Task): string {
     cpSync(join(ZOD, ".hunch"), join(dir, ".hunch"), { recursive: true });
     if (existsSync(join(ZOD, "CLAUDE.md"))) cpSync(join(ZOD, "CLAUDE.md"), join(dir, "CLAUDE.md"));
     writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { hunch: { command: "npx", args: ["-y", "@davesheffer/hunch@latest", "mcp"] } } }, null, 2));
+  }
+  if (arm === "P") {
+    // the SHIPPED verification pipeline (v1.4.1+): hunch init writes the agent
+    // hooks into the worktree's .claude/settings.json; --setting-sources project
+    // loads them headlessly. firm = stop-gate on. No skill, no graph — pipeline only.
+    execSync("npx -y @davesheffer/hunch@latest init --firmness firm --no-index --no-enforce --no-providers", {
+      cwd: dir, stdio: "ignore", timeout: 5 * 60 * 1000,
+    });
   }
   return dir;
 }
