@@ -129,6 +129,19 @@ export async function syncCommit(
       : new DeterministicProvider();
   const input: CommitInput = { subject: meta.subject, body: meta.body, files: codeFiles, diff, analysis };
   let draft = await draftDecisionSafe(provider, input);
+  // The provider that was SELECTED may not be the one that actually drafted —
+  // draftDecisionSafe silently falls back to DeterministicProvider on failure.
+  // actualProvider is the truth every caller must report (issue #10): the
+  // returned `provider` field below, `hunch backfill`'s tally (fed by that
+  // field, no change needed there), and the evidence stamp below. Computed and
+  // warned about HERE, before the --verify reassignment two lines down, because
+  // verifyDecisionSafe/applyVerdict both return `{ ...draft, ... }` — a shallow
+  // spread that preserves fellBackTo/fallbackReason either way, so there's no
+  // need to recompute this after verification.
+  const actualProvider = draft.fellBackTo ? "deterministic" : provider.name;
+  if (draft.fellBackTo) {
+    console.warn(`⚠ synthesis provider "${draft.fellBackTo}" failed for commit ${meta.shortSha}, falling back to deterministic: ${draft.fallbackReason}`);
+  }
   // The Critic pass: audit the draft against the commit, PRUNE unsupported alternatives
   // (BEFORE they scaffold tripwires below) and consequences, and lower confidence on weak
   // grounding. No-ops when no assistant CLI is available; never raises trust (dec_9a2f2fe72a).
@@ -137,7 +150,8 @@ export async function syncCommit(
   // Advisory synthesis telemetry for `hunch review` — which provider ran, how many drafts
   // were reconciled, their agreement, and the verifier's grounding. Rides in `evidence`
   // (no schema change → respects forward-migration invariant con_947c578b2c).
-  const synthBits = [`provider=${provider.name}`];
+  const synthBits = [`provider=${actualProvider}`];
+  if (draft.fellBackTo) synthBits.push(`fallback_from=${draft.fellBackTo}`, `reason=${draft.fallbackReason}`);
   if (draft.samples) synthBits.push(`samples=${draft.samples}`);
   if (draft.agreement != null) synthBits.push(`agreement=${draft.agreement}`);
   if (draft.grounded != null) synthBits.push(`grounded=${draft.grounded}`);
@@ -208,7 +222,7 @@ export async function syncCommit(
   // Route to the record's ONE home: the overlay when asked (--private) or in unified
   // ("shared") mode; else the public store. Same contract as every other capture path.
   store.putCapture("decisions", decision, opts.private);
-  return { status: "written", decision, provider: provider.name };
+  return { status: "written", decision, provider: actualProvider };
 }
 
 export interface FailureResult {
@@ -241,6 +255,15 @@ export async function recordFailure(
     suspects: suspects.map((s) => `${s.name} @ ${s.file}`),
   };
   const draft = await draftBugSafe(provider, input);
+  // The provider that was SELECTED may not be the one that actually drafted —
+  // draftBugSafe silently falls back to DeterministicProvider on failure.
+  // actualProvider is the truth the caller must report (issue #10). Unlike the
+  // decision path, Bug.provenance.evidence carries no provider=-style telemetry
+  // today, so there's nothing to add there — only the returned field + the warning.
+  const actualProvider = draft.fellBackTo ? "deterministic" : provider.name;
+  if (draft.fellBackTo) {
+    console.warn(`⚠ synthesis provider "${draft.fellBackTo}" failed for test ${failure.test}, falling back to deterministic: ${draft.fallbackReason}`);
+  }
 
   // Seed the id from the test id (stable), not the LLM title — one bug per test.
   const id = bugId(failure.test);
@@ -284,7 +307,7 @@ export async function recordFailure(
   }
   raiseFragility(store, affectedFiles);
 
-  return { status: "written", bug, constraint, provider: provider.name };
+  return { status: "written", bug, constraint, provider: actualProvider };
 }
 
 export interface CapturedFailure {
