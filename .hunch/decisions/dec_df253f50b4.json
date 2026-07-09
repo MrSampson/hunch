@@ -2,7 +2,7 @@
   "id": "dec_df253f50b4",
   "title": "No standalone Hunch web UI; build a review-queue UI inside the vscode extension next",
   "topic": "human-ui-strategy",
-  "status": "proposed",
+  "status": "superseded",
   "context": "User asked whether to build a UI for Hunch. A generic graph-viewer webapp has no moat (many exist) and distracts from the correction-loop turf that is Hunch's strategic defense (per memory hunch-vs-headroom-compression: compose don't absorb, defend the correction loop). The one place a human MUST be in the loop is draft triage — CLI review of graph records is painful, and unreviewed drafts erode trust, which is what keeps Hunch installed. So UI investment is justified only where it attacks the trust problem, i.e. the review queue. Existing vscode-extension already has the webview/decoration/diagnostic infra, so the review-queue UI rides on it rather than a fresh project.",
   "decision": "Do not build a standalone human-facing web app for Hunch. Hunch's primary consumer is the coding assistant, not a human browsing — value is memory injected automatically via MCP tools and the pre-edit hook. Human UI earns its keep at exactly one moment: draft triage. Therefore the committed next-build is a review-queue UI for approving/editing/rejecting auto-drafts (currently 8 sitting in `hunch review`), built inside the EXISTING vscode extension (graph webview, decorations, diagnostics, search infra already present). Keep the existing graph webview as demo/adoption polish (aligns with dec_8dc263b43e: hero graph suffices). Human browsing/reading of 'why' stays served by the `hunch wiki` static export — not a new app.",
   "consequences": [
@@ -26,11 +26,11 @@
     "src/cli/index.ts"
   ],
   "supersedes": null,
-  "superseded_by": null,
+  "superseded_by": "dec_6253f7e6d6",
   "caused_by_bug": null,
   "commit": null,
   "valid_from": "2026-07-08T13:14:27.522Z",
-  "valid_to": null,
+  "valid_to": "2026-07-09T05:51:58.742Z",
   "retired": {
     "symbols": [],
     "deps": []
