@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { tempStore, prov } from "./helpers.js";
-import { recordFailure, salientTerms, isSignificant } from "../src/synthesis/synthesize.js";
+import { recordFailure, salientTerms, isSignificant, isTrivialSubject } from "../src/synthesis/synthesize.js";
 import { selectProvider } from "../src/synthesis/provider.js";
 import type { DiffAnalysis } from "../src/extractors/diff.js";
 
@@ -30,6 +30,27 @@ test("isSignificant gates the paid LLM: trivia → deterministic; real signal �
   assert.equal(isSignificant({ body: "" }, analysis(), ["a.ts", "b.ts", "c.ts"]), true);
   // an explanatory commit body (≥40 chars) qualifies (intent worth capturing)
   assert.equal(isSignificant({ body: "x".repeat(50) }, analysis(), ["src/a.ts"]), true);
+});
+
+test("isTrivialSubject: SKIP_SUBJECT match is skipped UNLESS the body is substantive (regression #4)", () => {
+  // trivial subject, no body -> trivial (today's behavior, preserved)
+  assert.equal(isTrivialSubject({ subject: "Merge branch 'main' into feature", body: "" }), true);
+  assert.equal(isTrivialSubject({ subject: "bump: lodash to 4.2.0", body: "" }), true);
+  // trivial subject, short/whitespace-only body -> still trivial
+  assert.equal(isTrivialSubject({ subject: "wip", body: "   " }), true);
+  assert.equal(isTrivialSubject({ subject: "format: prettier", body: "x".repeat(39) }), true);
+  // trivial subject, substantive body (>= SIG_MIN_BODY chars) -> NOT trivial anymore
+  assert.equal(isTrivialSubject({ subject: "Merge branch 'feature' into main", body: "x".repeat(40) }), false);
+  assert.equal(
+    isTrivialSubject({
+      subject: "Merge pull request #42 from org/feature-branch",
+      body: "Adds OAuth2 login support with JWT tokens, replacing the old session-cookie flow.",
+    }),
+    false,
+  );
+  // non-trivial subject -> never trivial, regardless of body
+  assert.equal(isTrivialSubject({ subject: "feat: add x", body: "" }), false);
+  assert.equal(isTrivialSubject({ subject: "feat: add x", body: "x".repeat(100) }), false);
 });
 
 test("deterministic provider is always available and drafts a low-confidence decision", async () => {
