@@ -279,11 +279,122 @@ test("syncCommit drives synthesis through the openai-compat provider end-to-end 
   process.env.HUNCH_SYNTH_BASE_URL = `http://127.0.0.1:${port}`;
   process.env.HUNCH_SYNTH_MODEL = "local-test-model";
   __resetAvailabilityCacheForTests();
+  const warnings: string[] = [];
+  const origWarn = console.warn;
+  console.warn = (m?: unknown) => warnings.push(String(m));
   try {
     const r = await syncCommit(store, root);
     assert.equal(r.status, "written", `expected written, got skipped: ${r.reason}`);
     assert.equal(r.provider, "openai-compat", "this is exactly what backfill's 'via LLM' count keys off");
     assert.equal(r.decision!.decision, "Added function b to a.ts");
+    // A successful provider run must stay silent — no fallback warning, no
+    // fallback_from= evidence token (issue #10's fix must not misfire on success).
+    assert.equal(warnings.length, 0, "no fallback warning on a successful provider run");
+    assert.ok(
+      !r.decision!.provenance.evidence.some((e) => e.includes("fallback_from=")),
+      "no fallback evidence token on a successful provider run",
+    );
+  } finally {
+    console.warn = origWarn;
+    process.env.HUNCH_SYNTH_PROVIDER = savedProvider ?? "deterministic";
+    delete process.env.HUNCH_SYNTH_BASE_URL;
+    delete process.env.HUNCH_SYNTH_MODEL;
+    __resetAvailabilityCacheForTests();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("syncCommit reports the TRUE provider (deterministic) when the selected provider fails, not the one selected (issue #10)", async () => {
+  const root = gitRepo();
+  const store = new HunchStore(hunchPaths(root));
+  store.json.ensureDirs();
+  appendFileSync(join(root, "src/a.ts"), "export function c(){ return 3; }\n");
+  execFileSync("git", ["add", "-A"], { cwd: root, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "feat: add c"], { cwd: root, stdio: "ignore" });
+
+  const server = createServer((req, res) => {
+    // Drain the request body before responding, matching this file's existing
+    // openai-compat fixture (the test ending at line ~296) — responding before
+    // the client finishes writing risks a flaky ECONNRESET instead of a clean
+    // 500-status rejection.
+    req.on("data", () => {});
+    req.on("end", () => {
+      res.statusCode = 500;
+      res.end("internal error");
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const { port } = server.address() as AddressInfo;
+
+  const savedProvider = process.env.HUNCH_SYNTH_PROVIDER;
+  process.env.HUNCH_SYNTH_PROVIDER = "openai-compat";
+  process.env.HUNCH_SYNTH_BASE_URL = `http://127.0.0.1:${port}`;
+  process.env.HUNCH_SYNTH_MODEL = "local-test-model";
+  __resetAvailabilityCacheForTests();
+  const warnings: string[] = [];
+  const origWarn = console.warn;
+  console.warn = (m?: unknown) => warnings.push(String(m));
+  try {
+    const r = await syncCommit(store, root);
+    assert.equal(r.status, "written", `expected written, got skipped: ${r.reason}`);
+    assert.equal(r.provider, "deterministic", "the openai-compat provider FAILED — must report the truth, not 'openai-compat'");
+    assert.ok(
+      r.decision!.provenance.evidence.some((e) => e.includes("fallback_from=openai-compat")),
+      `evidence should record the fallback: ${r.decision!.provenance.evidence.join(", ")}`,
+    );
+    assert.ok(warnings.some((w) => w.includes("openai-compat") && w.includes("falling back")), "warns about the fallback");
+  } finally {
+    console.warn = origWarn;
+    process.env.HUNCH_SYNTH_PROVIDER = savedProvider ?? "deterministic";
+    delete process.env.HUNCH_SYNTH_BASE_URL;
+    delete process.env.HUNCH_SYNTH_MODEL;
+    __resetAvailabilityCacheForTests();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("syncCommit's --verify pass preserves fellBackTo/fallback evidence across the draft reassignment (issue #10 regression)", async () => {
+  const root = gitRepo();
+  const store = new HunchStore(hunchPaths(root));
+  store.json.ensureDirs();
+  appendFileSync(join(root, "src/a.ts"), "export function d(){ return 4; }\n");
+  execFileSync("git", ["add", "-A"], { cwd: root, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "feat: add d"], { cwd: root, stdio: "ignore" });
+
+  const server = createServer((req, res) => {
+    req.on("data", () => {});
+    req.on("end", () => {
+      res.statusCode = 500;
+      res.end("internal error");
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const { port } = server.address() as AddressInfo;
+
+  const savedProvider = process.env.HUNCH_SYNTH_PROVIDER;
+  process.env.HUNCH_SYNTH_PROVIDER = "openai-compat";
+  process.env.HUNCH_SYNTH_BASE_URL = `http://127.0.0.1:${port}`;
+  process.env.HUNCH_SYNTH_MODEL = "local-test-model";
+  __resetAvailabilityCacheForTests();
+  try {
+    // --verify forces selectVerifier() too, which also sees the same broken
+    // openai-compat endpoint as the sole available worker — its verifyDecision
+    // call fails the same way, so verifyDecisionSafe degrades to `{ ...draft,
+    // verifyOutcome: "failed" }`. This IS the reassignment
+    // (`draft = await verifyDecisionSafe(...)`) whose shallow-spread must
+    // preserve fellBackTo/fallbackReason — asserting on the fields below proves
+    // that survival in a REAL invocation of that path, not just by reading the code.
+    const r = await syncCommit(store, root, undefined, { verify: true });
+    assert.equal(r.status, "written", `expected written, got skipped: ${r.reason}`);
+    assert.equal(r.provider, "deterministic", "still the true provider after the --verify reassignment");
+    assert.ok(
+      r.decision!.provenance.evidence.some((e) => e.includes("fallback_from=openai-compat")),
+      `fallback evidence must survive verifyDecisionSafe's reassignment: ${r.decision!.provenance.evidence.join(", ")}`,
+    );
   } finally {
     process.env.HUNCH_SYNTH_PROVIDER = savedProvider ?? "deterministic";
     delete process.env.HUNCH_SYNTH_BASE_URL;

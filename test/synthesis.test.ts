@@ -1,8 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { tempStore, prov } from "./helpers.js";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { recordFailure, salientTerms, isSignificant, isTrivialSubject } from "../src/synthesis/synthesize.js";
-import { selectProvider } from "../src/synthesis/provider.js";
+import { selectProvider, __resetAvailabilityCacheForTests } from "../src/synthesis/provider.js";
 import type { DiffAnalysis } from "../src/extractors/diff.js";
 
 // Force the deterministic provider so tests never need credentials.
@@ -111,6 +113,44 @@ test("recordFailure ranks suspects, writes a bug, and promotes a constraint on r
   const comp = store.json.get("components", "cmp_auth")!;
   assert.ok(comp.fragility > 0, "raised component fragility");
   cleanup();
+});
+
+test("recordFailure reports the TRUE provider (deterministic) when the selected provider fails, not the one selected (issue #10)", async () => {
+  const { store, root, cleanup } = tempStore();
+
+  const server = createServer((req, res) => {
+    // Drain the request body before responding — see the analogous
+    // test/integration.test.ts fixture for why (avoids a flaky ECONNRESET).
+    req.on("data", () => {});
+    req.on("end", () => {
+      res.statusCode = 500;
+      res.end("internal error");
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const { port } = server.address() as AddressInfo;
+
+  const savedProvider = process.env.HUNCH_SYNTH_PROVIDER;
+  process.env.HUNCH_SYNTH_PROVIDER = "openai-compat";
+  process.env.HUNCH_SYNTH_BASE_URL = `http://127.0.0.1:${port}`;
+  process.env.HUNCH_SYNTH_MODEL = "local-test-model";
+  __resetAvailabilityCacheForTests();
+  const warnings: string[] = [];
+  const origWarn = console.warn;
+  console.warn = (m?: unknown) => warnings.push(String(m));
+  try {
+    const r = await recordFailure(store, root, { test: "flaky.spec.ts", message: "expected 1 got 2" });
+    assert.equal(r.provider, "deterministic", "the openai-compat provider FAILED — must report the truth, not 'openai-compat'");
+    assert.ok(warnings.some((w) => w.includes("openai-compat") && w.includes("falling back")), "warns about the fallback");
+  } finally {
+    console.warn = origWarn;
+    process.env.HUNCH_SYNTH_PROVIDER = savedProvider ?? "deterministic";
+    delete process.env.HUNCH_SYNTH_BASE_URL;
+    delete process.env.HUNCH_SYNTH_MODEL;
+    __resetAvailabilityCacheForTests();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    cleanup();
+  }
 });
 
 test("UNRELATED failures are NOT flagged as recurrence (regression #1: no boilerplate false-positive)", async () => {

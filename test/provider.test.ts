@@ -5,6 +5,7 @@ import {
   extractJsonObjects,
   decisionDraftFromText,
   bugDraftFromText,
+  EnsembleProvider,
   type SynthProvider,
   type CommitInput,
   type FailureInput,
@@ -268,12 +269,16 @@ test("draftDecisionSafe: a throwing provider degrades to an honest 'inferred' de
   assert.equal(d.source, "inferred", "never a hollow llm_draft");
   assert.ok(d.confidence <= 0.45);
   assert.ok(d.title.length > 0);
+  assert.equal(d.fellBackTo, "stub-throws", "reports which provider actually failed (issue #10)");
+  assert.ok(d.fallbackReason?.includes("unparseable output"), "captures the failure reason");
 });
 
 test("draftBugSafe: a throwing provider degrades to an honest 'test_failure' deterministic draft", async () => {
   const b = await draftBugSafe(throwingProvider(), FAILURE);
   assert.equal(b.source, "test_failure");
   assert.ok(b.confidence <= 0.3);
+  assert.equal(b.fellBackTo, "stub-throws", "reports which provider actually failed (issue #10)");
+  assert.ok(b.fallbackReason?.includes("unparseable output"), "captures the failure reason");
 });
 
 test("draftDecisionSafe passes a successful provider draft through unchanged", async () => {
@@ -286,4 +291,46 @@ test("draftDecisionSafe passes a successful provider draft through unchanged", a
   const d = await draftDecisionSafe(passing, COMMIT);
   assert.equal(d.source, "llm_draft");
   assert.equal(d.decision, "D");
+  assert.equal(d.fellBackTo, undefined, "never set on the successful-provider path");
+});
+
+test("draftBugSafe passes a successful provider draft through unchanged", async () => {
+  const passing: SynthProvider = {
+    name: "stub-ok",
+    available: async () => true,
+    draftDecision: async () => { throw new Error("n/a"); },
+    draftBug: async () => ({ title: "T", symptom: "S", root_cause: "R", severity: "high", confidence: 0.7, source: "llm_draft" }),
+  };
+  const b = await draftBugSafe(passing, FAILURE);
+  assert.equal(b.source, "llm_draft");
+  assert.equal(b.fellBackTo, undefined, "never set on the successful-provider path");
+});
+
+test("draftDecisionSafe truncates a long fallback reason and handles a non-Error throw", async () => {
+  const longMessage = "x".repeat(250);
+  const longThrower: SynthProvider = {
+    name: "stub-long-throw",
+    available: async () => true,
+    draftDecision: async () => { throw new Error(longMessage); },
+    draftBug: async () => { throw new Error("n/a"); },
+  };
+  const d = await draftDecisionSafe(longThrower, COMMIT);
+  assert.equal(d.fallbackReason?.length, 201, "truncated to 200 chars + a trailing ellipsis marker");
+  assert.ok(d.fallbackReason?.endsWith("…"));
+
+  const stringThrower: SynthProvider = {
+    name: "stub-string-throw",
+    available: async () => true,
+    draftDecision: async () => { throw "not an Error object"; },
+    draftBug: async () => { throw "not an Error object"; },
+  };
+  const d2 = await draftDecisionSafe(stringThrower, COMMIT);
+  assert.equal(d2.fallbackReason, "not an Error object", "non-Error thrown values are stringified, not crashed on");
+});
+
+test("draftDecisionSafe: an EnsembleProvider whose workers all fail reports fellBackTo as 'ensemble', not a worker name (--deep path, issue #10)", async () => {
+  const ensemble = new EnsembleProvider([]); // no workers -> draftDecision throws immediately
+  const d = await draftDecisionSafe(ensemble, COMMIT);
+  assert.equal(d.source, "inferred");
+  assert.equal(d.fellBackTo, "ensemble", "the --deep path must report the true failure source too, not a worker's name");
 });
