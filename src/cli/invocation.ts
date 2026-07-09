@@ -1,5 +1,9 @@
-/** Figures out how to re-invoke this CLI from a git hook / .mcp.json, working
- *  both when running the built dist (plain node) and in dev via tsx. */
+/** Side-effect-free shared CLI logic — safe for any module (including tests)
+ *  to import, unlike src/cli/index.ts, which runs the whole program at
+ *  import time. Holds: how to re-invoke this CLI from a git hook / .mcp.json
+ *  (working both when running the built dist and in dev via tsx), plus small
+ *  formatting helpers (dim(), doctor's synthesisStatusLines()) that need the
+ *  same import-safety to be unit-testable. */
 import { fileURLToPath } from "node:url";
 import type { Invocation } from "../integrations/scaffold.js";
 
@@ -12,6 +16,38 @@ export interface ResolvedInvocation {
 
 /** Published package name — used for OS-agnostic invocations (see below). */
 const PKG = "@davesheffer/hunch";
+
+export function dim(s: string): string {
+  return `\x1b[2m${s}\x1b[0m`;
+}
+
+/** The doctor command's synthesis-status line(s) for a resolved provider name.
+ *  Exported for testing — the previous inline version had zero test coverage,
+ *  which is how issue #8 (openai-compat misreported as "no assistant CLI
+ *  found") shipped unnoticed through three review passes. */
+export function synthesisStatusLines(providerName: string, env: NodeJS.ProcessEnv): string[] {
+  const SUB: Record<string, { label: string; strip?: string }> = {
+    "claude-cli": { label: "Claude subscription (claude CLI)", strip: "ANTHROPIC_API_KEY" },
+    "codex-cli": { label: "ChatGPT subscription (codex CLI)", strip: "OPENAI_API_KEY" },
+    "cursor-agent": { label: "Cursor subscription (cursor-agent CLI)" },
+  };
+  const sub = SUB[providerName];
+  if (sub) {
+    const hadKey = sub.strip && !!env[sub.strip];
+    return [`            ↳ LLM synthesis billed to your ${sub.label}` +
+      (hadKey ? ` (${sub.strip} in env is stripped — never billed to the API)` : ``)];
+  }
+  if (providerName === "openai-compat") {
+    const base = env.HUNCH_SYNTH_BASE_URL ?? "(unset)";
+    const model = env.HUNCH_SYNTH_MODEL ?? "(unset)";
+    const keyNote = env.HUNCH_SYNTH_API_KEY ? " (HUNCH_SYNTH_API_KEY set)" : " (no API key)";
+    return [`            ↳ LLM synthesis via local/self-hosted endpoint ${base} (model: ${model})${keyNote}`];
+  }
+  return [
+    dim(`            ↳ no assistant CLI found — synthesis uses the offline heuristic (advisory, low-confidence)`),
+    dim(`              for full synthesis install one: Claude Code (\`claude /login\`), Codex (\`codex login\`), or Cursor (\`cursor-agent login\`)`),
+  ];
+}
 
 export function resolveInvocation(): ResolvedInvocation {
   const entry = fileURLToPath(import.meta.url).replace(/invocation\.(js|ts)$/, "index.$1");

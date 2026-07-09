@@ -82,7 +82,7 @@ import { mergeHunchJson } from "../store/merge.js";
 import { movePublicMemoryToPrivate } from "../store/privateMigrate.js";
 import { ENTITY_KINDS } from "../core/types.js";
 import { planCompaction } from "../store/compact.js";
-import { resolveInvocation } from "./invocation.js";
+import { resolveInvocation, dim, synthesisStatusLines } from "./invocation.js";
 
 const program = new Command();
 program.name("hunch").description("Hunch — an Engineering Memory OS: a git-native reasoning graph for your codebase.").version(HUNCH_VERSION);
@@ -2205,22 +2205,10 @@ program
     console.log(`schema:     v${onDisk} (hunch v${SCHEMA_VERSION})${schemaNote}`);
     const provider = await selectProvider();
     console.log(`synthesis:  ${provider.name}`);
-    // Synthesis is billed to the user's SUBSCRIPTION via a coding-assistant CLI,
-    // never a pay-per-token API key. Surface which one — or what's missing.
-    const SUB: Record<string, { label: string; strip?: string }> = {
-      "claude-cli": { label: "Claude subscription (claude CLI)", strip: "ANTHROPIC_API_KEY" },
-      "codex-cli": { label: "ChatGPT subscription (codex CLI)", strip: "OPENAI_API_KEY" },
-      "cursor-agent": { label: "Cursor subscription (cursor-agent CLI)" },
-    };
-    const sub = SUB[provider.name];
-    if (sub) {
-      const hadKey = sub.strip && !!process.env[sub.strip];
-      console.log(`            ↳ LLM synthesis billed to your ${sub.label}` +
-        (hadKey ? ` (${sub.strip} in env is stripped — never billed to the API)` : ``));
-    } else {
-      console.log(dim(`            ↳ no assistant CLI found — synthesis uses the offline heuristic (advisory, low-confidence)`));
-      console.log(dim(`              for full synthesis install one: Claude Code (\`claude /login\`), Codex (\`codex login\`), or Cursor (\`cursor-agent login\`)`));
-    }
+    // Synthesis is billed to the user's SUBSCRIPTION via a coding-assistant CLI
+    // (or run through a configured local/self-hosted endpoint), never a
+    // pay-per-token API key. Surface which one — or what's missing.
+    for (const line of synthesisStatusLines(provider.name, process.env)) console.log(line);
     const c = store.reindex().counts;
     console.log(`hunch:      ${c.symbols} symbols, ${c.edges} edges, ${c.components} components, ${c.decisions} decisions, ${c.bugs} bugs, ${c.constraints} constraints`);
     // Overlay status speaks the TRUE mode, and a dead pointer is a loud finding, not a
@@ -2300,9 +2288,6 @@ function reportClaudeConfigHeal(): void {
     console.log(`✓ healed Claude Code project case-split: mirrored [${g.servers.join(", ")}] across ${g.casings.join("  ·  ")}`);
   }
   console.log(dim(`  ↳ backup: ${res.backup}`));
-}
-function dim(s: string): string {
-  return `\x1b[2m${s}\x1b[0m`;
 }
 function fail(msg: string): void {
   console.error(`error: ${msg}`);
