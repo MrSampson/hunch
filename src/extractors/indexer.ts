@@ -152,11 +152,17 @@ export function indexRepo(store: HunchStore, root: string, opts: { churn?: boole
   const fileToComponent = new Map<string, string>();
   for (const c of components) for (const f of c._files) fileToComponent.set(f, c.id);
 
+  const hasSrcLayout = [...fileSymbols.keys()].some((f) => f.startsWith("src/"));
+  const pyRoots = hasSrcLayout ? ["", "src"] : [""];
+
   for (const { file, imports } of perFileImports) {
     const fromCmp = fileToComponent.get(file);
     if (!fromCmp) continue;
+    const isPython = languageFor(file)?.id === "python";
     for (const spec of imports) {
-      const target = resolveImport(file, spec, fileSymbols);
+      const target = isPython
+        ? resolvePythonImport(file, spec, fileSymbols, pyRoots)
+        : resolveImport(file, spec, fileSymbols);
       if (!target) continue;
       const toCmp = fileToComponent.get(target);
       if (!toCmp || toCmp === fromCmp) continue;
@@ -261,6 +267,58 @@ function resolveImport(fromFile: string, spec: string, fileSymbols: Map<string, 
   ];
   for (const c of candidates) if (fileSymbols.has(c)) return c;
   return null;
+}
+
+/** First of `${modulePath}.py` / `${modulePath}/__init__.py` that's a tracked file,
+ *  or null — the shared "module file vs. package __init__" candidate check used by
+ *  both resolvePythonImport branches below. */
+function firstExistingPyModule(modulePath: string, fileSymbols: Map<string, string[]>): string | null {
+  const candidates = [`${modulePath}.py`, `${modulePath}/__init__.py`];
+  for (const c of candidates) if (fileSymbols.has(c)) return c;
+  return null;
+}
+
+/** Resolve a Python import specifier (relative or absolute) to a concrete tracked
+ *  file path. Sibling to resolveImport() — Python's leading dot means "N levels up
+ *  from the importing module's own directory," not "a relative file-path fragment"
+ *  the way JS/TS's `./`/`../` does. Absolute imports are resolved best-effort
+ *  against `pyRoots` (repo root, plus a top-level `src/` layout if one exists) —
+ *  no sys.path/PYTHONPATH emulation. A module's own package directory is always
+ *  its containing directory, so relative resolution needs no repo-wide
+ *  package-root search — only dot-counting from `fromFile`'s own location. */
+function resolvePythonImport(
+  fromFile: string,
+  spec: string,
+  fileSymbols: Map<string, string[]>,
+  pyRoots: string[],
+): string | null {
+  if (!spec.startsWith(".")) {
+    const specPath = spec.split(".").join("/");
+    for (const root of pyRoots) {
+      const modulePath = root ? `${root}/${specPath}` : specPath;
+      const found = firstExistingPyModule(modulePath, fileSymbols);
+      if (found) return found;
+    }
+    return null;
+  }
+  const level = spec.length - spec.replace(/^\.+/, "").length;
+  const tail = spec.slice(level);
+  const dir = toPosix(dirname(fromFile));
+  const segments = dir === "." ? [] : dir.split("/");
+  const pop = level - 1;
+  if (pop > segments.length) return null; // import points above the repo root — don't guess
+  const baseSegments = pop > 0 ? segments.slice(0, segments.length - pop) : segments;
+  const baseDir = baseSegments.join("/");
+  if (!tail) {
+    // bare `.`/`..`/etc — `from . import x` only ever resolves to the package's
+    // own __init__.py (we track the module path, never the imported name itself,
+    // matching resolveImport()'s granularity for JS/TS named imports).
+    const initPy = baseDir ? `${baseDir}/__init__.py` : "__init__.py";
+    return fileSymbols.has(initPy) ? initPy : null;
+  }
+  const tailPath = tail.split(".").join("/");
+  const modulePath = baseDir ? `${baseDir}/${tailPath}` : tailPath;
+  return firstExistingPyModule(modulePath, fileSymbols);
 }
 
 interface ComponentDraft extends Component {
