@@ -410,6 +410,16 @@ export function safeTimeout(v: string | undefined, fallback: number): number {
   return v && Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+// max_tokens caps OUTPUT length (never a shell argv token, unlike safeModel's
+// model id) — same failure modes as a timeout, so validate the same way: fall
+// back to a safe default rather than propagate garbage into the request body
+// (issue #11; orthogonal to the context-window/truncation problem that issue
+// is mainly about — this only bounds how much the model is allowed to WRITE).
+export function safeMaxTokens(v: string | undefined, fallback: number): number {
+  const n = Number(v);
+  return v && Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 // --------------------------------------------------------------------------
 // Provider A: headless `claude -p` CLI — billed to the user's Claude subscription
 // --------------------------------------------------------------------------
@@ -570,6 +580,7 @@ export class OpenAICompatProvider extends PromptSynthProvider {
           messages: [{ role: "user", content: prompt }],
           response_format: { type: "json_object" },
           stream: false,
+          max_tokens: safeMaxTokens(process.env.HUNCH_SYNTH_MAX_TOKENS, 2048),
         }),
         signal: controller.signal,
       });

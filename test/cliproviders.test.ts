@@ -4,6 +4,7 @@ import {
   extractCodexText,
   safeModel,
   safeTimeout,
+  safeMaxTokens,
   selectProvider,
   selectWorkers,
   OpenAICompatProvider,
@@ -96,6 +97,17 @@ test("safeTimeout falls back to the default on unset/invalid/non-positive values
   }
 });
 
+test("safeMaxTokens passes a valid positive number through unchanged", () => {
+  assert.equal(safeMaxTokens("512", 2048), 512);
+  assert.equal(safeMaxTokens("1", 2048), 1);
+});
+
+test("safeMaxTokens falls back to the default on unset/invalid/non-positive values", () => {
+  for (const bad of [undefined, "", "0", "-5", "abc", "NaN", "Infinity"]) {
+    assert.equal(safeMaxTokens(bad, 2048), 2048);
+  }
+});
+
 function startFakeServer(
   handler: (req: IncomingMessage, res: ServerResponse, body: string) => void,
 ): Promise<{ url: string; close: () => Promise<void> }> {
@@ -151,6 +163,7 @@ test("OpenAICompatProvider.draftDecision POSTs {baseUrl}/chat/completions with m
     assert.equal(received.body?.model, "qwen2.5:7b");
     assert.equal((received.body?.response_format as { type?: string })?.type, "json_object");
     assert.equal(received.body?.stream, false);
+    assert.equal(received.body?.max_tokens, 2048, "default max_tokens sent");
     assert.ok(Array.isArray(received.body?.messages));
     assert.equal(received.auth, undefined, "no Authorization header when HUNCH_SYNTH_API_KEY is unset");
   } finally {
@@ -176,6 +189,26 @@ test("OpenAICompatProvider sends a Bearer Authorization header only when HUNCH_S
     delete process.env.HUNCH_SYNTH_BASE_URL;
     delete process.env.HUNCH_SYNTH_MODEL;
     delete process.env.HUNCH_SYNTH_API_KEY;
+    await server.close();
+  }
+});
+
+test("OpenAICompatProvider.draftDecision honors HUNCH_SYNTH_MAX_TOKENS", async () => {
+  let received: Record<string, unknown> = {};
+  const server = await startFakeServer((req, res, body) => {
+    received = JSON.parse(body);
+    res.end(JSON.stringify({ choices: [{ message: { content: '{"decision":"d","context":"c","nontrivial":true}' } }] }));
+  });
+  process.env.HUNCH_SYNTH_BASE_URL = server.url;
+  process.env.HUNCH_SYNTH_MODEL = "m";
+  process.env.HUNCH_SYNTH_MAX_TOKENS = "512";
+  try {
+    await new OpenAICompatProvider().draftDecision({ subject: "s", body: "", files: [], diff: "" });
+    assert.equal(received.max_tokens, 512);
+  } finally {
+    delete process.env.HUNCH_SYNTH_BASE_URL;
+    delete process.env.HUNCH_SYNTH_MODEL;
+    delete process.env.HUNCH_SYNTH_MAX_TOKENS;
     await server.close();
   }
 });
