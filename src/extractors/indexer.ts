@@ -269,6 +269,15 @@ function resolveImport(fromFile: string, spec: string, fileSymbols: Map<string, 
   return null;
 }
 
+/** First of `${modulePath}.py` / `${modulePath}/__init__.py` that's a tracked file,
+ *  or null — the shared "module file vs. package __init__" candidate check used by
+ *  both resolvePythonImport branches below. */
+function firstExistingPyModule(modulePath: string, fileSymbols: Map<string, string[]>): string | null {
+  const candidates = [`${modulePath}.py`, `${modulePath}/__init__.py`];
+  for (const c of candidates) if (fileSymbols.has(c)) return c;
+  return null;
+}
+
 /** Resolve a Python import specifier (relative or absolute) to a concrete tracked
  *  file path. Sibling to resolveImport() — Python's leading dot means "N levels up
  *  from the importing module's own directory," not "a relative file-path fragment"
@@ -287,8 +296,8 @@ function resolvePythonImport(
     const specPath = spec.split(".").join("/");
     for (const root of pyRoots) {
       const modulePath = root ? `${root}/${specPath}` : specPath;
-      const candidates = [`${modulePath}.py`, `${modulePath}/__init__.py`];
-      for (const c of candidates) if (fileSymbols.has(c)) return c;
+      const found = firstExistingPyModule(modulePath, fileSymbols);
+      if (found) return found;
     }
     return null;
   }
@@ -309,9 +318,7 @@ function resolvePythonImport(
   }
   const tailPath = tail.split(".").join("/");
   const modulePath = baseDir ? `${baseDir}/${tailPath}` : tailPath;
-  const candidates = [`${modulePath}.py`, `${modulePath}/__init__.py`];
-  for (const c of candidates) if (fileSymbols.has(c)) return c;
-  return null;
+  return firstExistingPyModule(modulePath, fileSymbols);
 }
 
 interface ComponentDraft extends Component {
