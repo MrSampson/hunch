@@ -1,5 +1,9 @@
-/** Figures out how to re-invoke this CLI from a git hook / .mcp.json, working
- *  both when running the built dist (plain node) and in dev via tsx. */
+/** Side-effect-free shared CLI logic — safe for any module (including tests)
+ *  to import, unlike src/cli/index.ts, which runs the whole program at
+ *  import time. Holds: how to re-invoke this CLI from a git hook / .mcp.json
+ *  (working both when running the built dist and in dev via tsx), plus small
+ *  formatting helpers (dim(), doctor's synthesisStatusLines()) that need the
+ *  same import-safety to be unit-testable. */
 import { fileURLToPath } from "node:url";
 import type { Invocation } from "../integrations/scaffold.js";
 
