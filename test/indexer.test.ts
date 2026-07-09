@@ -293,6 +293,79 @@ test("Python bare-dot relative import (`from . import x`) resolves within its ow
   rmSync(noInitRoot, { recursive: true, force: true });
 });
 
+function pythonAbsoluteRepoRootFixtureRepo(): string {
+  const root = mkdtempSync(join(tmpdir(), "hunch-idx-py-abs-root-"));
+  mkdirSync(join(root, "authpkg"), { recursive: true });
+  mkdirSync(join(root, "billingpkg"), { recursive: true });
+  // no "src/" anywhere in this repo — resolution must fall back to the repo root.
+  // `import os` alongside a real same-repo absolute import proves genuinely external
+  // names are skipped rather than accidentally matched.
+  writeFileSync(
+    join(root, "authpkg/session.py"),
+    `import billingpkg.charge\nimport os\n\ndef verify_session(t):\n    return t\n`,
+  );
+  writeFileSync(join(root, "billingpkg/charge.py"), `def charge(t):\n    return t\n`);
+  return root;
+}
+
+test("Python absolute import resolves off the repo root when there is no src/ layout (issue #5)", () => {
+  const root = pythonAbsoluteRepoRootFixtureRepo();
+  const store = new HunchStore(hunchPaths(root));
+  store.json.ensureDirs();
+  const res = indexRepo(store, root, { churn: false });
+  store.reindex();
+
+  assert.equal(res.files, 2);
+  const comps = store.json.loadAll("components");
+  const authpkg = comps.find((c) => c.name === "Authpkg")!;
+  const billingpkg = comps.find((c) => c.name === "Billingpkg")!;
+  assert.ok(authpkg && billingpkg, "both top-level packages become components");
+
+  const edges = store.json.loadAll("edges").filter((e) => e.type === "depends_on");
+  assert.equal(edges.length, 1, "only the resolvable absolute import produces an edge — `import os` does not");
+  assert.equal(edges[0]!.from, authpkg.id);
+  assert.equal(edges[0]!.to, billingpkg.id);
+
+  store.close();
+  rmSync(root, { recursive: true, force: true });
+});
+
+function pythonAbsoluteSrcLayoutFixtureRepo(): string {
+  const root = mkdtempSync(join(tmpdir(), "hunch-idx-py-abs-src-"));
+  mkdirSync(join(root, "src/auth"), { recursive: true });
+  mkdirSync(join(root, "src/billing"), { recursive: true });
+  // absolute import omits the `src.` prefix, matching a poetry/setuptools src-layout
+  // repo where `src/` is a build root, not part of the importable package path — only
+  // resolvable via the src/ layout root candidate, not the plain repo root.
+  writeFileSync(
+    join(root, "src/auth/session.py"),
+    `import billing.charge\n\ndef verify_session(t):\n    return t\n`,
+  );
+  writeFileSync(join(root, "src/billing/charge.py"), `def charge(t):\n    return t\n`);
+  return root;
+}
+
+test("Python absolute import resolves via a detected src/ layout root (issue #5)", () => {
+  const root = pythonAbsoluteSrcLayoutFixtureRepo();
+  const store = new HunchStore(hunchPaths(root));
+  store.json.ensureDirs();
+  indexRepo(store, root, { churn: false });
+  store.reindex();
+
+  const comps = store.json.loadAll("components");
+  const auth = comps.find((c) => c.name === "Auth")!;
+  const billing = comps.find((c) => c.name === "Billing")!;
+
+  const edges = store.json.loadAll("edges");
+  assert.ok(
+    edges.some((e) => e.type === "depends_on" && e.from === auth.id && e.to === billing.id),
+    "Auth depends_on Billing via the src/-layout-resolved absolute import",
+  );
+
+  store.close();
+  rmSync(root, { recursive: true, force: true });
+});
+
 function pythonDecoratedMethodFixtureRepo(): string {
   const root = mkdtempSync(join(tmpdir(), "hunch-idx-py-decorated-"));
   mkdirSync(join(root, "src/auth"), { recursive: true });

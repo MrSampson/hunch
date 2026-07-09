@@ -152,13 +152,16 @@ export function indexRepo(store: HunchStore, root: string, opts: { churn?: boole
   const fileToComponent = new Map<string, string>();
   for (const c of components) for (const f of c._files) fileToComponent.set(f, c.id);
 
+  const hasSrcLayout = [...fileSymbols.keys()].some((f) => f.startsWith("src/"));
+  const pyRoots = hasSrcLayout ? ["", "src"] : [""];
+
   for (const { file, imports } of perFileImports) {
     const fromCmp = fileToComponent.get(file);
     if (!fromCmp) continue;
     const isPython = languageFor(file)?.id === "python";
     for (const spec of imports) {
       const target = isPython
-        ? resolvePythonImport(file, spec, fileSymbols)
+        ? resolvePythonImport(file, spec, fileSymbols, pyRoots)
         : resolveImport(file, spec, fileSymbols);
       if (!target) continue;
       const toCmp = fileToComponent.get(target);
@@ -266,19 +269,29 @@ function resolveImport(fromFile: string, spec: string, fileSymbols: Map<string, 
   return null;
 }
 
-/** Resolve a Python import specifier to a concrete tracked file path. Sibling to
- *  resolveImport() — Python's leading dot means "N levels up from the importing
- *  module's own directory," not "a relative file-path fragment" the way JS/TS's
- *  `./`/`../` does, so it needs its own resolution rules. A module's own package
- *  directory is always its containing directory (true whether or not the module
- *  itself is an `__init__.py`), so this needs no repo-wide package-root search for
- *  the relative case — only dot-counting from `fromFile`'s own location. */
+/** Resolve a Python import specifier (relative or absolute) to a concrete tracked
+ *  file path. Sibling to resolveImport() — Python's leading dot means "N levels up
+ *  from the importing module's own directory," not "a relative file-path fragment"
+ *  the way JS/TS's `./`/`../` does. Absolute imports are resolved best-effort
+ *  against `pyRoots` (repo root, plus a top-level `src/` layout if one exists) —
+ *  no sys.path/PYTHONPATH emulation. A module's own package directory is always
+ *  its containing directory, so relative resolution needs no repo-wide
+ *  package-root search — only dot-counting from `fromFile`'s own location. */
 function resolvePythonImport(
   fromFile: string,
   spec: string,
   fileSymbols: Map<string, string[]>,
+  pyRoots: string[],
 ): string | null {
-  if (!spec.startsWith(".")) return null; // absolute import — resolved in a follow-up task
+  if (!spec.startsWith(".")) {
+    const specPath = spec.split(".").join("/");
+    for (const root of pyRoots) {
+      const modulePath = root ? `${root}/${specPath}` : specPath;
+      const candidates = [`${modulePath}.py`, `${modulePath}/__init__.py`];
+      for (const c of candidates) if (fileSymbols.has(c)) return c;
+    }
+    return null;
+  }
   const level = spec.length - spec.replace(/^\.+/, "").length;
   const tail = spec.slice(level);
   const dir = toPosix(dirname(fromFile));
