@@ -159,9 +159,9 @@ function pythonFixtureRepo(): string {
   writeFileSync(
     join(root, "src/auth/session.py"),
     // same-file (same-component) import used in a call — should yield a same-file
-    // call edge — PLUS a cross-component import (billing) that is never called,
-    // so Python cross-file import resolution (out of scope, issue #5) genuinely
-    // gets exercised rather than trivially having nothing to resolve.
+    // call edge — PLUS a cross-component relative import (`..billing.charge`) that
+    // is never called, so import resolution (issue #5) genuinely gets exercised
+    // as a depends_on edge rather than trivially having nothing to resolve.
     `from .jwt import decode_token\nfrom ..billing.charge import charge\n\ndef verify_session(t):\n    return decode_token(t)\n`,
   );
   writeFileSync(join(root, "src/auth/jwt.py"), `def decode_token(t):\n    return t\n`);
@@ -172,7 +172,7 @@ function pythonFixtureRepo(): string {
   return root;
 }
 
-test("indexRepo builds symbols and same-file call edges for a Python repo", () => {
+test("indexRepo resolves Python relative imports across component boundaries (issue #5)", () => {
   const root = pythonFixtureRepo();
   const store = new HunchStore(hunchPaths(root));
   store.json.ensureDirs();
@@ -195,22 +195,102 @@ test("indexRepo builds symbols and same-file call edges for a Python repo", () =
   assert.ok(deps.some((v) => v.includes("verify_session")), "verify_session is a dependent of decode_token");
 
   // components derived from src/<dir>, same as TS
-  const comps = store.json.loadAll("components").map((c) => c.name).sort();
-  assert.deepEqual(comps, ["Auth", "Billing"]);
+  const comps = store.json.loadAll("components");
+  assert.deepEqual(comps.map((c) => c.name).sort(), ["Auth", "Billing"]);
 
-  // NO depends_on edge from Python's `from ..billing.charge import charge` even
-  // though it genuinely crosses the Auth/Billing component boundary — cross-file
-  // Python import resolution is explicitly out of scope (issue #5), so this
-  // assertion actually probes that no fabricated edge is produced rather than
-  // passing vacuously because nothing ever referenced billing.
+  const auth = comps.find((c) => c.name === "Auth")!;
+  const billing = comps.find((c) => c.name === "Billing")!;
+
+  // `from ..billing.charge import charge` in src/auth/session.py now resolves to
+  // src/billing/charge.py: 2 leading dots -> up 1 directory from src/auth -> "src",
+  // plus the "billing/charge" tail -> src/billing/charge.py. A real, resolvable
+  // cross-component import must produce a depends_on edge (issue #5) — this
+  // replaces the old assertion that no edge was fabricated (that was true only
+  // because resolution didn't exist yet, not because this import is ambiguous).
   const edges = store.json.loadAll("edges");
   assert.ok(
-    !edges.some((e) => e.type === "depends_on" && (e.from.includes("billing") || e.to.includes("billing"))),
-    "no fabricated cross-component depends_on edge for Python imports",
+    edges.some((e) => e.type === "depends_on" && e.from === auth.id && e.to === billing.id),
+    "Auth depends_on Billing via the resolved cross-package relative import",
   );
 
   store.close();
   rmSync(root, { recursive: true, force: true });
+});
+
+function pythonTooManyDotsFixtureRepo(): string {
+  const root = mkdtempSync(join(tmpdir(), "hunch-idx-py-toomanydots-"));
+  mkdirSync(join(root, "src/auth"), { recursive: true });
+  mkdirSync(join(root, "src/billing"), { recursive: true });
+  // src/auth/session.py sits 2 directory levels under the repo root (src, auth).
+  // 4 leading dots asks to go up 3 levels from src/auth — past the repo root
+  // entirely. This must be skipped, not guessed at or crashed on.
+  writeFileSync(
+    join(root, "src/auth/session.py"),
+    `from ....nonexistent import thing\n\ndef verify_session(t):\n    return t\n`,
+  );
+  writeFileSync(join(root, "src/billing/charge.py"), `def charge(t):\n    return t\n`);
+  return root;
+}
+
+test("Python relative import with too many leading dots (above repo root) is skipped, not guessed", () => {
+  const root = pythonTooManyDotsFixtureRepo();
+  const store = new HunchStore(hunchPaths(root));
+  store.json.ensureDirs();
+  const res = indexRepo(store, root, { churn: false }); // must not throw
+  store.reindex();
+
+  assert.equal(res.files, 2);
+  const edges = store.json.loadAll("edges");
+  assert.ok(
+    !edges.some((e) => e.type === "depends_on"),
+    "no depends_on edge is fabricated for an out-of-repo relative import",
+  );
+
+  store.close();
+  rmSync(root, { recursive: true, force: true });
+});
+
+function pythonBareDotFixtureRepo(withInit: boolean): string {
+  const root = mkdtempSync(join(tmpdir(), "hunch-idx-py-baredot-"));
+  mkdirSync(join(root, "src/billing"), { recursive: true });
+  writeFileSync(
+    join(root, "src/billing/api.py"),
+    `from . import charge\n\ndef process(t):\n    return t\n`,
+  );
+  if (withInit) {
+    writeFileSync(join(root, "src/billing/__init__.py"), `def charge(t):\n    return t\n`);
+  }
+  return root;
+}
+
+test("Python bare-dot relative import (`from . import x`) resolves within its own package without crashing", () => {
+  // `from . import x` always targets the importing file's OWN directory, which the
+  // component-derivation scheme (src/<dir>) always groups into the SAME component
+  // as the importer — so this can never surface as a depends_on edge (same-component
+  // targets are filtered at indexer.ts:162, same as a JS/TS `./sibling` import).
+  // This is a crash-safety / file-discovery check, not an edge assertion.
+  const withInitRoot = pythonBareDotFixtureRepo(true);
+  const storeWithInit = new HunchStore(hunchPaths(withInitRoot));
+  storeWithInit.json.ensureDirs();
+  const resWithInit = indexRepo(storeWithInit, withInitRoot, { churn: false });
+  storeWithInit.reindex();
+  assert.equal(resWithInit.files, 2);
+  assert.ok(
+    storeWithInit.json.loadAll("symbols").some((s) => s.name === "charge" && s.file === "src/billing/__init__.py"),
+    "the __init__.py the bare-dot import targets is indexed",
+  );
+  storeWithInit.close();
+  rmSync(withInitRoot, { recursive: true, force: true });
+
+  const noInitRoot = pythonBareDotFixtureRepo(false);
+  const storeNoInit = new HunchStore(hunchPaths(noInitRoot));
+  storeNoInit.json.ensureDirs();
+  // no __init__.py exists to resolve against — must not throw
+  const resNoInit = indexRepo(storeNoInit, noInitRoot, { churn: false });
+  storeNoInit.reindex();
+  assert.equal(resNoInit.files, 1);
+  storeNoInit.close();
+  rmSync(noInitRoot, { recursive: true, force: true });
 });
 
 function pythonDecoratedMethodFixtureRepo(): string {

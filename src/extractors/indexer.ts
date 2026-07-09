@@ -155,8 +155,11 @@ export function indexRepo(store: HunchStore, root: string, opts: { churn?: boole
   for (const { file, imports } of perFileImports) {
     const fromCmp = fileToComponent.get(file);
     if (!fromCmp) continue;
+    const isPython = languageFor(file)?.id === "python";
     for (const spec of imports) {
-      const target = resolveImport(file, spec, fileSymbols);
+      const target = isPython
+        ? resolvePythonImport(file, spec, fileSymbols)
+        : resolveImport(file, spec, fileSymbols);
       if (!target) continue;
       const toCmp = fileToComponent.get(target);
       if (!toCmp || toCmp === fromCmp) continue;
@@ -259,6 +262,41 @@ function resolveImport(fromFile: string, spec: string, fileSymbols: Map<string, 
     toPosix(join(base, "index.tsx")),
     toPosix(join(base, "index.js")),
   ];
+  for (const c of candidates) if (fileSymbols.has(c)) return c;
+  return null;
+}
+
+/** Resolve a Python import specifier to a concrete tracked file path. Sibling to
+ *  resolveImport() — Python's leading dot means "N levels up from the importing
+ *  module's own directory," not "a relative file-path fragment" the way JS/TS's
+ *  `./`/`../` does, so it needs its own resolution rules. A module's own package
+ *  directory is always its containing directory (true whether or not the module
+ *  itself is an `__init__.py`), so this needs no repo-wide package-root search for
+ *  the relative case — only dot-counting from `fromFile`'s own location. */
+function resolvePythonImport(
+  fromFile: string,
+  spec: string,
+  fileSymbols: Map<string, string[]>,
+): string | null {
+  if (!spec.startsWith(".")) return null; // absolute import — resolved in a follow-up task
+  const level = spec.length - spec.replace(/^\.+/, "").length;
+  const tail = spec.slice(level);
+  const dir = toPosix(dirname(fromFile));
+  const segments = dir === "." ? [] : dir.split("/");
+  const pop = level - 1;
+  if (pop > segments.length) return null; // import points above the repo root — don't guess
+  const baseSegments = pop > 0 ? segments.slice(0, segments.length - pop) : segments;
+  const baseDir = baseSegments.join("/");
+  if (!tail) {
+    // bare `.`/`..`/etc — `from . import x` only ever resolves to the package's
+    // own __init__.py (we track the module path, never the imported name itself,
+    // matching resolveImport()'s granularity for JS/TS named imports).
+    const initPy = baseDir ? `${baseDir}/__init__.py` : "__init__.py";
+    return fileSymbols.has(initPy) ? initPy : null;
+  }
+  const tailPath = tail.split(".").join("/");
+  const modulePath = baseDir ? `${baseDir}/${tailPath}` : tailPath;
+  const candidates = [`${modulePath}.py`, `${modulePath}/__init__.py`];
   for (const c of candidates) if (fileSymbols.has(c)) return c;
   return null;
 }
