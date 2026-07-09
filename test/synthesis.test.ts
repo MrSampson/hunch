@@ -53,6 +53,26 @@ test("isTrivialSubject: SKIP_SUBJECT match is skipped UNLESS the body is substan
   assert.equal(isTrivialSubject({ subject: "feat: add x", body: "x".repeat(100) }), false);
 });
 
+test("isTrivialSubject: chore(deps) subjects are recognized as SKIP_SUBJECT (regex fix, regression #4)", () => {
+  // chore(deps) with no body -> trivial. Regression guard for a pre-existing bug where
+  // the SKIP_SUBJECT regex's `\b` after "chore(deps)" never fires (no word/non-word
+  // transition before ":" or a space), so these commits silently fell through to the
+  // isSignificant() gate instead of being treated as SKIP_SUBJECT.
+  assert.equal(isTrivialSubject({ subject: "chore(deps): bump lodash from 4.1.0 to 4.2.0", body: "" }), true);
+  // substantive body still overrides, same as every other SKIP_SUBJECT alternative
+  assert.equal(
+    isTrivialSubject({ subject: "chore(deps): bump lodash from 4.1.0 to 4.2.0", body: "x".repeat(40) }),
+    false,
+  );
+  // the other SKIP_SUBJECT alternatives are unaffected by the chore(deps) fix
+  assert.equal(isTrivialSubject({ subject: "Merge branch 'main' into feature", body: "" }), true);
+  assert.equal(isTrivialSubject({ subject: "revert: bad change", body: "" }), true);
+  assert.equal(isTrivialSubject({ subject: "bump: lodash to 4.2.0", body: "" }), true);
+  assert.equal(isTrivialSubject({ subject: "format: prettier", body: "" }), true);
+  assert.equal(isTrivialSubject({ subject: "lint: eslint fixes", body: "" }), true);
+  assert.equal(isTrivialSubject({ subject: "wip", body: "" }), true);
+});
+
 test("deterministic provider is always available and drafts a low-confidence decision", async () => {
   const p = await selectProvider();
   assert.equal(p.name, "deterministic");

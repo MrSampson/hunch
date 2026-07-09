@@ -18,10 +18,10 @@ import { draftTripwires, knownRepoDeps } from "./tripwires.js";
 import type { Decision, Bug, Constraint, Component, Symbol } from "../core/types.js";
 import type { TestReport } from "../extractors/testreport.js";
 import { languageFor } from "../extractors/languages.js";
-// NOTE: "chore(deps)" branch doesn't actually match "chore(deps): ..." subjects
-// (\b fails after ")" before ":") — tracked for Task 2, which touches this
-// regex's other call site.
-const SKIP_SUBJECT = /^(merge|revert|bump|chore\(deps\)|format|lint|wip)\b/i;
+// "chore(deps):" is anchored separately (not via \b) because \b requires a
+// word/non-word transition, and the character after the closing ")" is ":" or a
+// space — both non-word — so no boundary ever fires there.
+const SKIP_SUBJECT = /^(merge|revert|bump|format|lint|wip)\b|^chore\(deps\):/i;
 
 export interface SyncResult {
   status: "written" | "skipped";
@@ -72,7 +72,7 @@ export async function syncCommit(
   const meta = commitMeta(target, root);
   if (!meta) return { status: "skipped", reason: "commit not found" };
 
-  if (SKIP_SUBJECT.test(meta.subject)) return { status: "skipped", reason: `trivial subject: ${meta.subject}` };
+  if (isTrivialSubject(meta)) return { status: "skipped", reason: `trivial subject: ${meta.subject}` };
   const codeFiles = meta.files.filter((f) => languageFor(f) !== null);
   if (codeFiles.length === 0) return { status: "skipped", reason: "no code files changed" };
 
