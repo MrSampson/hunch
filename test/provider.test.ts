@@ -5,6 +5,7 @@ import {
   extractJsonObjects,
   decisionDraftFromText,
   bugDraftFromText,
+  EnsembleProvider,
   type SynthProvider,
   type CommitInput,
   type FailureInput,
@@ -325,4 +326,11 @@ test("draftDecisionSafe truncates a long fallback reason and handles a non-Error
   };
   const d2 = await draftDecisionSafe(stringThrower, COMMIT);
   assert.equal(d2.fallbackReason, "not an Error object", "non-Error thrown values are stringified, not crashed on");
+});
+
+test("draftDecisionSafe: an EnsembleProvider whose workers all fail reports fellBackTo as 'ensemble', not a worker name (--deep path, issue #10)", async () => {
+  const ensemble = new EnsembleProvider([]); // no workers -> draftDecision throws immediately
+  const d = await draftDecisionSafe(ensemble, COMMIT);
+  assert.equal(d.source, "inferred");
+  assert.equal(d.fellBackTo, "ensemble", "the --deep path must report the true failure source too, not a worker's name");
 });

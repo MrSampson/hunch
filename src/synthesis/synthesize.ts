@@ -138,10 +138,7 @@ export async function syncCommit(
   // verifyDecisionSafe/applyVerdict both return `{ ...draft, ... }` — a shallow
   // spread that preserves fellBackTo/fallbackReason either way, so there's no
   // need to recompute this after verification.
-  const actualProvider = draft.fellBackTo ? "deterministic" : provider.name;
-  if (draft.fellBackTo) {
-    console.warn(`⚠ synthesis provider "${draft.fellBackTo}" failed for commit ${meta.shortSha}, falling back to deterministic: ${draft.fallbackReason}`);
-  }
+  const actualProvider = resolveActualProvider(draft, provider, `commit ${meta.shortSha}`);
   // The Critic pass: audit the draft against the commit, PRUNE unsupported alternatives
   // (BEFORE they scaffold tripwires below) and consequences, and lower confidence on weak
   // grounding. No-ops when no assistant CLI is available; never raises trust (dec_9a2f2fe72a).
@@ -260,10 +257,7 @@ export async function recordFailure(
   // actualProvider is the truth the caller must report (issue #10). Unlike the
   // decision path, Bug.provenance.evidence carries no provider=-style telemetry
   // today, so there's nothing to add there — only the returned field + the warning.
-  const actualProvider = draft.fellBackTo ? "deterministic" : provider.name;
-  if (draft.fellBackTo) {
-    console.warn(`⚠ synthesis provider "${draft.fellBackTo}" failed for test ${failure.test}, falling back to deterministic: ${draft.fallbackReason}`);
-  }
+  const actualProvider = resolveActualProvider(draft, provider, `test ${failure.test}`);
 
   // Seed the id from the test id (stable), not the LLM title — one bug per test.
   const id = bugId(failure.test);
@@ -528,4 +522,18 @@ export async function draftBugSafe(provider: SynthProvider, input: FailureInput)
     draft.fallbackReason = fallbackReasonOf(e);
     return draft;
   }
+}
+
+/** The truth every draftDecisionSafe/draftBugSafe caller must report (issue #10):
+ *  "deterministic" when the draft fell back, warning once with WHY — never the
+ *  provider that was merely selected. `context` names what failed (a commit sha
+ *  or a test id) for the warning. */
+function resolveActualProvider(
+  draft: { fellBackTo?: string; fallbackReason?: string },
+  provider: SynthProvider,
+  context: string,
+): string {
+  if (!draft.fellBackTo) return provider.name;
+  console.warn(`⚠ synthesis provider "${draft.fellBackTo}" failed for ${context}, falling back to deterministic: ${draft.fallbackReason}`);
+  return "deterministic";
 }

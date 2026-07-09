@@ -279,12 +279,23 @@ test("syncCommit drives synthesis through the openai-compat provider end-to-end 
   process.env.HUNCH_SYNTH_BASE_URL = `http://127.0.0.1:${port}`;
   process.env.HUNCH_SYNTH_MODEL = "local-test-model";
   __resetAvailabilityCacheForTests();
+  const warnings: string[] = [];
+  const origWarn = console.warn;
+  console.warn = (m?: unknown) => warnings.push(String(m));
   try {
     const r = await syncCommit(store, root);
     assert.equal(r.status, "written", `expected written, got skipped: ${r.reason}`);
     assert.equal(r.provider, "openai-compat", "this is exactly what backfill's 'via LLM' count keys off");
     assert.equal(r.decision!.decision, "Added function b to a.ts");
+    // A successful provider run must stay silent — no fallback warning, no
+    // fallback_from= evidence token (issue #10's fix must not misfire on success).
+    assert.equal(warnings.length, 0, "no fallback warning on a successful provider run");
+    assert.ok(
+      !r.decision!.provenance.evidence.some((e) => e.includes("fallback_from=")),
+      "no fallback evidence token on a successful provider run",
+    );
   } finally {
+    console.warn = origWarn;
     process.env.HUNCH_SYNTH_PROVIDER = savedProvider ?? "deterministic";
     delete process.env.HUNCH_SYNTH_BASE_URL;
     delete process.env.HUNCH_SYNTH_MODEL;
