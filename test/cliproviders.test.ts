@@ -8,6 +8,7 @@ import {
   selectProvider,
   selectWorkers,
   OpenAICompatProvider,
+  probeOllamaNumCtx,
   __resetAvailabilityCacheForTests,
 } from "../src/synthesis/provider.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -245,6 +246,64 @@ test("OpenAICompatProvider.draftDecision rejects when the endpoint exceeds HUNCH
     delete process.env.HUNCH_SYNTH_BASE_URL;
     delete process.env.HUNCH_SYNTH_MODEL;
     delete process.env.HUNCH_SYNTH_TIMEOUT_MS;
+    await server.close();
+  }
+});
+
+test("probeOllamaNumCtx returns null when the model's parameters already set num_ctx", async () => {
+  const server = await startFakeServer((req, res) => {
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ parameters: "num_ctx                       16384\nstop                           \"<|endoftext|>\"" }));
+  });
+  try {
+    const warning = await probeOllamaNumCtx(server.url, "hunch-synth");
+    assert.equal(warning, null, "num_ctx already set — nothing to warn about");
+  } finally {
+    await server.close();
+  }
+});
+
+test("probeOllamaNumCtx warns when the model's parameters have no num_ctx set", async () => {
+  const server = await startFakeServer((req, res) => {
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ parameters: "stop                           \"<|endoftext|>\"" }));
+  });
+  try {
+    const warning = await probeOllamaNumCtx(server.url, "qwen2.5-coder:latest");
+    assert.ok(warning?.includes("4096"), `expected a 4096-token warning, got: ${warning}`);
+  } finally {
+    await server.close();
+  }
+});
+
+test("probeOllamaNumCtx returns null (never throws) on a non-2xx response, a missing parameters field, or an unreachable endpoint", async () => {
+  const badStatus = await startFakeServer((req, res) => {
+    res.statusCode = 500;
+    res.end("nope");
+  });
+  const noParams = await startFakeServer((req, res) => {
+    res.end(JSON.stringify({ some_other_field: true }));
+  });
+  try {
+    assert.equal(await probeOllamaNumCtx(badStatus.url, "m"), null);
+    assert.equal(await probeOllamaNumCtx(noParams.url, "m"), null);
+    assert.equal(await probeOllamaNumCtx("http://127.0.0.1:1", "m"), null, "unreachable port — must not throw");
+  } finally {
+    await badStatus.close();
+    await noParams.close();
+  }
+});
+
+test("probeOllamaNumCtx strips a trailing /v1 from the base URL before hitting /api/show", async () => {
+  let hitPath: string | undefined;
+  const server = await startFakeServer((req, res) => {
+    hitPath = req.url;
+    res.end(JSON.stringify({ parameters: "" }));
+  });
+  try {
+    await probeOllamaNumCtx(`${server.url}/v1`, "m");
+    assert.equal(hitPath, "/api/show");
+  } finally {
     await server.close();
   }
 });

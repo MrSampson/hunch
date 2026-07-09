@@ -597,6 +597,34 @@ export class OpenAICompatProvider extends PromptSynthProvider {
   }
 }
 
+/** Best-effort: does the configured openai-compat endpoint look like Ollama with
+ *  an UNSET num_ctx (silently defaulting to 4096 tokens, per issue #11)? Returns
+ *  an advisory warning string when so, or null when the endpoint isn't reachable,
+ *  doesn't look like Ollama's /api/show shape, or already has num_ctx set — this
+ *  is diagnostics only, never thrown, never blocking. Deliberately does NOT try to
+ *  report the model's actual default context length (Ollama's model_info keys are
+ *  architecture-specific and not a stable parse target) — only whether the user
+ *  has explicitly configured num_ctx via a Modelfile, which is the one stable,
+ *  actionable signal (and the exact fix the issue's own author applied). */
+export async function probeOllamaNumCtx(baseUrl: string, model: string): Promise<string | null> {
+  try {
+    const root = baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
+    const res = await fetch(`${root}/api/show`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: model }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { parameters?: unknown };
+    if (typeof body.parameters !== "string") return null;
+    if (/^num_ctx\s+\d+/m.test(body.parameters)) return null; // already configured — nothing to warn about
+    return "⚠ Ollama's default context is 4096 tokens — long commit diffs get silently truncated. See docs/cookbook.md for how to raise it (num_ctx via a custom Modelfile).";
+  } catch {
+    return null; // not Ollama, unreachable, or an unexpected response shape — advisory only, never throw
+  }
+}
+
 // --------------------------------------------------------------------------
 // Provider C: deterministic fallback (no LLM, always available)
 // --------------------------------------------------------------------------
