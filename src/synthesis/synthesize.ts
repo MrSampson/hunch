@@ -472,21 +472,37 @@ function recentDiffFor(root: string): string {
   return head ? commitDiff(head, root, 12_000) : "";
 }
 
+/** Truncate a caught error to a single-line, evidence-array-friendly string
+ *  (matching the array's existing short single-line token convention, e.g.
+ *  `commit:<sha>`, `synth:provider=<name>`). */
+function fallbackReasonOf(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  return msg.length > 200 ? msg.slice(0, 200) + "…" : msg;
+}
+
 export async function draftDecisionSafe(provider: SynthProvider, input: CommitInput): Promise<DecisionDraft> {
   try {
     return await provider.draftDecision(input);
-  } catch {
+  } catch (e) {
     // A provider failure (network, bad creds, CLI crash, unparseable output) must
     // never abort the learning loop — fall back to the deterministic heuristic
     // draft, which is honestly labeled ("inferred") rather than a hollow llm_draft.
-    return new DeterministicProvider().draftDecision(input);
+    // fellBackTo/fallbackReason let the caller report the truth instead of the
+    // provider that was merely SELECTED (issue #10).
+    const draft = await new DeterministicProvider().draftDecision(input);
+    draft.fellBackTo = provider.name;
+    draft.fallbackReason = fallbackReasonOf(e);
+    return draft;
   }
 }
 
 export async function draftBugSafe(provider: SynthProvider, input: FailureInput): Promise<BugDraft> {
   try {
     return await provider.draftBug(input);
-  } catch {
-    return new DeterministicProvider().draftBug(input);
+  } catch (e) {
+    const draft = await new DeterministicProvider().draftBug(input);
+    draft.fellBackTo = provider.name;
+    draft.fallbackReason = fallbackReasonOf(e);
+    return draft;
   }
 }

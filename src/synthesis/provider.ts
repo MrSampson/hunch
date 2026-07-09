@@ -133,6 +133,14 @@ export interface DecisionDraft {
   // call errored after a retry. Lets telemetry distinguish "verified, nothing to
   // flag" from "verification was skipped" instead of degrading silently.
   verifyOutcome?: "applied" | "unavailable" | "failed";
+  // Set only when the originally-selected provider threw and this draft is the
+  // DeterministicProvider fallback — the provider.name that failed. undefined on
+  // the normal (successful-provider) path. Callers must report THIS, not the
+  // provider that was merely selected (issue #10).
+  fellBackTo?: string;
+  // Truncated error message from the failed provider call. Only set alongside
+  // fellBackTo.
+  fallbackReason?: string;
 }
 
 /** A skeptical audit of a DecisionDraft against the commit it was derived from.
@@ -153,6 +161,13 @@ export interface BugDraft {
   severity: "low" | "medium" | "high" | "critical";
   confidence: number;
   source: string;
+  // Set only when the originally-selected provider threw and this draft is the
+  // DeterministicProvider fallback — the provider.name that failed. undefined on
+  // the normal (successful-provider) path (issue #10).
+  fellBackTo?: string;
+  // Truncated error message from the failed provider call. Only set alongside
+  // fellBackTo.
+  fallbackReason?: string;
 }
 
 /** A harness judgment of one auto-drafted decision, used by `hunch auto-review`
