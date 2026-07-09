@@ -619,7 +619,7 @@ export async function probeOllamaNumCtx(baseUrl: string, model: string): Promise
     const body = (await res.json()) as { parameters?: unknown };
     if (typeof body.parameters !== "string") return null;
     if (/^num_ctx\s+\d+/m.test(body.parameters)) return null; // already configured — nothing to warn about
-    return "⚠ Ollama's default context is 4096 tokens — long commit diffs get silently truncated. See docs/cookbook.md for how to raise it (num_ctx via a custom Modelfile).";
+    return "⚠ Ollama's default context is 4096 tokens — long commit diffs get silently truncated. See https://hunch-pi.vercel.app/cookbook for how to raise it (num_ctx via a custom Modelfile).";
   } catch {
     return null; // not Ollama, unreachable, or an unexpected response shape — advisory only, never throw
   }
