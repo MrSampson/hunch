@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { synthesisStatusLines } from "../src/cli/invocation.js";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { synthesisStatusLines, maybeWarnOllamaContext } from "../src/cli/invocation.js";
 
 test("synthesisStatusLines: claude-cli reports the subscription and notes when ANTHROPIC_API_KEY is stripped", () => {
   assert.deepEqual(
@@ -65,4 +67,27 @@ test("synthesisStatusLines: deterministic (and any unrecognized provider) keeps 
   ];
   assert.deepEqual(synthesisStatusLines("deterministic", {}), expected);
   assert.deepEqual(synthesisStatusLines("future-provider", {}), expected);
+});
+
+test("maybeWarnOllamaContext short-circuits to null for any non-openai-compat provider, without any network call", async () => {
+  for (const name of ["claude-cli", "codex-cli", "cursor-agent", "deterministic", "ensemble"]) {
+    assert.equal(await maybeWarnOllamaContext(name, {}), null);
+  }
+});
+
+test("maybeWarnOllamaContext reaches probeOllamaNumCtx for the openai-compat provider", async () => {
+  const server = createServer((req, res) => {
+    res.end(JSON.stringify({ parameters: "" }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const { port } = server.address() as AddressInfo;
+  try {
+    const warning = await maybeWarnOllamaContext("openai-compat", {
+      HUNCH_SYNTH_BASE_URL: `http://127.0.0.1:${port}`,
+      HUNCH_SYNTH_MODEL: "m",
+    });
+    assert.ok(warning?.includes("4096"), `expected a 4096-token warning, got: ${warning}`);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });

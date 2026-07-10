@@ -84,7 +84,7 @@ import { mergeHunchJson } from "../store/merge.js";
 import { movePublicMemoryToPrivate } from "../store/privateMigrate.js";
 import { ENTITY_KINDS } from "../core/types.js";
 import { planCompaction } from "../store/compact.js";
-import { resolveInvocation, dim, synthesisStatusLines } from "./invocation.js";
+import { resolveInvocation, dim, synthesisStatusLines, maybeWarnOllamaContext } from "./invocation.js";
 
 const program = new Command();
 program.name("hunch").description("Hunch — an Engineering Memory OS: a git-native reasoning graph for your codebase.").version(HUNCH_VERSION);
@@ -288,6 +288,14 @@ program
     const commits = logSince(opts.since, root, Number(opts.max));
     const conc = Math.max(1, Math.min(16, Number(opts.concurrency) || 4));
     console.log(`Backfilling from ${commits.length} commit(s) since ${opts.since} (concurrency ${conc})…`);
+    // Best-effort context-window advisory (issue #11): printed ONCE, before any
+    // commit is drafted — not per-commit, and not under --deep (an ensemble may
+    // fan out to several distinct workers, each with its own configuration).
+    if (!opts.deep && commits.length > 0) {
+      const ctxProvider = await selectProvider();
+      const ctxWarning = await maybeWarnOllamaContext(ctxProvider.name, process.env);
+      if (ctxWarning) console.log(ctxWarning);
+    }
     let written = 0, skipped = 0, llm = 0, heuristic = 0;
     // The per-commit cost is the Claude synthesis spawn; run several at once. Safe:
     // each commit drafts independently and writes its OWN decision file atomically,
@@ -2288,6 +2296,8 @@ program
     // (or run through a configured local/self-hosted endpoint), never a
     // pay-per-token API key. Surface which one — or what's missing.
     for (const line of synthesisStatusLines(provider.name, process.env)) console.log(line);
+    const ctxWarning = await maybeWarnOllamaContext(provider.name, process.env);
+    if (ctxWarning) console.log(ctxWarning);
     const c = store.reindex().counts;
     console.log(`hunch:      ${c.symbols} symbols, ${c.edges} edges, ${c.components} components, ${c.decisions} decisions, ${c.bugs} bugs, ${c.constraints} constraints`);
     // Overlay status speaks the TRUE mode, and a dead pointer is a loud finding, not a

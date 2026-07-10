@@ -6,6 +6,7 @@
  *  same import-safety to be unit-testable. */
 import { fileURLToPath } from "node:url";
 import type { Invocation } from "../integrations/scaffold.js";
+import { probeOllamaNumCtx } from "../synthesis/provider.js";
 
 export interface ResolvedInvocation {
   /** Shell command prefix for the git hook (e.g. `node /abs/dist/cli/index.js`). */
@@ -47,6 +48,15 @@ export function synthesisStatusLines(providerName: string, env: NodeJS.ProcessEn
     dim(`            ↳ no assistant CLI found — synthesis uses the offline heuristic (advisory, low-confidence)`),
     dim(`              for full synthesis install one: Claude Code (\`claude /login\`), Codex (\`codex login\`), or Cursor (\`cursor-agent login\`)`),
   ];
+}
+
+/** Gate + fetch the Ollama context-window advisory (issue #11): only relevant
+ *  for the openai-compat provider, so every other provider is a no-op. Kept
+ *  separate from synthesisStatusLines (sync, already fully covered) because
+ *  this one makes a best-effort network call. */
+export async function maybeWarnOllamaContext(providerName: string, env: NodeJS.ProcessEnv): Promise<string | null> {
+  if (providerName !== "openai-compat") return null;
+  return probeOllamaNumCtx(env.HUNCH_SYNTH_BASE_URL ?? "", env.HUNCH_SYNTH_MODEL ?? "");
 }
 
 export function resolveInvocation(): ResolvedInvocation {

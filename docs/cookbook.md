@@ -145,3 +145,32 @@ hunch private               # point a clone at the overlay
 ```
 
 **Observe:** `hunch_*` tools see the union; the public repo carries only what you curate.
+
+---
+
+## 11. Self-hosted / local models (Ollama, vLLM, LM Studio) via openai-compat
+
+```bash
+HUNCH_SYNTH_PROVIDER=ollama                          # alias for openai-compat
+HUNCH_SYNTH_BASE_URL=http://localhost:11434/v1
+HUNCH_SYNTH_MODEL=qwen2.5-coder:latest
+# optional:
+HUNCH_SYNTH_API_KEY=...          # only if your endpoint requires one
+HUNCH_SYNTH_TIMEOUT_MS=300000    # default 300000 (5 min)
+HUNCH_SYNTH_MAX_TOKENS=2048      # default 2048 — caps OUTPUT length
+```
+
+**Ollama's default context is 4096 tokens** — long commit diffs get silently truncated (no error, HTTP 200), and the model drafts from whatever fragment of the prompt survives. `hunch doctor` and `hunch backfill` warn about this automatically when they detect it. Fix it once, at the model level:
+
+```
+FROM qwen2.5-coder:latest
+PARAMETER num_ctx 16384
+```
+
+```bash
+ollama create hunch-synth -f Modelfile
+```
+
+Then point `HUNCH_SYNTH_MODEL` at `hunch-synth` instead of the base model.
+
+**Observe:** `hunch doctor` no longer prints the context warning once `num_ctx` is set; `hunch backfill`'s drafts stop hallucinating from truncated diffs.
