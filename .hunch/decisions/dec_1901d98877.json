@@ -2,7 +2,7 @@
   "id": "dec_1901d98877",
   "title": "Direct behavior review parses real test calls and includes existing-test assertion deltas",
   "topic": null,
-  "status": "accepted",
+  "status": "superseded",
   "context": "The first modified-test extractor correctly found assertion deltas but its legacy added-name scan also interpreted test-like text inside string literals as registered tests. Exact review must never mint a candidate from quoted documentation or fixture source.",
   "decision": "For an exact current human-confirmed fixing decision, direct behavior review derives both newly named and modified test candidates only from parsed literal node:test test()/it() call expressions. A modified case additionally requires a fixing-diff added line within that exact call range. Candidate identity remains bound to the decision, fixing commit, file, literal name, full known-good source hash, and grounding mode.",
   "consequences": [
@@ -24,11 +24,11 @@
     "test/constitution.test.ts"
   ],
   "supersedes": "dec_6deaa68d4a",
-  "superseded_by": null,
+  "superseded_by": "dec_eee275892e",
   "caused_by_bug": null,
   "commit": "83bcd3b",
   "valid_from": "2026-07-11T12:57:29.951Z",
-  "valid_to": null,
+  "valid_to": "2026-07-11T13:00:27.304Z",
   "retired": {
     "symbols": [],
     "deps": []
