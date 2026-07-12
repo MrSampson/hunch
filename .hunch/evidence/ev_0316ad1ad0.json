@@ -1,0 +1,32 @@
+{
+  "id": "ev_0316ad1ad0",
+  "kind": "correction",
+  "occurred_at": "2026-06-16T10:29:10.225Z",
+  "repository": "hunch",
+  "files": [
+    "src/store/**"
+  ],
+  "symbols": [
+    "DatabaseSync"
+  ],
+  "text_ref": "con_a87360128b",
+  "related_records": [
+    "con_a87360128b",
+    "dec_08a685fca2"
+  ],
+  "data_class": "public",
+  "content_hash": "sha1:d1ddea00f6bf91ff80346c326d89bfd946ad4c6c",
+  "compiler": {
+    "status": "covered",
+    "policy": null,
+    "reason": "Active human-confirmed legacy Constraint already delivers deterministic correction enforcement; Policy IR bridge remains explicit follow-on work."
+  },
+  "provenance": {
+    "source": "derived",
+    "confidence": 1,
+    "evidence": [
+      "con_a87360128b"
+    ],
+    "last_verified": "2026-06-16T10:29:10.225Z"
+  }
+}
