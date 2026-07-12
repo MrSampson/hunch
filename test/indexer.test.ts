@@ -152,6 +152,27 @@ test("member call to a top-level function does NOT create an edge; method calls 
   rmSync(root, { recursive: true, force: true });
 });
 
+test("unimported same-named callbacks do NOT resolve to unrelated cross-file symbols", () => {
+  const root = mkdtempSync(join(tmpdir(), "hunch-callback-name-"));
+  mkdirSync(join(root, "src"), { recursive: true });
+  writeFileSync(join(root, "src/store.ts"), `export function resolve(id){ return id; }\n`);
+  writeFileSync(
+    join(root, "src/provider.ts"),
+    `export function execute(){ return new Promise((resolve) => resolve("ok")); }\n`,
+  );
+  const store = new HunchStore(hunchPaths(root));
+  store.json.ensureDirs();
+  indexRepo(store, root, { churn: false });
+  store.reindex();
+
+  const unrelated = store.json.loadAll("symbols").find((s) => s.file === "src/store.ts" && s.name === "resolve")!;
+  assert.ok(unrelated, "the unrelated repository symbol is indexed");
+  assert.deepEqual(store.getDependents(unrelated.id), [], "a callback parameter with the same name creates no cross-file call edge");
+
+  store.close();
+  rmSync(root, { recursive: true, force: true });
+});
+
 function pythonFixtureRepo(): string {
   const root = mkdtempSync(join(tmpdir(), "hunch-idx-py-"));
   mkdirSync(join(root, "src/auth"), { recursive: true });
@@ -442,16 +463,17 @@ function pythonDecoratedMethodFixtureRepo(): string {
   mkdirSync(join(root, "src/billing"), { recursive: true });
   // A decorated method (kind must classify as "method", not "function" — Finding 1)
   // defined in one component and called via member access from a DIFFERENT file/
-  // component. Cross-file Python import resolution is out of scope (issue #5), so
-  // this relies on the same global-name resolveName() fallback every other
-  // cross-file Python call edge in this codebase relies on.
+  // component. resolveName() requires the callee's file to be statically imported
+  // (issue: unimported same-named callbacks must not resolve to unrelated cross-file
+  // symbols) — so charge.py imports Base, matching how this call would actually be
+  // reached in real code, rather than relying on a bare global-uniqueness guess.
   writeFileSync(
     join(root, "src/auth/session.py"),
     `class Base:\n    @classmethod\n    def create(cls):\n        return cls()\n`,
   );
   writeFileSync(
     join(root, "src/billing/charge.py"),
-    `def use_it(b):\n    return b.create()\n`,
+    `from ..auth.session import Base\n\ndef use_it(b):\n    return b.create()\n`,
   );
   return root;
 }

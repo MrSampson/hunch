@@ -1,17 +1,17 @@
 /**
  * Pluggable synthesis provider for the WRITE path (DESIGN.md §4 / §7).
  *
- * LLM synthesis is driven by the user's Claude **subscription** via the `claude`
- * CLI — never the pay-per-token Anthropic API. We try, in order:
- * claude-cli → deterministic-fallback. The fallback always works (no creds, no
- * network) and emits a LOW-confidence draft, honoring the design rule that
- * auto-captured memory is advisory and cheap to discard.
+ * LLM synthesis is driven by the user's chosen coding-assistant subscription
+ * CLI — never a pay-per-token API. Claude Code, Codex, and Cursor use different
+ * auth surfaces, but every provider returns the same shape. When more than one
+ * subscription CLI is available, Hunch deliberately does NOT guess whose plan
+ * to spend: the user chooses once with `hunch provider <name>` (stored locally)
+ * or overrides per shell with HUNCH_SYNTH_PROVIDER. Ambiguous auto mode stays
+ * deterministic and free.
  *
- * Subscription, not API: Claude Code's auth precedence puts `ANTHROPIC_API_KEY`
- * (and `ANTHROPIC_AUTH_TOKEN`) ABOVE subscription OAuth, and in headless `-p`
- * mode the API key is *always* used when present. So we strip those vars from
- * the child env (see ClaudeCliProvider.run) to force the CLI down to subscription
- * OAuth / CLAUDE_CODE_OAUTH_TOKEN. There is intentionally NO API-key provider.
+ * Subscription, not API: provider-specific API credentials are removed from the
+ * child env wherever the CLI would otherwise prefer them. There is intentionally
+ * NO direct API-key provider.
  *
  * A fourth, OPT-IN provider (name "openai-compat", alias "ollama") speaks the
  * OpenAI chat-completions format over HTTP to a self-hosted endpoint instead of a
@@ -24,7 +24,10 @@
  * (or cares) which one ran.
  */
 import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { writeFileAtomic } from "../core/io.js";
 import { summarizeDiff, type DiffAnalysis } from "../extractors/diff.js";
 import type { Decision } from "../core/types.js";
 
@@ -229,6 +232,45 @@ export interface SynthProvider {
   judgeDraft?(draft: Decision, existing: ExistingDecisionRef[]): Promise<RelevanceVerdict>;
 }
 
+/** Every selectable synthesis mode. `auto` is a preference value rather than a
+ * provider: it uses a subscription only when exactly one usable CLI is found. */
+export const SYNTH_PROVIDER_NAMES = ["claude-cli", "codex-cli", "cursor-agent", "openai-compat", "deterministic"] as const;
+export const SYNTH_PREFERENCES = ["auto", ...SYNTH_PROVIDER_NAMES] as const;
+export type SynthProviderName = (typeof SYNTH_PROVIDER_NAMES)[number];
+export type SynthPreference = (typeof SYNTH_PREFERENCES)[number];
+
+export interface ProviderStatus {
+  name: SynthProviderName;
+  label: string;
+  subscription: string | null;
+  available: boolean;
+}
+
+export interface ProviderResolution {
+  provider: SynthProvider;
+  /** Why this provider was chosen. `ambiguous` is intentionally deterministic. */
+  source: "environment" | "local" | "single-available" | "ambiguous" | "none" | "unavailable-preference";
+  preference: SynthPreference;
+  statuses: ProviderStatus[];
+}
+
+export interface ProviderSelectionOptions {
+  /** Repo root used for the gitignored, per-user `.hunch/local.json` preference. */
+  root?: string;
+  /** Injectable for tests; defaults to process.env. */
+  env?: NodeJS.ProcessEnv;
+  /** Injectable for tests; normal callers use the built-in CLI registry. */
+  providers?: readonly SynthProvider[];
+}
+
+const PROVIDER_INFO: Record<SynthProviderName, { label: string; subscription: string | null }> = {
+  "claude-cli": { label: "Claude Code", subscription: "Claude subscription" },
+  "codex-cli": { label: "Codex", subscription: "ChatGPT subscription" },
+  "cursor-agent": { label: "Cursor Agent", subscription: "Cursor subscription" },
+  "openai-compat": { label: "Local / self-hosted (OpenAI-compatible)", subscription: null },
+  deterministic: { label: "Deterministic local fallback", subscription: null },
+};
+
 const SYSTEM = `You are the synthesis engine of an Engineering Memory OS. You turn raw
 developer activity (a git commit diff, or a test failure) into a single structured
 "why" record. Be precise and evidence-grounded; never invent facts not supported by
@@ -306,11 +348,14 @@ const VERIFY_TOOL = {
 
 // --------------------------------------------------------------------------
 // Base for any provider whose interface reduces to "turn one prompt string into
-// text" — the three subscription-CLI providers below (spawn, stdin, subscription
-// billing — see dec_5a7c0733f7) AND the opt-in local/self-hosted HTTP provider
-// further down (OpenAICompatProvider). Neither transport nor billing model is
-// part of the contract; only run()'s shape is. Every implementation's text output
-// is handed to the SAME mappers, so the rest of the system stays provider-agnostic.
+// text" — the three headless-CLI SUBSCRIPTION providers below (spawn, stdin,
+// subscription billing — never a pay-per-token API key, see dec_65b058de66) AND
+// the opt-in local/self-hosted HTTP provider further down (OpenAICompatProvider).
+// The prompt always goes over STDIN for the CLI providers (never argv — keeps
+// untrusted diff content out of any shell pexecIn uses on Windows). Neither
+// transport nor billing model is part of the contract; only run()'s shape is.
+// Every implementation's text output is handed to the SAME mappers, so the rest
+// of the system stays provider-agnostic.
 // --------------------------------------------------------------------------
 abstract class PromptSynthProvider implements SynthProvider {
   abstract readonly name: string;
@@ -709,8 +754,10 @@ export function extractCodexText(out: string): string {
   return texts.length ? texts[texts.length - 1]! : out;
 }
 
-// Priority order: try each subscription CLI, then the always-available heuristic.
-// HUNCH_SYNTH_PROVIDER forces one by name (claude-cli / codex-cli / cursor-agent /
+// This registry is deliberately NOT a priority order. Auto mode only spends a
+// subscription when it can identify exactly one usable CLI; see
+// resolveSynthesisProvider below. HUNCH_SYNTH_PROVIDER or `hunch provider <name>`
+// force one explicitly by name (claude-cli / codex-cli / cursor-agent /
 // openai-compat / ollama / deterministic).
 const PROVIDERS: SynthProvider[] = [
   new ClaudeCliProvider(),
@@ -721,15 +768,17 @@ const PROVIDERS: SynthProvider[] = [
 ];
 
 // Availability rarely changes within a process (a CLI doesn't get installed mid-run),
-// and selectProvider() runs on every sync/recordFailure — so memoize each probe.
-// Especially matters in the long-lived MCP server and on machines with NO assistant
-// CLI, where an uncached pass spawns one failing `--version` per provider every time.
-const availCache = new Map<string, Promise<boolean>>();
+// and selection runs on every sync/recordFailure. Cache by object identity rather than
+// name so injected test registries never inherit a stale result from another provider.
+// Map, not WeakMap: __resetAvailabilityCacheForTests() below needs .clear(), which
+// WeakMap doesn't expose. Object identity is still the key (not provider.name) so
+// injected test registries never inherit a stale result from another provider.
+const availCache = new Map<SynthProvider, Promise<boolean>>();
 function isAvailable(p: SynthProvider): Promise<boolean> {
-  let v = availCache.get(p.name);
+  let v = availCache.get(p);
   if (!v) {
     v = p.available().catch(() => false);
-    availCache.set(p.name, v);
+    availCache.set(p, v);
   }
   return v;
 }
@@ -744,23 +793,123 @@ export function __resetAvailabilityCacheForTests(): void {
 /** "ollama" is accepted as an alias for "openai-compat" — the provider is not
  *  Ollama-specific (it speaks the OpenAI chat-completions format any self-hosted
  *  server can implement), but Ollama is the most common self-hosted target and
- *  users reach for that name first. */
-function normalizeProviderName(v: string | undefined): string | undefined {
+ *  users reach for that name first. Applied wherever a raw preference string
+ *  enters the system (env var, local.json, `hunch provider <name>`) so every
+ *  downstream lookup only ever sees canonical SYNTH_PROVIDER_NAMES. */
+export function normalizeProviderName(v: string | undefined): string | undefined {
   return v === "ollama" ? "openai-compat" : v;
 }
 
-/** Choose the first available provider, honoring HUNCH_SYNTH_PROVIDER override
- *  ("ollama" normalizes to "openai-compat"). */
-export async function selectProvider(): Promise<SynthProvider> {
-  const forced = normalizeProviderName(process.env.HUNCH_SYNTH_PROVIDER);
-  if (forced) {
-    const p = PROVIDERS.find((x) => x.name === forced);
-    if (p && (await isAvailable(p))) return p;
+function isSynthPreference(value: string | undefined): value is SynthPreference {
+  const normalized = normalizeProviderName(value);
+  return !!normalized && (SYNTH_PREFERENCES as readonly string[]).includes(normalized);
+}
+
+function fallbackProvider(providers: readonly SynthProvider[]): SynthProvider {
+  return providers.find((p) => p.name === "deterministic") ?? new DeterministicProvider();
+}
+
+function localPreferencePath(root: string): string {
+  return join(root, ".hunch", "local.json");
+}
+
+/** Read a per-user, gitignored choice. Invalid/missing local state is treated as auto;
+ * `writeSynthesisPreference` refuses to overwrite malformed data so this forgiveness
+ * never destroys someone else's local settings. */
+export function readSynthesisPreference(root: string): SynthPreference {
+  try {
+    const file = localPreferencePath(root);
+    if (!existsSync(file)) return "auto";
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { synthProvider?: unknown };
+    const normalized = typeof parsed.synthProvider === "string" ? normalizeProviderName(parsed.synthProvider) : undefined;
+    return isSynthPreference(normalized) ? normalized : "auto";
+  } catch {
+    return "auto";
   }
-  for (const p of PROVIDERS) {
-    if (await isAvailable(p)) return p;
+}
+
+/** Persist the user's provider choice only in `.hunch/local.json`, which is never a
+ * repository policy. That means each developer controls their own subscription spend. */
+export function writeSynthesisPreference(root: string, preference: SynthPreference): void {
+  const normalized = normalizeProviderName(preference);
+  if (!isSynthPreference(normalized)) throw new Error(`unknown synthesis provider preference: ${preference}`);
+  const file = localPreferencePath(root);
+  let local: Record<string, unknown> = {};
+  if (existsSync(file)) {
+    const raw = readFileSync(file, "utf8");
+    if (raw.trim()) {
+      try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error("not an object");
+        local = parsed as Record<string, unknown>;
+      } catch {
+        throw new Error(`refusing to overwrite malformed local configuration: ${file}`);
+      }
+    }
   }
-  return new DeterministicProvider();
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileAtomic(file, `${JSON.stringify({ ...local, synthProvider: normalized }, null, 2)}\n`);
+}
+
+async function statusesFor(providers: readonly SynthProvider[]): Promise<ProviderStatus[]> {
+  const statuses: ProviderStatus[] = [];
+  for (const provider of providers) {
+    if (!(SYNTH_PROVIDER_NAMES as readonly string[]).includes(provider.name)) continue;
+    const name = provider.name as SynthProviderName;
+    const info = PROVIDER_INFO[name];
+    statuses.push({ name, ...info, available: await isAvailable(provider) });
+  }
+  return statuses;
+}
+
+/** Resolve the provider without ever inferring which of several installed products is
+ * the one the user intends to spend. Precedence is deliberate: a one-shell override,
+ * then a per-user local preference, then safe auto-detection. */
+export async function resolveSynthesisProvider(opts: ProviderSelectionOptions = {}): Promise<ProviderResolution> {
+  const providers = opts.providers ?? PROVIDERS;
+  const env = opts.env ?? process.env;
+  const statuses = await statusesFor(providers);
+  const fallback = fallbackProvider(providers);
+  const find = (name: SynthProviderName): SynthProvider | undefined => providers.find((p) => p.name === name);
+  const usable = async (name: SynthProviderName): Promise<SynthProvider | undefined> => {
+    const provider = find(name);
+    return provider && await isAvailable(provider) ? provider : undefined;
+  };
+  const environment = normalizeProviderName(env.HUNCH_SYNTH_PROVIDER?.trim());
+  if (environment && isSynthPreference(environment) && environment !== "auto") {
+    const selected = await usable(environment);
+    if (selected) return { provider: selected, source: "environment", preference: environment, statuses };
+    return { provider: fallback, source: "unavailable-preference", preference: environment, statuses };
+  }
+
+  // `HUNCH_SYNTH_PROVIDER=auto` is useful in CI or a shell profile: it explicitly
+  // suppresses the local preference and re-enters the safe auto policy.
+  const preference: SynthPreference = environment === "auto"
+    ? "auto"
+    : opts.root ? readSynthesisPreference(opts.root) : "auto";
+  if (preference !== "auto") {
+    const selected = await usable(preference);
+    if (selected) return { provider: selected, source: "local", preference, statuses };
+    return { provider: fallback, source: "unavailable-preference", preference, statuses };
+  }
+
+  const available = statuses.filter((status) => status.name !== "deterministic" && status.available);
+  if (available.length === 1) {
+    const selected = await usable(available[0]!.name);
+    if (selected) return { provider: selected, source: "single-available", preference, statuses };
+  }
+  return {
+    provider: fallback,
+    source: available.length > 1 ? "ambiguous" : "none",
+    preference,
+    statuses,
+  };
+}
+
+/** The provider used by normal synthesis. See `resolveSynthesisProvider` for a
+ * diagnosable result with the selection source and every candidate's availability. */
+export async function selectProvider(opts: ProviderSelectionOptions = {}): Promise<SynthProvider> {
+  return (await resolveSynthesisProvider(opts)).provider;
 }
 
 // ---- Deep Synthesis: ensemble of subscription CLIs (+ opt-in openai-compat) ----
@@ -775,9 +924,9 @@ export async function selectProvider(): Promise<SynthProvider> {
 /** All available subscription-CLI workers (claude/codex/cursor, plus the opt-in
  *  openai-compat), excluding the deterministic fallback — the pool Deep Synthesis
  *  fans a commit out to. */
-export async function selectWorkers(): Promise<SynthProvider[]> {
+export async function selectWorkers(opts: Pick<ProviderSelectionOptions, "providers"> = {}): Promise<SynthProvider[]> {
   const out: SynthProvider[] = [];
-  for (const p of PROVIDERS) {
+  for (const p of opts.providers ?? PROVIDERS) {
     if (p.name === "deterministic") continue; // workers are real subscription CLIs only
     if (await isAvailable(p)) out.push(p);
   }
@@ -871,21 +1020,22 @@ export class EnsembleProvider implements SynthProvider {
 /** Build the Deep-Synthesis provider, or null if no subscription CLI is available
  *  (the caller then falls back to the normal single-provider path). `samples` sets
  *  the self-consistency depth for the single-CLI case. */
-export async function selectEnsemble(opts: { samples?: number } = {}): Promise<EnsembleProvider | null> {
-  const workers = await selectWorkers();
+export async function selectEnsemble(opts: { samples?: number; providers?: readonly SynthProvider[] } = {}): Promise<EnsembleProvider | null> {
+  const workers = await selectWorkers(opts);
   // The self-consistency policy default (DEFAULT_SAMPLES) is applied HERE, not in the
   // provider — so a single CLI under --deep is sampled N times, while direct
   // construction stays passthrough. `--samples 1` opts back out.
   return workers.length ? new EnsembleProvider(workers, { samples: opts.samples ?? DEFAULT_SAMPLES }) : null;
 }
 
-/** Pick a subscription CLI to run the Critic pass (like selectWorkers, including
- *  openai-compat when configured). Returns null when no assistant CLI is installed —
- *  verification then no-ops and the un-audited draft stands (graceful degradation;
- *  dec_18a81c8291). */
-export async function selectVerifier(): Promise<SynthProvider | null> {
-  const workers = await selectWorkers();
-  return workers[0] ?? null;
+/** Pick a provider to run the Critic pass — whichever one normal synthesis would
+ *  resolve to (subscription CLI or the opt-in openai-compat), same env/local
+ *  preference precedence. Returns null when that resolves to the deterministic
+ *  fallback — verification then no-ops and the un-audited draft stands (graceful
+ *  degradation; dec_18a81c8291). */
+export async function selectVerifier(opts: ProviderSelectionOptions = {}): Promise<SynthProvider | null> {
+  const { provider } = await resolveSynthesisProvider(opts);
+  return provider.name === "deterministic" ? null : provider;
 }
 
 // ---- Verification (the Critic pass) ---------------------------------------

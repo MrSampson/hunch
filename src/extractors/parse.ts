@@ -10,11 +10,14 @@
  * Language-specific grammar/query/builtin-method data lives in languages.ts —
  * this file is a generic engine over whichever LanguageSpec matches a file.
  */
-import Parser from "tree-sitter";
+import type TreeSitterParser from "tree-sitter";
 import type { SyntaxNode } from "tree-sitter";
 import { languageFor, type LanguageSpec, type ParsedSymbolKind } from "./languages.js";
+import { loadNativeTreeSitter } from "./nativeTreeSitter.js";
 
 export type { ParsedSymbolKind } from "./languages.js";
+
+const { Parser } = loadNativeTreeSitter();
 
 export interface ParsedSymbol {
   name: string;
@@ -27,6 +30,7 @@ export interface ParsedSymbol {
 export interface ParsedCall {
   callee: string;
   atByte: number;
+  endByte: number;
   /** true for `x.foo()` (property access), false for a direct `foo()` call. */
   member: boolean;
 }
@@ -34,11 +38,12 @@ export interface ParsedFile {
   symbols: ParsedSymbol[];
   imports: string[];
   calls: ParsedCall[];
+  parseable: boolean;
 }
 
 interface LangBundle {
-  parser: Parser;
-  query: Parser.Query;
+  parser: TreeSitterParser;
+  query: TreeSitterParser.Query;
 }
 const cache = new Map<string, LangBundle>();
 
@@ -99,10 +104,10 @@ export function parseSource(file: string, source: string): ParsedFile | null {
     } else if (cname === "import.src") {
       imports.push(node.text.replace(STR_QUOTES, ""));
     } else if (cname === "call.id") {
-      calls.push({ callee: node.text, atByte: node.startIndex, member: false });
+      calls.push({ callee: node.text, atByte: node.startIndex, endByte: node.endIndex, member: false });
     } else if (cname === "call.member") {
       // skip builtin method names to avoid false edges to similarly-named symbols
-      if (!spec.builtinMethods.has(node.text)) calls.push({ callee: node.text, atByte: node.startIndex, member: true });
+      if (!spec.builtinMethods.has(node.text)) calls.push({ callee: node.text, atByte: node.startIndex, endByte: node.endIndex, member: true });
     }
   }
 
@@ -116,7 +121,7 @@ export function parseSource(file: string, source: string): ParsedFile | null {
     });
   }
   symbols.sort((a, b) => a.startByte - b.startByte);
-  return { symbols, imports, calls };
+  return { symbols, imports, calls, parseable: !tree.rootNode.hasError };
 }
 
 /** Walk up to the nearest node whose type is a definition this language recognizes. */

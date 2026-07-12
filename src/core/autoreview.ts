@@ -21,7 +21,7 @@
  */
 import type { Decision } from "./types.js";
 import type { RelevanceVerdict } from "../synthesis/provider.js";
-import { draftDuplicateOf } from "./dupdetect.js";
+import { draftDuplicateOf, isAcceptedDuplicateAnchor } from "./dupdetect.js";
 import { parseSynth, isReady, READY_MIN_GROUNDED } from "./reviewqueue.js";
 
 export type AutoReviewAction = "accept" | "rejectDuplicate" | "rejectIrrelevant" | "keep";
@@ -55,7 +55,9 @@ export interface AutoReviewConfig {
 const DEFAULT_MIN_REJECT_CONFIDENCE = 0.7;
 
 /** Build the plan. `verdicts` maps draft id → harness verdict (absent → the draft
- *  was not judged, e.g. no CLI available; it can still be dup-rejected or kept). */
+ *  was not judged, e.g. no CLI available; the pure plan can still flag a
+ *  deterministic duplicate or keep it). The CLI refuses `--apply` on an incomplete
+ *  requested harness batch; explicit `--no-llm` triage intentionally has no batch. */
 export function planAutoReview(
   drafts: Decision[],
   allDecisions: Decision[],
@@ -79,7 +81,8 @@ export function planAutoReview(
       plan.rejectDuplicate.push({ ...base, action: "rejectDuplicate", reason: `near-duplicate of ${detDup.of.id} "${detDup.of.title}" (${Math.round(detDup.score * 100)}%)` });
       continue;
     }
-    if (verdict?.duplicate_of && verdict.duplicate_of !== d.id && allDecisions.some((x) => x.id === verdict.duplicate_of)) {
+    if (verdict?.duplicate_of && verdict.duplicate_of !== d.id
+      && allDecisions.some((x) => x.id === verdict.duplicate_of && isAcceptedDuplicateAnchor(x))) {
       plan.rejectDuplicate.push({ ...base, action: "rejectDuplicate", reason: `harness: restates ${verdict.duplicate_of} — ${verdict.reason}` });
       continue;
     }
@@ -112,4 +115,34 @@ export function planAutoReview(
 /** Total drafts the plan would mutate (accept + both delete buckets). */
 export function planMutations(plan: AutoReviewPlan): number {
   return plan.accept.length + plan.rejectDuplicate.length + plan.rejectIrrelevant.length;
+}
+
+/** A caller's EXPLICIT accept/delete choice (from the Review Console's per-card
+ *  override), resolved against the live draft set. Ids that aren't a current draft
+ *  — already accepted/superseded, or plain unknown — land in `unknown` so an
+ *  apply-by-id can never mutate a non-draft record by a stale id (the console holds
+ *  a snapshot; the store may have moved). An id claimed by BOTH lists resolves to
+ *  accept (the safer, non-destructive verb) and is reported as unknown for delete. */
+export interface ResolvedSelection {
+  accept: Decision[];
+  delete: Decision[];
+  unknown: string[];
+}
+
+export function resolveSelection(drafts: Decision[], acceptIds: string[], deleteIds: string[]): ResolvedSelection {
+  const byId = new Map(drafts.map((d) => [d.id, d]));
+  const claimed = new Set<string>();
+  const pick = (ids: string[]): { out: Decision[]; unknown: string[] } => {
+    const out: Decision[] = [];
+    const unknown: string[] = [];
+    for (const id of ids) {
+      const d = byId.get(id);
+      if (!d || claimed.has(id)) unknown.push(id);
+      else { claimed.add(id); out.push(d); }
+    }
+    return { out, unknown };
+  };
+  const a = pick(acceptIds); // accept wins an id contested with delete
+  const del = pick(deleteIds);
+  return { accept: a.out, delete: del.out, unknown: [...a.unknown, ...del.unknown] };
 }

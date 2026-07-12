@@ -1,55 +1,45 @@
-# Hunch — VS Code extension
+# Hunch for VS Code
 
-A visualizer and query surface over [Hunch](https://github.com/davesheffer/hunch) (`.hunch/`) for
-the open repo. Pairs with the Claude Code chat (which uses the `hunch_*` MCP tools); this gives
-you the **human** surface.
+## See why. Capture what you decide.
 
-> Requires a repo with a `.hunch/` directory — install the CLI with `npm i -g @davesheffer/hunch` and run `hunch init`.
+Your repo's engineering memory ([Hunch](https://github.com/davesheffer/hunch)), in the editor.
+One read surface, one write surface, nothing else:
 
-## Features
+- **Hunch: Why is this?** — for the file you're in (and the symbol under your cursor): the
+  invariants that must not break, the decisions that shaped it (and what they rejected), its bug
+  history with root causes, and the blast radius of touching it.
+- **Hunch: Capture…** — record a decision, invariant, or bug into the repo's memory in three
+  input boxes. Decisions go through the same `hunch mcp` write path Claude Code uses; every
+  mutation is delegated — the extension never edits `.hunch/` JSON itself.
 
-### Browse
-- **Activity-bar tree** — Invariants, Decisions, Bugs, **Bug lineage** (recurrence chains),
-  Fragile symbols, Components, and **Stale records**, each with provenance and a `⚠stale` flag
-  when a file in scope changed after the record was verified.
-- **Component graph** (`Hunch: Component Graph`) — the symbol call-graph rolled up to components;
-  node size = symbols owned, color = fragility, link width = cross-component calls, badges = ⛔/🐞.
-- **Search** (`Hunch: Search`) — fuzzy-find any decision, invariant, bug, or component.
+- **Hunch: Journey** — one read-only screen that connects you to the process: your memory curve
+  rising over real decision timestamps, the return line that moves only when a real gate blocks a
+  real mistake, what the repo learned this week, and one suggested next action. The 🧠 status-bar
+  count is its front door.
 
-### In the editor
-- **CodeLens** — a per-file summary (⛔ invariants · ⚠ near · 🧭 decisions · 🐞 bugs) plus a mark on
-  each function carrying bug/fragility signal.
+Plus two ambient signals, both quiet until they have something to say:
+
 - **Hover** — bug history and fragility for the symbol under the cursor.
-- **Diagnostics** — invariants in scope (and *near*-invariants reached through the blast radius)
-  appear in the Problems panel while you edit.
-- **Overview-ruler marks** — bug-bearing (red) and fragile (orange) symbols, scannable from the scrollbar.
-- **"Why is this file/symbol the way it is?"** — a full brief: decisions, invariants, bug history,
-  and blast radius. Plus a **status bar** invariant counter for the active file.
+- **Status bar** — how many invariants guard the active file (shield), and the repo's memory
+  count (🧠, opens the Journey).
 
-### Grounding
-- **Topic-anchored decisions** — a decision can carry an optional `topic` (the drift-detection
-  anchor); the pre-edit brief surfaces a file's *current* decision for its topic with
-  doc-precedence framing (follow the graph, not a stale doc) plus what that decision **rejected**.
-- **doc≠graph drift** — a deterministic `anchor-stale` drift fires when a file is still anchored to a
-  **superseded** decision while a current one exists for its topic. Surface it from the CLI with
-  `hunch drift` (CI-gateable) or `hunch doctor`; `hunch reconcile-topics` catches the >1-live-per-topic
-  case a git merge can introduce, and the scaffolded `/heal` command / `hunch heal` do a read-only
-  doc↔graph reconciliation (never rewriting prose silently). This is the doc≠graph spoke — it
-  **complements** Architectural Conformance (graph≠code), it doesn't replace it.
+And **Hunch: Search memory** when you need to ask "was this decided before?".
 
-### Write back
-- **Record Invariant…** / **Record Bug…** delegate to the `hunch` CLI (atomic, validated writes —
-  the extension never edits `.hunch/` JSON itself). Set `hunch.cliPath` if the CLI isn't on `PATH`.
-  Decisions are recorded from Claude Code chat — either `hunch_record_decision` (now **gated**: a
-  store-scoped uniqueness guard refuses a second live decision for the same `topic`, so a topic is
-  never silently two) or `hunch_capture_decision`, which returns a one-question-at-a-time grilling
-  protocol (also wired as the scaffolded `/capture` slash command).
+It works with **any** assistant workflow — the same graph serves Claude Code, Cursor, Copilot,
+Codex, Windsurf, and human review. Language-model tools (`hunchWhy`, `hunchContext`, `hunchQuery`)
+feed VS Code chat agents automatically; you never call them yourself.
 
-### Live
-- Refreshes automatically when `.hunch/` changes on disk (e.g. after a commit).
+> **Get started:** install the CLI with `npm i -g @davesheffer/hunch`, open your repo, then run `hunch init`.
+
+Everything else Hunch does — draft review, drift detection, conformance, stats, the component
+graph — lives in the CLI (`hunch review`, `hunch drift`, `hunch stats`, …) and in your assistant
+via the `hunch_*` MCP tools. This extension deliberately stays small: if you can't explain it in
+one sentence, it isn't in here.
 
 The data layer is a pure reader of the committed JSON source of truth — **no native deps, no
-server** — and it works as soon as the repo has a `.hunch/` directory (`hunch init`).
+server** — and it works as soon as the repo has a `.hunch/` directory (`hunch init`). It refreshes
+automatically when `.hunch/` (or the configured private overlay) changes on disk; private overlay
+memory is visible only in your local editor and is never committed by this extension.
 
 ## Develop / run
 ```bash
@@ -60,8 +50,5 @@ npm run build      # -> dist/extension.js
 
 ## Settings
 - `hunch.statusBar.enabled` (default `true`) — invariant counter for the active file.
-- `hunch.codeLens.enabled` (default `true`) — per-file summary + per-symbol bug/fragility CodeLens.
 - `hunch.hover.enabled` (default `true`) — bug history / fragility on hover.
-- `hunch.diagnostics.enabled` (default `true`) — invariants in the Problems panel.
-- `hunch.decorations.enabled` (default `true`) — overview-ruler marks for buggy/fragile symbols.
-- `hunch.cliPath` (default `hunch`) — command used for the Record Invariant / Record Bug actions.
+- `hunch.cliPath` (default `hunch`) — command used for Capture (set an absolute path if `hunch` is not on `PATH`).

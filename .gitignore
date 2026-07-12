@@ -1,6 +1,7 @@
 node_modules/
 dist/
 *.log
+.vercel/
 
 # Local git worktrees for isolated feature-branch work.
 .worktrees/
@@ -44,6 +45,13 @@ docs/superpowers/
 !.hunch/decisions/
 !.hunch/constraints/
 !.hunch/components/
+!.hunch/evidence/
+!.hunch/corpora/
+!.hunch/policies/
+!.hunch/proofs/
+!.hunch/plans/
+!.hunch/dispositions/
+!.hunch/shadow/
 !.hunch/runbooks/
 !.hunch/bugs/
 # THIS repo's generated wiki stays out of the public repo (we use the PRIVATE
@@ -71,3 +79,6 @@ blog/*.private.md
 api/.env
 
 bench/results/
+
+# Constitution replay: disposable worktrees and derived snapshot graphs.
+.hunch-cache/

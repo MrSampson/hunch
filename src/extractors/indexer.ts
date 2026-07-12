@@ -12,6 +12,8 @@ import { join, relative, dirname, posix } from "node:path";
 import type { HunchStore } from "../store/hunchStore.js";
 import { parseSource, attributeCalls } from "./parse.js";
 import { symbolId, componentId, edgeId, sha1 } from "../core/ids.js";
+import { externalImportNodeId, externalPackage } from "../core/externalImports.js";
+import { resolveRelativeImport } from "../core/relativeImports.js";
 import { extracted, inferred, type Symbol, type Edge, type Component } from "../core/types.js";
 import { isGitRepo, trackedFiles, fileGitMetrics } from "./git.js";
 import { CODE_EXTENSIONS, languageFor } from "./languages.js";
@@ -96,6 +98,21 @@ export function indexRepo(store: HunchStore, root: string, opts: { churn?: boole
   }
 
   const byId = new Map(symbols.map((s) => [s.id, s]));
+  // Language-aware import resolution, shared by the call-resolution "was this
+  // name actually imported?" gate (below) and the depends_on edge derivation
+  // (pass 3): a Python cross-file call/import must resolve through the same
+  // relative/absolute Python rules as everything else, not silently fail the
+  // JS/TS resolver and look unimported.
+  const hasSrcLayout = [...fileSymbols.keys()].some((f) => f.startsWith("src/"));
+  const pyRoots = hasSrcLayout ? ["", "src"] : [""];
+  const resolveImportTarget = (file: string, spec: string): string | null =>
+    languageFor(file)?.id === "python"
+      ? resolvePythonImport(file, spec, fileSymbols, pyRoots)
+      : resolveImport(file, spec, fileSymbols);
+  const importedFiles = new Map(perFileImports.map(({ file, imports }) => [
+    file,
+    new Set(imports.map((specifier) => resolveImportTarget(file, specifier)).filter((target): target is string => !!target)),
+  ]));
 
   // ---- pass 2: resolve calls -> symbol-level edges -------------------------
   const edges: Edge[] = [];
@@ -114,7 +131,7 @@ export function indexRepo(store: HunchStore, root: string, opts: { churn?: boole
       if (!callerId) continue;
       const callerName = byId.get(callerId)?.name ?? "?";
       for (const [calleeName, memberOnly] of callees) {
-        const calleeId = resolveName(calleeName, file, nameIndex, byId);
+        const calleeId = resolveName(calleeName, file, importedFiles.get(file) ?? new Set(), nameIndex, byId);
         if (!calleeId || calleeId === callerId) continue;
         // A member call `x.foo()` only yields an edge when `foo` resolves to a
         // method or a same-file symbol — not a coincidentally-named top-level fn.
@@ -152,26 +169,34 @@ export function indexRepo(store: HunchStore, root: string, opts: { churn?: boole
   const fileToComponent = new Map<string, string>();
   for (const c of components) for (const f of c._files) fileToComponent.set(f, c.id);
 
-  const hasSrcLayout = [...fileSymbols.keys()].some((f) => f.startsWith("src/"));
-  const pyRoots = hasSrcLayout ? ["", "src"] : [""];
-
   for (const { file, imports } of perFileImports) {
     const fromCmp = fileToComponent.get(file);
     if (!fromCmp) continue;
-    const isPython = languageFor(file)?.id === "python";
     for (const spec of imports) {
-      const target = isPython
-        ? resolvePythonImport(file, spec, fileSymbols, pyRoots)
-        : resolveImport(file, spec, fileSymbols);
-      if (!target) continue;
-      const toCmp = fileToComponent.get(target);
-      if (!toCmp || toCmp === fromCmp) continue;
-      addEdge({
-        id: edgeId(fromCmp, toCmp, "depends_on"),
-        from: fromCmp, to: toCmp, type: "depends_on",
-        reason: `${file} imports ${target}`, strength: 0.6,
-        provenance: extracted(0.9, [`${file}:imports:${spec}`]),
-      });
+      const target = resolveImportTarget(file, spec);
+      if (target) {
+        const toCmp = fileToComponent.get(target);
+        if (!toCmp || toCmp === fromCmp) continue;
+        addEdge({
+          id: edgeId(fromCmp, toCmp, "depends_on"),
+          from: fromCmp, to: toCmp, type: "depends_on",
+          reason: `${file} imports ${target}`, strength: 0.6,
+          provenance: extracted(0.9, [`${file}:imports:${spec}`]),
+        });
+        continue;
+      }
+      const dependency = externalPackage(spec);
+      const external = externalImportNodeId(spec);
+      const anchors = [...(fileSymbols.get(file) ?? [])].sort();
+      if (!dependency || !external || !anchors.length) continue;
+      for (const anchor of anchors) {
+        addEdge({
+          id: edgeId(anchor, external, "imports"),
+          from: anchor, to: external, type: "imports",
+          reason: `${file} imports external package ${dependency}`, strength: 1,
+          provenance: extracted(1, [`${file}:imports:${spec}`]),
+        });
+      }
     }
   }
 
@@ -230,10 +255,14 @@ function listCodeFiles(root: string): string[] {
   return out;
 }
 
-/** Resolve a callee name to a symbol id: prefer same-file, else unique global. */
+/** Resolve a callee name to a symbol id: prefer same-file, otherwise require a
+ * unique symbol in a statically imported local file. A unique repository-wide
+ * name is not evidence of a binding: callback parameters and built-ins often
+ * share names with unrelated exported symbols. */
 function resolveName(
   name: string,
   file: string,
+  importedFiles: Set<string>,
   nameIndex: Map<string, string[]>,
   byId: Map<string, Symbol>,
 ): string | null {
@@ -242,31 +271,13 @@ function resolveName(
   const sameFile = candidates.filter((id) => byId.get(id)?.file === file);
   if (sameFile.length === 1) return sameFile[0]!;
   if (sameFile.length > 1) return null; // ambiguous within the file — don't guess
-  if (candidates.length === 1) return candidates[0]!;
-  // ambiguous across files — skip to avoid wrong edges (keeps the graph clean)
-  return null;
+  const imported = candidates.filter((id) => importedFiles.has(byId.get(id)?.file ?? ""));
+  return imported.length === 1 ? imported[0]! : null;
 }
 
 /** Resolve a relative import specifier to a concrete tracked file path. */
 function resolveImport(fromFile: string, spec: string, fileSymbols: Map<string, string[]>): string | null {
-  if (!spec.startsWith(".")) return null; // external package
-  const base = toPosix(join(dirname(fromFile), spec));
-  // Prefer TS source rewrites over the literal `.js` specifier: in a TS repo an
-  // import of "./db.js" resolves to db.ts. Only fall back to the literal path.
-  const candidates = [
-    base.replace(/\.js$/, ".ts"),
-    base.replace(/\.js$/, ".tsx"),
-    base.replace(/\.jsx$/, ".tsx"),
-    base + ".ts",
-    base + ".tsx",
-    base,
-    base + ".js",
-    toPosix(join(base, "index.ts")),
-    toPosix(join(base, "index.tsx")),
-    toPosix(join(base, "index.js")),
-  ];
-  for (const c of candidates) if (fileSymbols.has(c)) return c;
-  return null;
+  return resolveRelativeImport(fromFile, spec, fileSymbols.keys()).path;
 }
 
 /** First of `${modulePath}.py` / `${modulePath}/__init__.py` that's a tracked file,
