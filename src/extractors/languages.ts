@@ -5,10 +5,7 @@
  * here (+ a new tree-sitter-* dependency), not edits scattered across those
  * four files.
  */
-import TS from "tree-sitter-typescript";
-import Python from "tree-sitter-python";
-
-const { typescript, tsx } = TS as unknown as { typescript: unknown; tsx: unknown };
+import { loadNativeTreeSitter } from "./nativeTreeSitter.js";
 
 export type ParsedSymbolKind = "function" | "method" | "class" | "interface" | "type";
 
@@ -85,7 +82,7 @@ const TYPESCRIPT: LanguageSpec = {
   ...TS_SHARED,
   extensions: [".ts", ".mts", ".cts", ".js", ".mjs", ".cjs"],
   grammarKey: "ts",
-  loadGrammar: () => typescript,
+  loadGrammar: () => loadNativeTreeSitter().typescript,
 };
 
 /** .tsx/.jsx use the TSX grammar variant; everything else in the TS spec uses
@@ -96,7 +93,7 @@ const TSX: LanguageSpec = {
   ...TS_SHARED,
   extensions: [".tsx", ".jsx"],
   grammarKey: "tsx",
-  loadGrammar: () => tsx,
+  loadGrammar: () => loadNativeTreeSitter().tsx,
 };
 
 const PY_QUERY = `
@@ -131,7 +128,7 @@ const PYTHON: LanguageSpec = {
   id: "python",
   extensions: [".py", ".pyi"],
   grammarKey: "python",
-  loadGrammar: () => Python,
+  loadGrammar: () => loadNativeTreeSitter().python,
   query: PY_QUERY,
   defNodeTypes: new Set(["function_definition", "class_definition"]),
   defKindOf: { "fn.def": "function", "method.def": "method", "class.def": "class" },
