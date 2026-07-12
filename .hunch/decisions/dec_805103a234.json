@@ -2,7 +2,7 @@
   "id": "dec_805103a234",
   "title": "Extension surface is Why + Capture + Journey: one read screen, one write picker, one feel-the-compounding screen",
   "topic": "vscode-extension-surface",
-  "status": "accepted",
+  "status": "superseded",
   "context": "After the v0.9.0 cut to Why + Capture, the owner reported the extension felt disconnected — clean but invisible; nothing let a user FEEL the memory compounding or their part in the process. Options considered: event toasts only (loop moments), a Journey panel, both, or restoring the old tree/home surfaces.",
   "decision": "The extension keeps exactly three explainable surfaces. READ: 'Hunch: Why is this?' (file brief + symbol section at the cursor), symbol hover, shield status-bar invariant counter. WRITE: one 'Hunch: Capture…' picker (decision via hunch mcp, invariant/bug via CLI). FEEL: 'Hunch: Journey' — one READ-ONLY webview: the memory curve drawn from real decision timestamps, the return line that moves only when a real gate blocks a real mistake, what the repo learned this week, and ONE suggested next action; a 🧠 decision-count status item is its front door. Plus 'Hunch: Search memory' and the three invisible language-model tools. The v0.9.0 litmus stands — each surface must be explainable in one sentence — and Journey passes: 'watch your repo's memory compound'. Journey computes nothing: numbers copied from the graph and hunch stats --json, zeros stay zeros (same honesty contract as the public proof curve). Everything deleted in v0.9.0 stays deleted; draft triage stays in the CLI.",
   "consequences": [
@@ -26,11 +26,11 @@
     "vscode-extension/package.json"
   ],
   "supersedes": "dec_6c1a51eb8b",
-  "superseded_by": null,
+  "superseded_by": "dec_79c3650454",
   "caused_by_bug": null,
   "commit": null,
   "valid_from": "2026-07-12T07:42:43.065Z",
-  "valid_to": null,
+  "valid_to": "2026-07-12T08:04:53.311Z",
   "retired": {
     "symbols": [],
     "deps": []
