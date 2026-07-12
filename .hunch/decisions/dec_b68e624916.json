@@ -1,0 +1,41 @@
+{
+  "id": "dec_b68e624916",
+  "title": "G3 handoff: EXP-01 is positive internal evidence; proceed to independent EXP-03",
+  "topic": "g3-experiment-handoff",
+  "status": "proposed",
+  "context": "The completed revision-3 EXP-01 receipt was adjudicated against its locked preregistration. The primary result supports the hypothesis in the bound synthetic setting: violations were A 40/96 (41.67%), B 20/99 (20.20%), and C 0/100, with zero safety guardrails. The result survives a worst-case missingness check that counts all five invalid A/B outcomes as compliant. C was clean across both languages and all policy families; the incremental C-over-B effect was concentrated in the exists family. The deterministic report identity and hash were independently rechecked before the private result artifact was committed.",
+  "decision": "Treat EXP-01 as positive internal G3 evidence and proceed to EXP-03 only through an independent human review path. Do not activate blocking, sign G3, or publish a prevention marketing claim from EXP-01 alone. The private result artifact is committed at 23b3d80; public/external marketing still requires an open-fixture replication and model/version disclosure.",
+  "consequences": [
+    "The EXP-01 assignment loop is closed and must not be rerun or extended after seeing results.",
+    "The five invalid outcomes remain visible and unimputed.",
+    "EXP-03 independence and seven-day follow-up remain unresolved.",
+    "Blocking activation and final G3 sign-off remain separate explicit human decisions."
+  ],
+  "alternatives_rejected": [
+    "Call EXP-01 inconclusive because of differential invalid outcomes; the worst-case missingness analysis still leaves A at 40% and B at 20% versus C at 0%.",
+    "Generalize the result to every repository and model; the bank is synthetic, isolated, and bound to one model/provider version.",
+    "Use the result for public prevention marketing; the Constitution requires an external/open-fixture replication.",
+    "Continue sampling after 300 outcomes; the preregistered stopping rule is complete and post-result extension would be invalid."
+  ],
+  "rejected_tripwires": [],
+  "related_components": [
+    "constitution"
+  ],
+  "related_files": [],
+  "supersedes": "dec_55323dac09",
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": null,
+  "valid_from": "2026-07-12T04:02:21.744Z",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "human_confirmed",
+    "confidence": 0.95,
+    "evidence": []
+  },
+  "date": "2026-07-12T04:02:21.744Z"
+}

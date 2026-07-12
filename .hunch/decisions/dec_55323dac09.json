@@ -2,7 +2,7 @@
   "id": "dec_55323dac09",
   "title": "G3 handoff: EXP-01 revision 3 completed 300/300; next evaluate the preregistered result",
   "topic": "g3-experiment-handoff",
-  "status": "proposed",
+  "status": "superseded",
   "context": "EXP-01 revision 3 reached exactly 300 terminal outcomes, 100 per arm, and the append-only private evidence is committed and pushed. Valid outcomes were A=96, B=99, C=100; invalid outcomes were A=4, B=1, C=0. Violations among valid completions were A=40/96 (41.67%), B=20/99 (20.20%), and C=0/100 (0%). All preregistered safety guardrails remained zero. Three late invalid outcomes were preserved after the evaluator correctly rejected execution when the public checkout drifted from its pinned commit; the evaluator was red/green reproduced, the checkout was pinned, and the remaining 40 assignments completed without further evaluator error.",
   "decision": "Next, evaluate the completed EXP-01 report strictly under its preregistered estimand, exclusions, missingness handling, and claim criteria. Do not convert the strong arm contrasts into policy activation or final G3 sign-off: the report still returns claim_allowed=false, EXP-03 remains independently gated, and blocking/final sign-off require separate human decisions.",
   "consequences": [
@@ -22,11 +22,11 @@
   ],
   "related_files": [],
   "supersedes": "dec_11aea289fb",
-  "superseded_by": null,
+  "superseded_by": "dec_b68e624916",
   "caused_by_bug": null,
   "commit": "919dfaf",
   "valid_from": "2026-07-12T03:59:24.168Z",
-  "valid_to": null,
+  "valid_to": "2026-07-12T04:02:21.744Z",
   "retired": {
     "symbols": [],
     "deps": []
