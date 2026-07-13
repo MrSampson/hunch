@@ -200,3 +200,5 @@ ollama create hunch-synth -f Modelfile
 Then point `HUNCH_SYNTH_MODEL` at `hunch-synth` instead of the base model.
 
 **Observe:** `hunch doctor` no longer prints the context warning once `num_ctx` is set; `hunch backfill`'s drafts stop hallucinating from truncated diffs.
+
+**Metered hosts are refused by default.** `HUNCH_SYNTH_BASE_URL` is meant for a self-hosted/local endpoint, so Hunch refuses to treat a known metered API host (`api.openai.com`, `api.anthropic.com`, `generativelanguage.googleapis.com`, `api.mistral.ai`, `api.cohere.ai`, `openrouter.ai`) as available — this repo's synthesis invariant is "never silently bill." If you deliberately want to point this provider at one of those (e.g. a paid OpenAI-compatible relay), set `HUNCH_SYNTH_ALLOW_METERED=1` explicitly; anything else (localhost, LAN, self-hosted domains) works with no extra flag.
