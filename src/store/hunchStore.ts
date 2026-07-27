@@ -10,15 +10,15 @@
  *   - bugLineage():     bugs matching a symptom/symbol + their lineage
  *   - fragility():      ranked fragility report with evidence
  */
-import { resolve, join } from "node:path";
-import { existsSync, readFileSync } from "node:fs";
+import { resolve, join, dirname, isAbsolute, relative } from "node:path";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { toPosixTarget, hunchPathsForDir, type HunchPaths } from "../core/paths.js";
 import { ENTITY_KINDS, type Component, type Constraint, type Bug, type Decision, type Symbol, type Edge, type RejectedTripwire, type EntityKind, type EntityFor } from "../core/types.js";
 import { openDb, withTx, type DB } from "./db.js";
 import { RESET_SQL, embedHash } from "./schema.js";
 import { selectEmbedder, type Embedder } from "./embedder.js";
 import { JsonStore } from "./jsonStore.js";
-import { gitCommonDir } from "../extractors/git.js";
+import { gitCommonDir, gitWorktreeRoot, sameGitPublication } from "../extractors/git.js";
 import { pathMatchesGlob } from "../core/glob.js";
 import { currentForTopic } from "../core/topics.js";
 import { edgeId } from "../core/ids.js";
@@ -33,6 +33,26 @@ export interface SearchHit {
   title: string;
   snippet: string;
   score: number;
+}
+
+/** Git cannot resolve repository identity from a cwd that does not exist yet.
+ * Probe the nearest real directory so a planned nested overlay cannot evade the
+ * public-repository boundary merely by deferring mkdir until its first write. */
+function nearestExistingDirectory(path: string): string {
+  let current = resolve(path);
+  while (true) {
+    try {
+      if (statSync(current).isDirectory()) return realpathSync(current);
+    } catch { /* keep walking to an existing ancestor */ }
+    const parent = dirname(current);
+    if (parent === current) return current;
+    current = parent;
+  }
+}
+
+function pathIsWithin(path: string, parent: string): boolean {
+  const rel = relative(parent, path);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute(rel));
 }
 
 export interface WhyResult {
@@ -94,7 +114,25 @@ export class HunchStore {
     const local = this.localConfig();
     const priv = process.env.HUNCH_PRIVATE_DIR?.trim() || local.privateDir;
     if (priv) {
-      this.privateDir = resolve(this.paths.root, priv);
+      const candidate = resolve(this.paths.root, priv);
+      const canonical = (path: string): string => { try { return realpathSync(path); } catch { return resolve(path); } };
+      const privateRoot = dirname(canonical(candidate));
+      const publicationProbe = nearestExistingDirectory(privateRoot);
+      const publicRoot = canonical(this.paths.root);
+      const nestedBoundary = pathIsWithin(resolve(candidate), resolve(this.paths.root))
+        || pathIsWithin(publicationProbe, publicRoot);
+      const distinctNestedRoot = nestedBoundary ? gitWorktreeRoot(publicationProbe) : null;
+      if (
+        canonical(candidate) === canonical(this.paths.hunch) ||
+        (nestedBoundary && (!distinctNestedRoot || sameGitPublication(distinctNestedRoot, this.paths.root))) ||
+        sameGitPublication(publicationProbe, this.paths.root)
+      ) {
+        throw new Error(
+          `Unsafe private overlay "${candidate}" shares the public code repository's local or remote publication boundary. ` +
+          "Run `hunch private` or `hunch shared --repo <url>` to create a standalone overlay repository.",
+        );
+      }
+      this.privateDir = candidate;
       this.privateJson = new JsonStore(hunchPathsForDir(this.privateDir));
     }
     // Auto-commit is ON unless explicitly opted out (`autoCommit: false` in local.json).
@@ -122,7 +160,18 @@ export class HunchStore {
    *  through here so all modes, branches, worktrees, teams, and agents agree on where
    *  memory lives. */
   putCapture<K extends EntityKind>(kind: K, record: EntityFor[K], isPrivate = false): EntityFor[K] {
-    return this.captureHome(isPrivate) === "private" ? this.putPrivate(kind, record) : this.json.put(kind, record);
+    const home = this.captureHome(isPrivate);
+    const id = (record as { id: string }).id;
+    const targetHasRecord = home === "private" ? !!this.privateJson?.get(kind, id) : !!this.json.get(kind, id);
+    const otherHasRecord = home === "private" ? !!this.json.get(kind, id) : !!this.privateJson?.get(kind, id);
+    // Legacy repositories can already contain twins, so an idempotent update in
+    // the selected home remains possible. A new capture must never CREATE that
+    // ambiguous state: merged/private-first reads would make later writers and
+    // public renderers disagree about which record is real.
+    if (!targetHasRecord && otherHasRecord) {
+      throw new Error(`${kind} record ${id} already exists in the other memory home; refusing to create a public/private id collision`);
+    }
+    return home === "private" ? this.putPrivate(kind, record) : this.json.put(kind, record);
   }
 
   /** Read a record by id from wherever it lives (private overlay wins on collision). */
@@ -214,6 +263,11 @@ export class HunchStore {
     return !!this.privateJson;
   }
 
+  /** Public project root protected from private-overlay commit/push operations. */
+  get publicRoot(): string {
+    return this.paths.root;
+  }
+
   /** Write a record into the PRIVATE overlay (never the public repo). Throws if no
    *  HUNCH_PRIVATE_DIR is configured, so a "private" write can never silently land
    *  in the public `.hunch/`. */
@@ -233,6 +287,22 @@ export class HunchStore {
   close(): void {
     this._db?.close();
     this._db = null;
+  }
+
+  /** Revision marker for every JSON source currently visible to this store.
+   *  SQLite/FTS is derived state; long-lived consumers compare this marker with
+   *  the marker captured only after a successful rebuild. */
+  sourceStamp(): string {
+    return `${this.json.changeStamp()}::${this.privateJson?.changeStamp() ?? "no-overlay"}`;
+  }
+
+  /** Rebuild from fresh disk reads after an out-of-process Git pull or capture.
+   *  Normal in-process writes invalidate their own kind cache; cross-process
+   *  refreshes clear both homes explicitly so schema-only changes are included. */
+  reindexFresh(): { counts: Record<string, number> } {
+    this.json.clearCache();
+    this.privateJson?.clearCache();
+    return this.reindex();
   }
 
   // ---- write path ---------------------------------------------------------
@@ -363,13 +433,24 @@ export class HunchStore {
     }
   }
 
-  /** Substring fallback over titles/bodies (handles non-ASCII / malformed FTS). */
-  private likeSearch(query: string, limit: number): SearchHit[] {
-    const like = `%${query.replace(/[%_]/g, "")}%`;
+  /** Portable bounded fallback over titles/bodies. Each natural-language token
+   * is an OR candidate, mirroring the high-recall FTS query closely enough for
+   * runtimes whose SQLite build omits the optional FTS5 module. */
+  private likeSearch(query: string, limit: number, kind?: string): SearchHit[] {
+    const terms = (query.toLowerCase().match(/[\p{L}\p{N}_]+/gu)
+      ?? [query.toLowerCase().replace(/[%_]/g, "").trim()].filter(Boolean)).slice(0, 32);
+    if (!terms.length) return [];
+    const predicates = terms.map(() => `(lower(title) LIKE ? OR lower(body) LIKE ?)`).join(" OR ");
+    const likes = terms.flatMap((term) => {
+      const like = `%${term.replace(/[%_]/g, "")}%`;
+      return [like, like];
+    });
+    const where = kind ? `kind = ? AND (${predicates})` : `(${predicates})`;
+    const params: Array<string | number> = kind ? [kind, ...likes, limit] : [...likes, limit];
     const rows = this.db.prepare(
       `SELECT ref, kind, title, substr(body,1,120) AS snip FROM search
-       WHERE title LIKE ? OR body LIKE ? LIMIT ?`,
-    ).all(like, like, limit) as Array<{ ref: string; kind: string; title: string; snip: string }>;
+       WHERE ${where} LIMIT ?`,
+    ).all(...params) as Array<{ ref: string; kind: string; title: string; snip: string }>;
     return rows.map((r) => ({ ref: r.ref, kind: r.kind, title: r.title, snippet: r.snip, score: 0 }));
   }
 
@@ -597,7 +678,7 @@ export class HunchStore {
    *  constraint composes with MATCH). Empty when the query has no FTS-able terms. */
   private scopedFts(query: string, kind: string, limit: number): SearchHit[] {
     const match = toFtsQuery(query);
-    if (!match) return [];
+    if (!match) return this.likeSearch(query, limit, kind);
     try {
       const rows = this.db.prepare(
         `SELECT ref, kind, title, snippet(search, 3, '[', ']', '…', 12) AS snip, bm25(search) AS score
@@ -605,7 +686,7 @@ export class HunchStore {
       ).all(match, kind, limit) as Array<{ ref: string; kind: string; title: string; snip: string; score: number }>;
       return rows.map((r) => ({ ref: r.ref, kind: r.kind, title: r.title, snippet: r.snip, score: r.score }));
     } catch {
-      return [];
+      return this.likeSearch(query, limit, kind);
     }
   }
 

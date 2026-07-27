@@ -6,7 +6,8 @@
  *  same import-safety to be unit-testable. */
 import { fileURLToPath } from "node:url";
 import type { Invocation } from "../integrations/scaffold.js";
-import { probeOllamaNumCtx } from "../synthesis/provider.js";
+import { probeOllamaNumCtx, type ProviderResolution } from "../synthesis/provider.js";
+import { HUNCH_NPX_PACKAGE_SPEC } from "../core/version.js";
 
 export interface ResolvedInvocation {
   /** Shell command prefix for the git hook (e.g. `node /abs/dist/cli/index.js`). */
@@ -15,38 +16,51 @@ export interface ResolvedInvocation {
   mcp: Invocation;
 }
 
-/** Published package name — used for OS-agnostic invocations (see below). */
-const PKG = "@davesheffer/hunch";
-
 export function dim(s: string): string {
   return `\x1b[2m${s}\x1b[0m`;
 }
 
-/** The doctor command's synthesis-status line(s) for a resolved provider name.
- *  Exported for testing — the previous inline version had zero test coverage,
- *  which is how issue #8 (openai-compat misreported as "no assistant CLI
- *  found") shipped unnoticed through three review passes. */
-export function synthesisStatusLines(providerName: string, env: NodeJS.ProcessEnv): string[] {
-  const SUB: Record<string, { label: string; strip?: string }> = {
-    "claude-cli": { label: "Claude subscription (claude CLI)", strip: "ANTHROPIC_API_KEY" },
-    "codex-cli": { label: "ChatGPT subscription (codex CLI)", strip: "OPENAI_API_KEY" },
-    "cursor-agent": { label: "Cursor subscription (cursor-agent CLI)" },
-  };
-  const sub = SUB[providerName];
-  if (sub) {
-    const hadKey = sub.strip && !!env[sub.strip];
-    return [`            ↳ LLM synthesis billed to your ${sub.label}` +
-      (hadKey ? ` (${sub.strip} in env is stripped — never billed to the API)` : ``)];
+/** Portable invocation written into committed MCP/provider configuration.
+ * Keep it independently testable so the distribution pin cannot silently
+ * regress to npm's moving latest tag. */
+export function publishedMcpInvocation(): Invocation {
+  return { command: "npx", args: ["-y", `--package=${HUNCH_NPX_PACKAGE_SPEC}`, "hunch"] };
+}
+
+/** The doctor command's synthesis-status line(s) for a resolved provider.
+ *  Exported for testing — the previous version (a bare provider-name switch,
+ *  before the resolveSynthesisProvider preference system existed) had zero
+ *  test coverage, which is how issue #8 (openai-compat misreported as "no
+ *  assistant CLI found") shipped unnoticed through three review passes. That
+ *  bug resurfaces here for the same reason: resolution.statuses carries a
+ *  `subscription` field for the CLI providers but openai-compat's is null (it
+ *  isn't a subscription), so it must be special-cased explicitly rather than
+ *  falling through to the "no assistant CLI" branch. */
+export function synthesisStatusLines(resolution: ProviderResolution, env: NodeJS.ProcessEnv): string[] {
+  const provider = resolution.provider;
+  const selected = resolution.statuses.find((s) => s.name === provider.name);
+  if (selected?.subscription) {
+    return [`            ↳ LLM synthesis uses your ${selected.subscription}; provider API credentials are not used.`];
   }
-  if (providerName === "openai-compat") {
+  if (provider.name === "openai-compat") {
     const base = env.HUNCH_SYNTH_BASE_URL ?? "(unset)";
     const model = env.HUNCH_SYNTH_MODEL ?? "(unset)";
     const keyNote = env.HUNCH_SYNTH_API_KEY ? " (HUNCH_SYNTH_API_KEY set)" : " (no API key)";
     return [`            ↳ LLM synthesis via local/self-hosted endpoint ${base} (model: ${model})${keyNote}`];
   }
+  if (resolution.source === "ambiguous") {
+    const names = resolution.statuses.filter((s) => s.name !== "deterministic" && s.available).map((s) => s.name);
+    return [
+      dim(`            ↳ ${names.join(", ")} are available; Hunch will not guess which provider to use.`),
+      dim(`              choose one locally: ${names.map((name) => `hunch provider ${name}`).join("  or  ")}`),
+    ];
+  }
+  if (resolution.source === "unavailable-preference") {
+    return [dim(`            ↳ ${resolution.preference} was selected but is unavailable; using the offline heuristic.`)];
+  }
   return [
-    dim(`            ↳ no assistant CLI found — synthesis uses the offline heuristic (advisory, low-confidence)`),
-    dim(`              for full synthesis install one: Claude Code (\`claude /login\`), Codex (\`codex login\`), or Cursor (\`cursor-agent login\`)`),
+    dim(`            ↳ no assistant CLI found — synthesis uses the offline heuristic (advisory, low-confidence).`),
+    dim(`              install or log into Claude Code, Codex, or Cursor; then select one with \`hunch provider <name>\`.`),
   ];
 }
 
@@ -69,15 +83,16 @@ export function resolveInvocation(): ResolvedInvocation {
   // Running from an installed copy (global, local, or npx cache — i.e. NOT a
   // source checkout we're hacking on). The MCP/provider config files we write
   // are committed and shared across a team via git, so they must NOT embed this
-  // machine's absolute path or OS-specific separators. Reference Hunch by its
-  // published package name instead, which `npx` resolves the same on any OS and
-  // any clone. The git hook lives in per-machine .git/hooks (never committed),
-  // so it keeps the PATH-robust absolute-node invocation below.
+  // machine's absolute path or OS-specific separators. Reference the exact
+  // published Hunch package instead, which `npx` resolves the same on any OS
+  // and any clone without floating to a newer release. The git hook lives in
+  // per-machine .git/hooks (never committed), so it keeps the PATH-robust
+  // absolute-node invocation below.
   const installed = !isDev && entry.replace(/\\/g, "/").includes("/node_modules/");
   if (installed) {
     return {
       shell: `${q(process.execPath)} ${q(entry)}`,
-      mcp: { command: "npx", args: ["-y", PKG] },
+      mcp: publishedMcpInvocation(),
     };
   }
 

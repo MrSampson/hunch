@@ -1,6 +1,6 @@
 /** Filesystem layout for the Hunch (DESIGN.md §6 folder structure). */
 import { join } from "node:path";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 export const HUNCH_DIR = ".hunch";
@@ -43,7 +43,16 @@ export function hunchPaths(root: string): HunchPaths {
  *  PRIVATE overlay store (HUNCH_PRIVATE_DIR), which lives in a separate repo the
  *  user controls rather than under the current repo's `.hunch/`. */
 export function hunchPathsForDir(hunchDir: string): HunchPaths {
-  const hunch = resolve(hunchDir);
+  const lexical = resolve(hunchDir);
+  // An explicitly configured PRIVATE overlay may intentionally be a
+  // final-component symlink to a distinct physical repository. Resolve that
+  // user-selected root before handing it to JsonStore; public hunchPaths()
+  // deliberately does not do this, so a committed public `.hunch` symlink and
+  // every kind/record symlink remain fail-closed.
+  let hunch = lexical;
+  try {
+    if (statSync(lexical).isDirectory()) hunch = realpathSync(lexical);
+  } catch { /* missing overlay root is created at the lexical location */ }
   return {
     root: dirname(hunch),
     hunch,
@@ -59,15 +68,16 @@ export function hunchPathsForDir(hunchDir: string): HunchPaths {
  *  WITHOUT `.hunch` stops the walk: an ancestor `.hunch` above the repo
  *  boundary belongs to some other scope (e.g. a stray ~/.hunch) and must never
  *  hijack a fresh repo — init would scaffold, index, and scan OUTSIDE the repo. */
+export function isDir(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 export function findRoot(start: string = process.cwd()): string {
   let cur = resolve(start);
-  const isDir = (p: string) => {
-    try {
-      return statSync(p).isDirectory();
-    } catch {
-      return false;
-    }
-  };
   for (;;) {
     if (isDir(join(cur, HUNCH_DIR))) return cur; // a `.hunch` regular file is not a root
     if (existsSync(join(cur, ".git"))) return cur; // repo boundary — .git file (worktree) counts

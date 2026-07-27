@@ -21,6 +21,7 @@ import {
   compileExperimentStop,
   compileExp03ReviewResponse,
   currentExperimentOutcomes,
+  experimentReviewGuide,
   type CompileExperimentCaseBankInput,
   type Exp03Case,
   type ExperimentCaseBank,
@@ -32,6 +33,23 @@ const REGISTERED = "2026-07-11T12:00:00.000Z";
 const LOCKED = "2026-07-12T12:00:00.000Z";
 const H = (c: string): string => `sha1:${c.repeat(40)}`;
 const BASE = "a".repeat(40);
+
+test("EXP-03 review guide uses plain choices without changing experiment decisions", () => {
+  const manual = experimentReviewGuide("A");
+  assert.equal(manual.question, "Can one exact code rule be written from the requirement without guessing?");
+  assert.match(manual.action, /write one sentence/i);
+  assert.match(manual.answer_template, /must/);
+  assert.equal(manual.choices.find((choice) => choice.value === "uncompilable")?.label, "Not enough information");
+
+  const candidate = experimentReviewGuide("B");
+  assert.equal(candidate.question, "Does the proposed rule say exactly what the requirement says?");
+  assert.equal(candidate.choices.find((choice) => choice.value === "accepted_precise")?.label, "Yes — exact match");
+  assert.equal(candidate.choices.find((choice) => choice.value === "accepted_edited")?.label, "Needs editing");
+
+  const proved = experimentReviewGuide("C");
+  assert.match(proved.action, /proof card/i);
+  assert.match(proved.warning, /cannot add intent/i);
+});
 
 function prereg(experiment: "EXP-01" | "EXP-03", revision = 1): ReturnType<typeof compileExperimentPreregistration> {
   const unit = experiment === "EXP-01" ? "task" as const : "policy_candidate" as const;
@@ -130,11 +148,29 @@ function exp03Input(registration = prereg("EXP-03"), requiredRelationship?: stri
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "hunch-experiment-"));
   const privateRoot = join(root, "private", ".hunch");
+  mkdirSync(privateRoot, { recursive: true });
+  execFileSync("git", ["init", "-q", join(root, "private")]);
   mkdirSync(join(root, ".hunch"), { recursive: true });
   writeFileSync(join(root, ".hunch/local.json"), JSON.stringify({ privateDir: privateRoot, autoCommit: false, mode: "private" }));
   const store = new HunchStore(hunchPaths(root));
   store.json.ensureDirs();
   return { root, privateRoot, store, repository: new ExperimentRepository(store), cleanup: () => { store.close(); rmSync(root, { recursive: true, force: true }); } };
+}
+
+function qualifyReviewer(
+  service: ConstitutionService,
+  registration: ReturnType<typeof prereg>,
+  reviewer = "human:reviewer",
+): void {
+  service.qualifyExperimentReviewer({
+    preregistration_id: registration.id,
+    preregistration_hash: registration.content_hash,
+    reviewer,
+    protocol: "exp03-plain-language-comprehension-v2",
+    cases_hash: H("f"),
+    passed: true,
+    reason: "Reviewer passed the excluded comprehension check.",
+  }, { now: "2026-07-12T13:00:00.000Z" });
 }
 
 test("fresh case banks fail closed on old, unstratified, mismatched, or mutable inputs", () => {
@@ -287,6 +323,11 @@ test("revision-2 service dialects: raw submission refuses template cases and res
     const service = new ConstitutionService(store, root);
     const bank = service.lockExperimentCaseBank(exp03Input(registration, "The payment action must verify the session"), { now: LOCKED });
     const run = repository.putRun(compileExperimentRun({ sample_per_arm: 2, actor: "human:owner", reason: "Plain-language review." }, registration, bank, { now: LOCKED }));
+    assert.throws(
+      () => service.nextExperimentReview(run.id, "human:reviewer", { now: "2026-07-13T13:00:00.000Z" }),
+      /must pass the excluded plain-language comprehension check/i,
+    );
+    qualifyReviewer(service, registration);
     const next = service.nextExperimentReview(run.id, "human:reviewer", { now: "2026-07-13T13:00:00.000Z" });
     const item = bank.cases.find((c) => c.id === next.assignment.case_id)! as Exp03Case;
 
@@ -354,6 +395,7 @@ test("revision-3 single-operator guard: 48 hours must separate the bank lock fro
     const service = new ConstitutionService(store, root);
     const bank = service.lockExperimentCaseBank(exp03Input(registration, "The payment action must verify the session"), { now: LOCKED });
     const run = repository.putRun(compileExperimentRun({ sample_per_arm: 2, actor: "human:owner", reason: "Single-operator run." }, registration, bank, { now: LOCKED }));
+    qualifyReviewer(service, registration);
 
     // 47h after the lock → refused, with the remaining time named
     assert.throws(
@@ -615,6 +657,7 @@ test("EXP-01 runner uses a fresh worktree, strips ambient instructions, and scor
   mkdirSync(source, { recursive: true });
   mkdirSync(bin, { recursive: true });
   writeFileSync(join(source, "README.md"), "fixture\n");
+  writeFileSync(join(source, ".gitignore"), "node_modules/\n");
   writeFileSync(join(source, "AGENTS.md"), "AMBIENT HUNCH CONTEXT THAT MUST NOT REACH THE MODEL\n");
   execFileSync("git", ["init", "-q"], { cwd: source });
   execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: source });
@@ -622,6 +665,8 @@ test("EXP-01 runner uses a fresh worktree, strips ambient instructions, and scor
   execFileSync("git", ["add", "."], { cwd: source });
   execFileSync("git", ["commit", "-qm", "fixture"], { cwd: source });
   const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: source, encoding: "utf8" }).trim();
+  mkdirSync(join(source, "node_modules", "fixture-dependency"), { recursive: true });
+  writeFileSync(join(source, "node_modules", "fixture-dependency", "marker.txt"), "source dependency stays immutable\n");
   const fake = join(bin, "codex");
   writeFileSync(fake, `#!/usr/bin/env node
 import { readFileSync, writeFileSync } from "node:fs";
@@ -630,6 +675,7 @@ if (args.includes("--version")) { console.log("codex-cli fake-v1"); process.exit
 const prompt = readFileSync(0, "utf8");
 if (prompt.includes("AMBIENT HUNCH CONTEXT")) process.exit(17);
 writeFileSync("solution.txt", "done\\n");
+writeFileSync("node_modules/fixture-dependency/marker.txt", "mutated only in disposable copy\\n");
 console.log(JSON.stringify({type:"turn.completed", usage:{input_tokens:10,output_tokens:5}}));
 `);
   chmodSync(fake, 0o755);
@@ -681,6 +727,8 @@ console.log(JSON.stringify({valid_completion:existsSync("solution.txt"),policy_v
     assert.equal(outcome.incidents.confirmed_private_leak, false);
     assert.equal(outcome.metrics && "valid_completion" in outcome.metrics && outcome.metrics.valid_completion, true);
     assert.equal(existsSync(join(source, "solution.txt")), false, "source repository remains untouched");
+    assert.equal(readFileSync(join(source, "node_modules", "fixture-dependency", "marker.txt"), "utf8"), "source dependency stays immutable\n",
+      "the model cannot mutate the source repository through a node_modules symlink");
 
     writeFileSync(evaluator, `console.log(JSON.stringify({valid_completion:false,policy_violation:null,task_success:false,build_success:true,unknown_or_error:false,refusal:false,confirmed_private_leak:false,data_loss_or_corruption:false,unsafe_evaluator_behavior:false}));\n`);
     const invalidCase = bank.cases.find((item) => item.id === run.assignments[1]!.case_id)!;
@@ -704,6 +752,19 @@ console.log(JSON.stringify({valid_completion:existsSync("solution.txt"),policy_v
     assert.equal(drifted.status, "infrastructure_failure");
     assert.equal(drifted.invocation_started, false);
     assert.equal(drifted.error_code, "evaluator-artifact-drift");
+
+    const guardedFixture = fixture();
+    try {
+      guardedFixture.repository.putCaseBank(bank);
+      guardedFixture.repository.putRun(run);
+      writeFileSync(join(source, ".git/info/attributes"), "*.md ident\n");
+      const transformed = executeExp01Assignment(guardedFixture.repository, run, bank, run.assignments[0]!, { now: "2026-07-12T13:03:30.000Z" });
+      assert.equal(transformed.status, "infrastructure_failure");
+      assert.equal(transformed.invocation_started, false);
+      assert.equal(transformed.error_code, "unsafe-checkout-attributes");
+    } finally {
+      guardedFixture.cleanup();
+    }
   } finally {
     process.env.PATH = oldPath;
     cleanup();

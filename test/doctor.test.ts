@@ -3,41 +3,39 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { synthesisStatusLines, maybeWarnOllamaContext } from "../src/cli/invocation.js";
+import type { ProviderResolution, ProviderStatus, SynthProvider } from "../src/synthesis/provider.js";
 
-test("synthesisStatusLines: claude-cli reports the subscription and notes when ANTHROPIC_API_KEY is stripped", () => {
-  assert.deepEqual(
-    synthesisStatusLines("claude-cli", {}),
-    ["            ↳ LLM synthesis billed to your Claude subscription (claude CLI)"],
-  );
-  assert.deepEqual(
-    synthesisStatusLines("claude-cli", { ANTHROPIC_API_KEY: "sk-x" }),
-    ["            ↳ LLM synthesis billed to your Claude subscription (claude CLI) (ANTHROPIC_API_KEY in env is stripped — never billed to the API)"],
-  );
+function resolution(
+  providerName: string,
+  source: ProviderResolution["source"],
+  statuses: ProviderStatus[],
+  preference = "auto",
+): ProviderResolution {
+  return {
+    provider: { name: providerName } as SynthProvider,
+    source,
+    preference: preference as ProviderResolution["preference"],
+    statuses,
+  };
+}
+
+test("synthesisStatusLines: a subscription CLI reports its subscription", () => {
+  const r = resolution("claude-cli", "single-available", [
+    { name: "claude-cli", label: "Claude Code", subscription: "Claude subscription", available: true },
+  ]);
+  assert.deepEqual(synthesisStatusLines(r, {}), [
+    "            ↳ LLM synthesis uses your Claude subscription; provider API credentials are not used.",
+  ]);
 });
 
-test("synthesisStatusLines: codex-cli reports the subscription and notes when OPENAI_API_KEY is stripped", () => {
-  assert.deepEqual(
-    synthesisStatusLines("codex-cli", {}),
-    ["            ↳ LLM synthesis billed to your ChatGPT subscription (codex CLI)"],
-  );
-  assert.deepEqual(
-    synthesisStatusLines("codex-cli", { OPENAI_API_KEY: "sk-x" }),
-    ["            ↳ LLM synthesis billed to your ChatGPT subscription (codex CLI) (OPENAI_API_KEY in env is stripped — never billed to the API)"],
-  );
-});
-
-test("synthesisStatusLines: cursor-agent reports the subscription (no key-strip note — it has none)", () => {
-  assert.deepEqual(
-    synthesisStatusLines("cursor-agent", { ANTHROPIC_API_KEY: "sk-x" }),
-    ["            ↳ LLM synthesis billed to your Cursor subscription (cursor-agent CLI)"],
-  );
-});
-
-// Regression for issue #8: openai-compat was previously falling into the
-// "no assistant CLI found — offline heuristic" branch, which is false — a
-// real LLM call succeeds through this provider.
+// Regression for issue #8/#9: openai-compat has no `subscription` (it isn't one),
+// so it must NOT fall through to the "no assistant CLI found" branch the way any
+// other subscription-less status would — that was the original bug.
 test("synthesisStatusLines: openai-compat reports the configured endpoint/model, not 'no assistant CLI found'", () => {
-  const lines = synthesisStatusLines("openai-compat", {
+  const r = resolution("openai-compat", "environment", [
+    { name: "openai-compat", label: "Self-hosted / local model", subscription: null, available: true },
+  ]);
+  const lines = synthesisStatusLines(r, {
     HUNCH_SYNTH_BASE_URL: "http://localhost:11434/v1",
     HUNCH_SYNTH_MODEL: "qwen2.5-coder:1.5b",
   });
@@ -48,7 +46,10 @@ test("synthesisStatusLines: openai-compat reports the configured endpoint/model,
 });
 
 test("synthesisStatusLines: openai-compat notes when HUNCH_SYNTH_API_KEY is set", () => {
-  const lines = synthesisStatusLines("openai-compat", {
+  const r = resolution("openai-compat", "environment", [
+    { name: "openai-compat", label: "Self-hosted / local model", subscription: null, available: true },
+  ]);
+  const lines = synthesisStatusLines(r, {
     HUNCH_SYNTH_BASE_URL: "http://localhost:11434/v1",
     HUNCH_SYNTH_MODEL: "qwen2.5-coder:1.5b",
     HUNCH_SYNTH_API_KEY: "sk-local",
@@ -58,15 +59,36 @@ test("synthesisStatusLines: openai-compat notes when HUNCH_SYNTH_API_KEY is set"
   ]);
 });
 
-// Regression guard: the deterministic/unrecognized-provider fallback message
-// must stay exactly as it was before this change.
-test("synthesisStatusLines: deterministic (and any unrecognized provider) keeps the offline-heuristic message unchanged", () => {
+test("synthesisStatusLines: ambiguous source lists the available candidates and how to choose", () => {
+  const r = resolution("deterministic", "ambiguous", [
+    { name: "claude-cli", label: "Claude Code", subscription: "Claude subscription", available: true },
+    { name: "codex-cli", label: "Codex", subscription: "ChatGPT subscription", available: true },
+    { name: "deterministic", label: "Deterministic local fallback", subscription: null, available: true },
+  ]);
+  const lines = synthesisStatusLines(r, {});
+  assert.ok(lines[0]!.includes("claude-cli, codex-cli"), `expected both candidates listed: ${lines[0]}`);
+  assert.ok(lines[1]!.includes("hunch provider claude-cli") && lines[1]!.includes("hunch provider codex-cli"));
+});
+
+test("synthesisStatusLines: unavailable-preference source names the preference and falls back", () => {
+  const r = resolution("deterministic", "unavailable-preference", [
+    { name: "deterministic", label: "Deterministic local fallback", subscription: null, available: true },
+  ], "codex-cli");
+  assert.deepEqual(synthesisStatusLines(r, {}), [
+    "\x1b[2m            ↳ codex-cli was selected but is unavailable; using the offline heuristic.\x1b[0m",
+  ]);
+});
+
+// Regression guard: the no-CLI-available fallback message stays unchanged.
+test("synthesisStatusLines: no assistant CLI available keeps the offline-heuristic message", () => {
+  const r = resolution("deterministic", "none", [
+    { name: "deterministic", label: "Deterministic local fallback", subscription: null, available: true },
+  ]);
   const expected = [
-    "\x1b[2m            ↳ no assistant CLI found — synthesis uses the offline heuristic (advisory, low-confidence)\x1b[0m",
-    "\x1b[2m              for full synthesis install one: Claude Code (`claude /login`), Codex (`codex login`), or Cursor (`cursor-agent login`)\x1b[0m",
+    "\x1b[2m            ↳ no assistant CLI found — synthesis uses the offline heuristic (advisory, low-confidence).\x1b[0m",
+    "\x1b[2m              install or log into Claude Code, Codex, or Cursor; then select one with `hunch provider <name>`.\x1b[0m",
   ];
-  assert.deepEqual(synthesisStatusLines("deterministic", {}), expected);
-  assert.deepEqual(synthesisStatusLines("future-provider", {}), expected);
+  assert.deepEqual(synthesisStatusLines(r, {}), expected);
 });
 
 test("maybeWarnOllamaContext short-circuits to null for any non-openai-compat provider, without any network call", async () => {
@@ -86,7 +108,8 @@ test("maybeWarnOllamaContext reaches probeOllamaNumCtx for the openai-compat pro
       HUNCH_SYNTH_BASE_URL: `http://127.0.0.1:${port}`,
       HUNCH_SYNTH_MODEL: "m",
     });
-    assert.ok(warning?.includes("4096"), `expected a 4096-token warning, got: ${warning}`);
+    assert.ok(warning?.includes("does not pin num_ctx"), `expected an unpinned-context warning, got: ${warning}`);
+    assert.ok(!warning?.includes("4096"), `must not guess the server's effective context: ${warning}`);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

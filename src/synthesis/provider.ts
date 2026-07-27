@@ -2,10 +2,11 @@
  * Pluggable synthesis provider for the WRITE path (DESIGN.md §4 / §7).
  *
  * LLM synthesis is driven by the user's chosen coding-assistant subscription
- * CLI — never a pay-per-token API. Claude Code, Codex, and Cursor use different
- * auth surfaces, but every provider returns the same shape. When more than one
- * subscription CLI is available, Hunch deliberately does NOT guess whose plan
- * to spend: the user chooses once with `hunch provider <name>` (stored locally)
+ * CLI or an explicitly configured OpenAI-compatible endpoint. Claude Code,
+ * Codex, and Cursor use different auth surfaces, but every provider returns the
+ * same shape. When more than one non-deterministic provider is available, Hunch
+ * deliberately does NOT guess which one to use: the user chooses once with
+ * `hunch provider <name>` (stored locally)
  * or overrides per shell with HUNCH_SYNTH_PROVIDER. Ambiguous auto mode stays
  * deterministic and free.
  *
@@ -15,16 +16,17 @@
  *
  * A fourth, OPT-IN provider (name "openai-compat", alias "ollama") speaks the
  * OpenAI chat-completions format over HTTP to a self-hosted endpoint instead of a
- * subscription CLI. con_2ce3f2a547 scopes "subscription, never pay-per-token" to
- * the Anthropic API specifically — a self-hosted/local model is neither, so it
- * doesn't conflict — but it stays off unless HUNCH_SYNTH_BASE_URL and
- * HUNCH_SYNTH_MODEL are both explicitly set.
+ * subscription CLI. It stays off unless HUNCH_SYNTH_BASE_URL and HUNCH_SYNTH_MODEL
+ * are both explicitly set. Local/LAN endpoints work directly; every public remote
+ * requires HUNCH_SYNTH_ALLOW_METERED=1 because billing cannot be inferred safely
+ * from a hostname — con_2ce3f2a547's spirit is "never silently bill."
  *
  * Every provider returns the same shape so the rest of the system never knows
  * (or cares) which one ran.
  */
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { isIP } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { writeFileAtomic } from "../core/io.js";
@@ -218,22 +220,23 @@ export interface SynthProvider {
   draftDecision(input: CommitInput): Promise<DecisionDraft>;
   draftBug(input: FailureInput): Promise<BugDraft>;
   /** Optional skeptical audit of a draft against its commit (the Critic pass).
-   *  Only the LLM-backed CLI providers implement it; the deterministic provider
+   *  Only LLM-backed providers implement it; the deterministic provider
    *  and the bare ensemble omit it, so callers must feature-detect. */
   verifyDecision?(input: CommitInput, draft: DecisionDraft): Promise<VerifyVerdict>;
-  /** Optional free-form grounded prose (the wiki's Overview section). Only the
-   *  LLM-backed CLI providers implement it — same subscription-only run() path
-   *  (API keys stripped) — so callers must feature-detect and degrade to a
-   *  deterministic template when absent. */
+  /** Optional free-form grounded prose (the wiki's Overview section). LLM-backed
+   *  providers implement it through their normal guarded transport, so callers
+   *  must feature-detect and degrade to a deterministic template when absent. */
   draftProse?(prompt: string): Promise<string>;
   /** Optional harness judgment of an auto-drafted decision's relevance, for
-   *  `hunch auto-review`. Same subscription-only run() path (API keys stripped);
-   *  only the LLM-backed CLI providers implement it, so callers feature-detect. */
+   *  `hunch auto-review`. Only LLM-backed providers implement it, so callers
+   *  feature-detect. */
   judgeDraft?(draft: Decision, existing: ExistingDecisionRef[]): Promise<RelevanceVerdict>;
 }
 
 /** Every selectable synthesis mode. `auto` is a preference value rather than a
- * provider: it uses a subscription only when exactly one usable CLI is found. */
+ * provider: it uses a subscription only when exactly one usable CLI is found.
+ * "openai-compat" is the opt-in local/self-hosted HTTP provider (Ollama, vLLM,
+ * LM Studio, ...) — not a subscription, but explicitly selectable like one. */
 export const SYNTH_PROVIDER_NAMES = ["claude-cli", "codex-cli", "cursor-agent", "openai-compat", "deterministic"] as const;
 export const SYNTH_PREFERENCES = ["auto", ...SYNTH_PROVIDER_NAMES] as const;
 export type SynthProviderName = (typeof SYNTH_PROVIDER_NAMES)[number];
@@ -267,7 +270,7 @@ const PROVIDER_INFO: Record<SynthProviderName, { label: string; subscription: st
   "claude-cli": { label: "Claude Code", subscription: "Claude subscription" },
   "codex-cli": { label: "Codex", subscription: "ChatGPT subscription" },
   "cursor-agent": { label: "Cursor Agent", subscription: "Cursor subscription" },
-  "openai-compat": { label: "Local / self-hosted (OpenAI-compatible)", subscription: null },
+  "openai-compat": { label: "Self-hosted / local model (Ollama, vLLM, LM Studio, ...)", subscription: null },
   deterministic: { label: "Deterministic local fallback", subscription: null },
 };
 
@@ -349,18 +352,20 @@ const VERIFY_TOOL = {
 // --------------------------------------------------------------------------
 // Base for any provider whose interface reduces to "turn one prompt string into
 // text" — the three headless-CLI SUBSCRIPTION providers below (spawn, stdin,
-// subscription billing — never a pay-per-token API key, see dec_65b058de66) AND
-// the opt-in local/self-hosted HTTP provider further down (OpenAICompatProvider).
-// The prompt always goes over STDIN for the CLI providers (never argv — keeps
-// untrusted diff content out of any shell pexecIn uses on Windows). Neither
-// transport nor billing model is part of the contract; only run()'s shape is.
-// Every implementation's text output is handed to the SAME mappers, so the rest
-// of the system stays provider-agnostic.
+// billed to the user's own subscription, never a pay-per-token API key — see
+// dec_65b058de66) AND the opt-in local/self-hosted HTTP provider further down
+// (OpenAICompatProvider). Neither transport nor billing model is part of the
+// contract; only run()'s shape is. The prompt always goes over STDIN for the CLI
+// providers (never argv — keeps untrusted diff content out of any shell pexecIn
+// uses on Windows). Every implementation's text output is handed to the SAME
+// mappers, so the rest of the system stays provider-agnostic.
 // --------------------------------------------------------------------------
+type PromptOutput = "json" | "text";
+
 abstract class PromptSynthProvider implements SynthProvider {
   abstract readonly name: string;
   abstract available(): Promise<boolean>;
-  protected abstract run(prompt: string): Promise<string>;
+  protected abstract run(prompt: string, output?: PromptOutput): Promise<string>;
 
   /** Run a CLI with the prompt on stdin, stripping API-key env vars so the tool
    *  falls through to its SUBSCRIPTION credentials. Shared by codex/cursor. */
@@ -378,7 +383,7 @@ abstract class PromptSynthProvider implements SynthProvider {
   }
 
   async draftDecision(input: CommitInput): Promise<DecisionDraft> {
-    const text = await this.run(`${SYSTEM}\n\n${commitPrompt(input)}\n\n${jsonInstruction(DECISION_TOOL.input_schema)}`);
+    const text = await this.run(`${SYSTEM}\n\n${commitPrompt(input)}\n\n${jsonInstruction(DECISION_TOOL.input_schema)}`, "json");
     const draft = decisionDraftFromText(text, input.subject);
     // No usable LLM JSON (truncation, refusal, prose-only, or a CLI whose output
     // shape we misread) → THROW so the safe wrapper falls back to the deterministic
@@ -393,37 +398,37 @@ abstract class PromptSynthProvider implements SynthProvider {
   }
 
   async draftBug(input: FailureInput): Promise<BugDraft> {
-    const text = await this.run(`${SYSTEM}\n\n${failurePrompt(input)}\n\n${jsonInstruction(BUG_TOOL.input_schema)}`);
+    const text = await this.run(`${SYSTEM}\n\n${failurePrompt(input)}\n\n${jsonInstruction(BUG_TOOL.input_schema)}`, "json");
     const draft = bugDraftFromText(text, input.test, input.message);
     if (!draft) throw new Error(`${this.name}: no usable bug JSON in output`);
     return draft;
   }
 
-  /** Grounded prose for the wiki. Same subscription-only run() path (API keys
-   *  stripped). Throws on empty output so the caller falls back to its
-   *  deterministic template page. */
+  /** Grounded prose for the wiki. Uses text mode rather than the structured JSON
+   *  mode required by the record mappers. Throws on empty output so the caller
+   *  falls back to its deterministic template page. */
   async draftProse(prompt: string): Promise<string> {
-    const text = (await this.run(prompt)).trim();
+    const text = (await this.run(prompt, "text")).trim();
     if (!text) throw new Error(`${this.name}: empty prose output`);
     return text;
   }
 
-  /** The Critic pass: audit a draft against its commit. Same subscription-only
-   *  run() path (API keys stripped), so this never bills the pay-per-token API.
+  /** The Critic pass: audit a draft against its commit through the provider's
+   *  guarded transport.
    *  Throws on unusable output so verifyDecisionSafe degrades to the un-audited
    *  draft (a verifier failure must never lose the draft — dec_18a81c8291). */
   async verifyDecision(input: CommitInput, draft: DecisionDraft): Promise<VerifyVerdict> {
-    const text = await this.run(`${VERIFY_SYSTEM}\n\n${verifyPrompt(input, draft)}\n\n${jsonInstruction(VERIFY_TOOL.input_schema)}`);
+    const text = await this.run(`${VERIFY_SYSTEM}\n\n${verifyPrompt(input, draft)}\n\n${jsonInstruction(VERIFY_TOOL.input_schema)}`, "json");
     const verdict = verdictFromText(text);
     if (!verdict) throw new Error(`${this.name}: no usable verdict JSON in output`);
     return verdict;
   }
 
   /** Judge whether an auto-drafted decision is worth keeping (for auto-review).
-   *  Same subscription-only run() path (API keys stripped). Throws on unusable
+   *  Uses the provider's guarded transport. Throws on unusable
    *  output so the caller can degrade to a keep-for-human verdict. */
   async judgeDraft(draft: Decision, existing: ExistingDecisionRef[]): Promise<RelevanceVerdict> {
-    const text = await this.run(`${RELEVANCE_SYSTEM}\n\n${relevancePrompt(draft, existing)}\n\n${jsonInstruction(RELEVANCE_TOOL.input_schema)}`);
+    const text = await this.run(`${RELEVANCE_SYSTEM}\n\n${relevancePrompt(draft, existing)}\n\n${jsonInstruction(RELEVANCE_TOOL.input_schema)}`, "json");
     const verdict = relevanceFromText(text);
     if (!verdict) throw new Error(`${this.name}: no usable relevance JSON in output`);
     return verdict;
@@ -443,6 +448,14 @@ export function safeModel(v: string | undefined, fallback: string): string;
 export function safeModel(v: string | undefined, fallback: undefined): string | undefined;
 export function safeModel(v: string | undefined, fallback: string | undefined): string | undefined {
   return v && MODEL_RE.test(v) ? v : fallback;
+}
+
+/** Build the non-interactive Codex invocation used from Hunch's neutral temp
+ * directory. Codex normally refuses to start outside a trusted Git repository;
+ * the explicit skip flag preserves that neutral-cwd isolation without loading a
+ * target repo's agent rules or MCP configuration. */
+export function codexExecArgs(model?: string): string[] {
+  return ["exec", "--json", "--skip-git-repo-check", ...(model ? ["-m", model] : []), "-"];
 }
 
 // A timeout comes from a HUNCH_*_TIMEOUT_MS env var and feeds AbortController's
@@ -544,10 +557,12 @@ class CodexCliProvider extends PromptSynthProvider {
   }
 
   protected async run(prompt: string): Promise<string> {
-    // `codex exec --json -` reads the prompt from STDIN (the `-`), emits JSONL
-    // events. Strip OPENAI_API_KEY so it uses ChatGPT (subscription) auth, not the
-    // pay-per-token API — consistent with the subscription-only rule.
-    const args = ["exec", "--json", ...(this.model ? ["-m", this.model] : []), "-"];
+    // `codex exec --json --skip-git-repo-check -` reads the prompt from STDIN
+    // (the `-`) and emits JSONL events. The skip flag is required because the
+    // shared runner deliberately uses a neutral temp cwd. Strip OPENAI_API_KEY so
+    // it uses ChatGPT (subscription) auth, not the pay-per-token API — consistent
+    // with the subscription-only rule.
+    const args = codexExecArgs(this.model);
     const out = await this.runCli("codex", args, ["OPENAI_API_KEY"], prompt);
     return extractCodexText(out);
   }
@@ -597,24 +612,101 @@ class CursorCliProvider extends PromptSynthProvider {
 // once at import time would otherwise never see env vars a test (or a long-lived
 // process) sets afterward.
 // --------------------------------------------------------------------------
+// con_2ce3f2a547's boundary is "never silently bill." A denylist cannot enforce
+// that boundary: new OpenAI-compatible paid providers appear continually, and a
+// fully-qualified trailing DNS dot can even evade a naive exact-host comparison.
+// Fail closed instead. Loopback, private/link-local IPs, and conventional LAN DNS
+// names work without ceremony; every public remote requires the deliberate,
+// named HUNCH_SYNTH_ALLOW_METERED=1 opt-in. Publicly hosted self-managed servers
+// use that same flag because billing cannot be inferred reliably from a hostname.
+function normalizedHostname(url: URL): string {
+  return url.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+}
+
+/** Parse the exact base-URL shape this provider can safely compose with
+ * `/chat/completions`. Credentials belong in HUNCH_SYNTH_API_KEY; query strings
+ * and fragments are rejected because appending a path to either is ambiguous. */
+function parseOpenAICompatBaseUrl(baseUrl: string): URL | null {
+  try {
+    const url = new URL(baseUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (!url.hostname || url.username || url.password || url.search || url.hash) return null;
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+function isPrivateIpv4(hostname: string): boolean {
+  const [a = -1, b = -1] = hostname.split(".").map(Number);
+  return a === 0
+    || a === 10
+    || a === 127
+    || (a === 100 && b >= 64 && b <= 127) // shared space, including common tailnets
+    || (a === 169 && b === 254)
+    || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 168);
+}
+
+function isPrivateIpv6(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  if (host === "::" || host === "::1") return true;
+  if (host.startsWith("::ffff:")) {
+    const mapped = host.slice("::ffff:".length);
+    return isIP(mapped) === 4 && isPrivateIpv4(mapped);
+  }
+  const first = host.split(":", 1)[0] ?? "";
+  return first.startsWith("fc")
+    || first.startsWith("fd")
+    || /^fe[89ab]/.test(first);
+}
+
+function isLocalOrPrivateHost(hostname: string): boolean {
+  if (isIP(hostname) === 4) return isPrivateIpv4(hostname);
+  if (isIP(hostname) === 6) return isPrivateIpv6(hostname);
+  if (hostname === "localhost" || !hostname.includes(".")) return true;
+  return [".localhost", ".local", ".lan", ".internal", ".home.arpa"].some((suffix) => hostname.endsWith(suffix));
+}
+
+function requiresMeteredOptIn(url: URL): boolean {
+  return !isLocalOrPrivateHost(normalizedHostname(url));
+}
+
+export function meteredHostsAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.HUNCH_SYNTH_ALLOW_METERED === "1";
+}
+
 export class OpenAICompatProvider extends PromptSynthProvider {
   readonly name = "openai-compat";
 
   async available(): Promise<boolean> {
-    return !!process.env.HUNCH_SYNTH_BASE_URL && !!safeModel(process.env.HUNCH_SYNTH_MODEL, undefined);
+    const baseUrl = process.env.HUNCH_SYNTH_BASE_URL;
+    const endpoint = baseUrl ? parseOpenAICompatBaseUrl(baseUrl) : null;
+    if (!endpoint || !safeModel(process.env.HUNCH_SYNTH_MODEL, undefined)) return false;
+    return meteredHostsAllowed() || !requiresMeteredOptIn(endpoint);
   }
 
-  protected async run(prompt: string): Promise<string> {
-    const baseUrl = process.env.HUNCH_SYNTH_BASE_URL?.replace(/\/+$/, "");
+  protected async run(prompt: string, output: PromptOutput = "json"): Promise<string> {
+    const baseUrl = process.env.HUNCH_SYNTH_BASE_URL;
     const model = safeModel(process.env.HUNCH_SYNTH_MODEL, undefined);
     if (!baseUrl || !model) throw new Error("openai-compat: HUNCH_SYNTH_BASE_URL/HUNCH_SYNTH_MODEL not set");
+    const endpoint = parseOpenAICompatBaseUrl(baseUrl);
+    if (!endpoint) {
+      throw new Error("openai-compat: HUNCH_SYNTH_BASE_URL must be an http(s) base URL without credentials, a query, or a fragment");
+    }
+    if (requiresMeteredOptIn(endpoint) && !meteredHostsAllowed()) {
+      throw new Error(
+        `openai-compat: refusing to call public remote ${normalizedHostname(endpoint)} — it may be metered, and con_2ce3f2a547 blocks silent pay-per-token billing. Set HUNCH_SYNTH_ALLOW_METERED=1 if this is deliberate.`,
+      );
+    }
+    endpoint.pathname = `${endpoint.pathname.replace(/\/+$/, "")}/chat/completions`;
     const apiKey = process.env.HUNCH_SYNTH_API_KEY;
     const timeoutMs = safeTimeout(process.env.HUNCH_SYNTH_TIMEOUT_MS, 300_000);
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch(`${baseUrl}/chat/completions`, {
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -623,7 +715,7 @@ export class OpenAICompatProvider extends PromptSynthProvider {
         body: JSON.stringify({
           model,
           messages: [{ role: "user", content: prompt }],
-          response_format: { type: "json_object" },
+          ...(output === "json" ? { response_format: { type: "json_object" } } : {}),
           stream: false,
           max_tokens: safeMaxTokens(process.env.HUNCH_SYNTH_MAX_TOKENS, 2048),
         }),
@@ -643,14 +735,14 @@ export class OpenAICompatProvider extends PromptSynthProvider {
 }
 
 /** Best-effort: does the configured openai-compat endpoint look like Ollama with
- *  an UNSET num_ctx (silently defaulting to 4096 tokens, per issue #11)? Returns
+ *  an UNSET num_ctx? Returns
  *  an advisory warning string when so, or null when the endpoint isn't reachable,
  *  doesn't look like Ollama's /api/show shape, or already has num_ctx set — this
  *  is diagnostics only, never thrown, never blocking. Deliberately does NOT try to
- *  report the model's actual default context length (Ollama's model_info keys are
- *  architecture-specific and not a stable parse target) — only whether the user
- *  has explicitly configured num_ctx via a Modelfile, which is the one stable,
- *  actionable signal (and the exact fix the issue's own author applied). */
+ *  report the model's effective context length: modern Ollama defaults may come
+ *  from server configuration or VRAM tiers, and model_info keys are not a stable
+ *  parse target. We therefore report only the observed fact — whether num_ctx is
+ *  pinned in the model — without guessing an effective token count. */
 export async function probeOllamaNumCtx(baseUrl: string, model: string): Promise<string | null> {
   try {
     const root = baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
@@ -664,7 +756,7 @@ export async function probeOllamaNumCtx(baseUrl: string, model: string): Promise
     const body = (await res.json()) as { parameters?: unknown };
     if (typeof body.parameters !== "string") return null;
     if (/^num_ctx\s+\d+/m.test(body.parameters)) return null; // already configured — nothing to warn about
-    return "⚠ Ollama's default context is 4096 tokens — long commit diffs get silently truncated. See https://hunch-pi.vercel.app/cookbook for how to raise it (num_ctx via a custom Modelfile).";
+    return "⚠ This Ollama model does not pin num_ctx; its effective context depends on server/VRAM defaults. For stable large-diff synthesis, see https://hunch-pi.vercel.app/cookbook and pin num_ctx via a custom Modelfile.";
   } catch {
     return null; // not Ollama, unreachable, or an unexpected response shape — advisory only, never throw
   }
@@ -756,9 +848,7 @@ export function extractCodexText(out: string): string {
 
 // This registry is deliberately NOT a priority order. Auto mode only spends a
 // subscription when it can identify exactly one usable CLI; see
-// resolveSynthesisProvider below. HUNCH_SYNTH_PROVIDER or `hunch provider <name>`
-// force one explicitly by name (claude-cli / codex-cli / cursor-agent /
-// openai-compat / ollama / deterministic).
+// resolveSynthesisProvider below.
 const PROVIDERS: SynthProvider[] = [
   new ClaudeCliProvider(),
   new CodexCliProvider(),
@@ -770,9 +860,9 @@ const PROVIDERS: SynthProvider[] = [
 // Availability rarely changes within a process (a CLI doesn't get installed mid-run),
 // and selection runs on every sync/recordFailure. Cache by object identity rather than
 // name so injected test registries never inherit a stale result from another provider.
-// Map, not WeakMap: __resetAvailabilityCacheForTests() below needs .clear(), which
-// WeakMap doesn't expose. Object identity is still the key (not provider.name) so
-// injected test registries never inherit a stale result from another provider.
+// A plain Map (not WeakMap): __resetAvailabilityCacheForTests below needs .clear(),
+// which WeakMap doesn't support — the module's singleton PROVIDERS array is the only
+// thing that ever populates this in production, so there's no unbounded-growth risk.
 const availCache = new Map<SynthProvider, Promise<boolean>>();
 function isAvailable(p: SynthProvider): Promise<boolean> {
   let v = availCache.get(p);
@@ -793,9 +883,12 @@ export function __resetAvailabilityCacheForTests(): void {
 /** "ollama" is accepted as an alias for "openai-compat" — the provider is not
  *  Ollama-specific (it speaks the OpenAI chat-completions format any self-hosted
  *  server can implement), but Ollama is the most common self-hosted target and
- *  users reach for that name first. Applied wherever a raw preference string
- *  enters the system (env var, local.json, `hunch provider <name>`) so every
- *  downstream lookup only ever sees canonical SYNTH_PROVIDER_NAMES. */
+ *  users reach for that name first. Applied to the HUNCH_SYNTH_PROVIDER env var in
+ *  resolveSynthesisProvider below, and exported so the `hunch provider <name>` CLI
+ *  command (index.ts) normalizes it the same way before validating/persisting a
+ *  local preference — the two paths must agree, or a user who sets one and reads
+ *  the other back gets a confusing "unknown provider" message for a name that
+ *  actually works. */
 export function normalizeProviderName(v: string | undefined): string | undefined {
   return v === "ollama" ? "openai-compat" : v;
 }
@@ -927,7 +1020,7 @@ export async function selectProvider(opts: ProviderSelectionOptions = {}): Promi
 export async function selectWorkers(opts: Pick<ProviderSelectionOptions, "providers"> = {}): Promise<SynthProvider[]> {
   const out: SynthProvider[] = [];
   for (const p of opts.providers ?? PROVIDERS) {
-    if (p.name === "deterministic") continue; // workers are real subscription CLIs only
+    if (p.name === "deterministic") continue; // workers are real LLM providers only
     if (await isAvailable(p)) out.push(p);
   }
   return out;
@@ -974,8 +1067,8 @@ export function mergeDecisionDrafts(drafts: DecisionDraft[]): DecisionDraft {
   };
 }
 
-// Default self-consistency depth when only ONE subscription CLI is installed (the
-// common case): sample it this many times and reconcile, so single-CLI users get
+// Default self-consistency depth when only ONE LLM provider is available (the
+// common case): sample it this many times and reconcile, so single-provider users get
 // ensemble-like robustness. Tunable per-call via `--samples`.
 const DEFAULT_SAMPLES = 2;
 
@@ -1001,7 +1094,7 @@ export class EnsembleProvider implements SynthProvider {
   }
 
   async draftDecision(input: CommitInput): Promise<DecisionDraft> {
-    if (!this.workers.length) throw new Error("ensemble: no subscription CLI workers available");
+    if (!this.workers.length) throw new Error("ensemble: no LLM provider workers available");
     const settled = await Promise.allSettled(this.decisionTasks(input).map((t) => t()));
     const drafts = settled.flatMap((s) => (s.status === "fulfilled" ? [s.value] : []));
     if (!drafts.length) throw new Error("ensemble: all workers failed");
@@ -1017,9 +1110,9 @@ export class EnsembleProvider implements SynthProvider {
   }
 }
 
-/** Build the Deep-Synthesis provider, or null if no subscription CLI is available
+/** Build the Deep-Synthesis provider, or null if no LLM provider is available
  *  (the caller then falls back to the normal single-provider path). `samples` sets
- *  the self-consistency depth for the single-CLI case. */
+ *  the self-consistency depth for the single-provider case. */
 export async function selectEnsemble(opts: { samples?: number; providers?: readonly SynthProvider[] } = {}): Promise<EnsembleProvider | null> {
   const workers = await selectWorkers(opts);
   // The self-consistency policy default (DEFAULT_SAMPLES) is applied HERE, not in the
@@ -1028,11 +1121,11 @@ export async function selectEnsemble(opts: { samples?: number; providers?: reado
   return workers.length ? new EnsembleProvider(workers, { samples: opts.samples ?? DEFAULT_SAMPLES }) : null;
 }
 
-/** Pick a provider to run the Critic pass — whichever one normal synthesis would
- *  resolve to (subscription CLI or the opt-in openai-compat), same env/local
- *  preference precedence. Returns null when that resolves to the deterministic
- *  fallback — verification then no-ops and the un-audited draft stands (graceful
- *  degradation; dec_18a81c8291). */
+/** Pick a provider to run the Critic pass — the same resolved provider normal
+ *  synthesis would use (subscription CLI or the opt-in openai-compat endpoint),
+ *  honoring the same env/local-preference/auto policy. Returns null when that
+ *  resolves to the deterministic fallback — verification then no-ops and the
+ *  un-audited draft stands (graceful degradation; dec_18a81c8291). */
 export async function selectVerifier(opts: ProviderSelectionOptions = {}): Promise<SynthProvider | null> {
   const { provider } = await resolveSynthesisProvider(opts);
   return provider.name === "deterministic" ? null : provider;

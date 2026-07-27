@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { writeFileAtomic } from "../core/io.js";
 import { shortHash } from "../core/ids.js";
+import { compareCodeUnits } from "../core/canonicalOrder.js";
 import type { HunchStore } from "../store/hunchStore.js";
 import { canonicalHash } from "./canonical.js";
 import { currentAppendOnly, loadPrivateRecords } from "./g2.js";
@@ -272,6 +273,60 @@ export function assignmentTreatment(bank: ExperimentCaseBank, run: ExperimentRun
   return treatment;
 }
 
+export interface ExperimentReviewGuide {
+  title: string;
+  question: string;
+  action: string;
+  answer_template: string;
+  warning: string;
+  choices: Array<{
+    value: "accepted_precise" | "accepted_edited" | "rejected" | "uncompilable";
+    label: string;
+    use_when: string;
+  }>;
+}
+
+/** Human-facing help is deliberately outside the hash-bound treatment. It may
+ * explain the review task, but must never interpret the assigned evidence. */
+export function experimentReviewGuide(arm: string): ExperimentReviewGuide {
+  const notEnough = {
+    value: "uncompilable" as const,
+    label: "Not enough information",
+    use_when: "The requirement does not clearly say which code relationship must always hold.",
+  };
+  if (arm === "A") {
+    return {
+      title: "Write one code rule from the requirement",
+      question: "Can one exact code rule be written from the requirement without guessing?",
+      action: "If yes, write one sentence naming the code elements, required or forbidden relationship, direct or transitive meaning, and file scope. If no, choose Not enough information.",
+      answer_template: "<subject> must <directly or transitively> <required or forbidden relationship> <target>; scope: <file or component>",
+      warning: "Use only the stated requirement. Current code may confirm names, but cannot add intent.",
+      choices: [
+        { value: "accepted_precise", label: "Rule written", use_when: "Your sentence expresses one exact rule fully supported by the requirement." },
+        notEnough,
+      ],
+    };
+  }
+  const choices: ExperimentReviewGuide["choices"] = [
+    { value: "accepted_precise", label: "Yes — exact match", use_when: "The proposed rule says exactly what the requirement says." },
+    { value: "accepted_edited", label: "Needs editing", use_when: "The requirement supports one rule, but the proposal needs a specific correction." },
+    { value: "rejected", label: "Unsupported", use_when: "The proposal adds or changes meaning that the requirement does not support." },
+    notEnough,
+  ];
+  return {
+    title: arm === "C" ? "Check the proposed rule and its proof card" : "Check the proposed rule",
+    question: "Does the proposed rule say exactly what the requirement says?",
+    action: arm === "C"
+      ? "Compare the requirement with the proposed rule, then use the proof card only to check that the named code targets are bound correctly."
+      : "Compare the requirement with the proposed rule. Check the relationship, direction, direct or transitive meaning, and scope.",
+    answer_template: "Choose one plain-language option; include corrected rule text only for Needs editing.",
+    warning: arm === "C"
+      ? "The proof card can verify code bindings, but it cannot add intent missing from the requirement."
+      : "Do not infer intent from the current implementation or from nearby code.",
+    choices,
+  };
+}
+
 export function experimentRunContentHash(run: ExperimentRun): string {
   const { id: _id, content_hash: _hash, ...body } = run;
   return canonicalHash(body);
@@ -302,7 +357,7 @@ export function compileExperimentRun(
   if (preregistration.experiment === "EXP-01") {
     if (bank.cases.length !== input.sample_per_arm) throw new Error("EXP-01 requires exactly sample_per_arm fresh case templates; every case is run once in every arm");
     for (const item of bank.cases) {
-      const orderedArms = [...arms].sort((a, b) => rank(preregistration.assignment.seed, item.block, item.id, a).localeCompare(rank(preregistration.assignment.seed, item.block, item.id, b)));
+      const orderedArms = [...arms].sort((a, b) => compareCodeUnits(rank(preregistration.assignment.seed, item.block, item.id, a), rank(preregistration.assignment.seed, item.block, item.id, b)));
       for (const arm of orderedArms) {
         const treatmentHash = canonicalHash(treatmentFor(preregistration.experiment, arm, item));
         const id = `expassign_${shortHash(canonicalHash({ preregistration: preregistration.content_hash, bank: bank.content_hash, case_id: item.id, arm, treatment_hash: treatmentHash }))}`;
@@ -314,9 +369,9 @@ export function compileExperimentRun(
     const byBlock = new Map<string, typeof bank.cases>();
     for (const item of bank.cases) byBlock.set(item.block, [...(byBlock.get(item.block) ?? []), item]);
     let offset = 0;
-    for (const [block, blockCases] of [...byBlock.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-      const ordered = [...blockCases].sort((a, b) => rank(preregistration.assignment.seed, block, a.id).localeCompare(rank(preregistration.assignment.seed, block, b.id)));
-      const armOrder = [...arms].sort((a, b) => rank(preregistration.assignment.seed, block, "arm", a).localeCompare(rank(preregistration.assignment.seed, block, "arm", b)));
+    for (const [block, blockCases] of [...byBlock.entries()].sort(([a], [b]) => compareCodeUnits(a, b))) {
+      const ordered = [...blockCases].sort((a, b) => compareCodeUnits(rank(preregistration.assignment.seed, block, a.id), rank(preregistration.assignment.seed, block, b.id)));
+      const armOrder = [...arms].sort((a, b) => compareCodeUnits(rank(preregistration.assignment.seed, block, "arm", a), rank(preregistration.assignment.seed, block, "arm", b)));
       for (const [index, item] of ordered.entries()) {
         const arm = armOrder[(offset + index) % armOrder.length]!;
         const treatmentHash = canonicalHash(treatmentFor(preregistration.experiment, arm, item));
@@ -328,7 +383,7 @@ export function compileExperimentRun(
     const counts = new Map(arms.map((arm) => [arm, assignments.filter((item) => item.arm === arm).length]));
     if ([...counts.values()].some((count) => count !== input.sample_per_arm)) throw new Error("EXP-03 blocks cannot be assigned to an exactly balanced arm allocation; adjust block sizes");
   }
-  assignments.sort((a, b) => rank(preregistration.assignment.seed, "execution", a.id).localeCompare(rank(preregistration.assignment.seed, "execution", b.id)));
+  assignments.sort((a, b) => compareCodeUnits(rank(preregistration.assignment.seed, "execution", a.id), rank(preregistration.assignment.seed, "execution", b.id)));
   assignments.forEach((assignment, order) => { assignment.order = order; });
   if (assignments.length > preregistration.sample_plan.maximum_total) throw new Error("assignment count exceeds preregistered maximum_total");
   const isExp01 = preregistration.experiment === "EXP-01";
@@ -584,6 +639,46 @@ export function compileExperimentReviewStart(run: ExperimentRun, assignment: Exp
   };
   const contentHash = canonicalHash(body);
   return ExperimentReviewStartSchema.parse({ id: `expreview_${shortHash(contentHash)}`, content_hash: contentHash, ...body });
+}
+
+export const ExperimentReviewerQualificationSchema = z.object({
+  id: z.string().regex(/^expreviewqual_[a-f0-9]{10}$/),
+  content_hash: z.string().regex(HASH),
+  preregistration_id: z.string().regex(/^expreg_[a-f0-9]{10}$/),
+  preregistration_hash: z.string().regex(HASH),
+  reviewer: z.string().regex(/^human:[^\s]+$/i),
+  protocol: z.literal("exp03-plain-language-comprehension-v2"),
+  cases_hash: z.string().regex(HASH),
+  passed: z.literal(true),
+  reason: z.string().trim().min(1).max(4000),
+  data_class: z.literal("private"),
+  authority: z.literal("none"),
+  recorded_at: z.string().datetime({ offset: true }),
+}).strict();
+export type ExperimentReviewerQualification = z.infer<typeof ExperimentReviewerQualificationSchema>;
+export type CompileExperimentReviewerQualificationInput = Pick<ExperimentReviewerQualification,
+  "preregistration_id" | "preregistration_hash" | "reviewer" | "protocol" | "cases_hash" | "passed" | "reason">;
+
+export function experimentReviewerQualificationContentHash(record: ExperimentReviewerQualification): string {
+  const { id: _id, content_hash: _hash, ...body } = record;
+  return canonicalHash(body);
+}
+
+export function compileExperimentReviewerQualification(
+  input: CompileExperimentReviewerQualificationInput,
+  preregistration: ExperimentPreregistration,
+  opts: { now?: string } = {},
+): ExperimentReviewerQualification {
+  if (preregistration.experiment !== "EXP-03" || preregistration.revision < 2) throw new Error("plain-language reviewer qualification requires EXP-03 revision 2 or later");
+  if (input.preregistration_id !== preregistration.id || input.preregistration_hash !== preregistration.content_hash) throw new Error("reviewer qualification must bind the exact current preregistration");
+  const body = {
+    ...input,
+    data_class: "private" as const,
+    authority: "none" as const,
+    recorded_at: opts.now ?? new Date().toISOString(),
+  };
+  const contentHash = canonicalHash(body);
+  return ExperimentReviewerQualificationSchema.parse({ id: `expreviewqual_${shortHash(contentHash)}`, content_hash: contentHash, ...body });
 }
 
 export const ExperimentFollowupSchema = z.object({
@@ -1048,6 +1143,23 @@ export class ExperimentRepository {
     const openForReviewer = records.find((item) => item.run_id === parsed.run_id && item.reviewer === parsed.reviewer && !completed.has(`${item.run_id}:${item.assignment_id}`));
     if (openForReviewer) throw new Error(`${parsed.reviewer} already has open review ${openForReviewer.id}; complete it before starting another assignment`);
     this.put("experiment-review-starts", parsed.id, parsed);
+    return parsed;
+  }
+
+  listReviewerQualifications(): ExperimentReviewerQualification[] {
+    return this.load("experiment-review-qualifications", "expreviewqual_", (raw) => {
+      const parsed = ExperimentReviewerQualificationSchema.parse(raw);
+      if (experimentReviewerQualificationContentHash(parsed) !== parsed.content_hash || parsed.id !== `expreviewqual_${shortHash(parsed.content_hash)}`) throw new Error(`experiment reviewer qualification ${parsed.id} content hash mismatch`);
+      return parsed;
+    }).sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  putReviewerQualification(record: ExperimentReviewerQualification): ExperimentReviewerQualification {
+    const parsed = ExperimentReviewerQualificationSchema.parse(record);
+    if (experimentReviewerQualificationContentHash(parsed) !== parsed.content_hash || parsed.id !== `expreviewqual_${shortHash(parsed.content_hash)}`) throw new Error(`experiment reviewer qualification ${parsed.id} content hash mismatch`);
+    const incumbent = this.listReviewerQualifications().find((item) => item.preregistration_id === parsed.preregistration_id && item.reviewer === parsed.reviewer);
+    if (incumbent) return incumbent;
+    this.put("experiment-review-qualifications", parsed.id, parsed);
     return parsed;
   }
 
