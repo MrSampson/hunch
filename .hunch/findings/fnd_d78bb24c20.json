@@ -6,11 +6,13 @@
     "npm test 2026-08-04 run 1: 936 tests, 109 fail (env classes included)",
     "npm test 2026-08-04 run 2 (after portability fixes e621292): 936 tests, 915 pass, 14 fail, 6 skip",
     "3 of the 14 fixed same day (5608020: locale precondition, readlink separators, git-dematerialized symlink); the remaining cluster is this finding",
-    "timeout signatures 60s (team-route-contract), 33s (post-commit hook), ~10s (sync retries) point at git transport/hook exec divergence on win32"
+    "timeout signatures 60s (team-route-contract), 33s (post-commit hook), ~10s (sync retries) point at git transport/hook exec divergence on win32",
+    "resolved 2026-08-04 by 67bd4d7 (product: core.autocrlf pin) + 5a9c033 (deps re-review) + ed71361 (sh-fixture paths, NUL device, WAL fixture, cleanup retry)",
+    "re-verified per file: revert-move 1/1, sync 17/17, private-setup-clone-safety 3/3, team-route-contract 25/25 across runs, static-graph-baseline green, production-dependency-audit 3/3, team-final-closure 10/10"
   ],
   "method": null,
   "severity": "medium",
-  "triage": "open",
+  "triage": "resolved",
   "affected_files": [
     "test/sync.test.ts",
     "test/team-route-contract.test.ts",
@@ -24,13 +26,13 @@
   "violates_constraint": null,
   "spawned_decision": null,
   "observed_at": "2026-08-04T07:26:53.804Z",
-  "resolved_commit": null,
+  "resolved_commit": "ed71361",
   "provenance": {
     "source": "human_confirmed",
     "confidence": 0.95,
     "evidence": [
       "npm test runs 2026-08-04, this host"
     ],
-    "last_verified": "2026-08-04T07:26:53.804Z"
+    "last_verified": "2026-08-04T08:11:49.556Z"
   }
 }
