@@ -1,7 +1,8 @@
 {
   "id": "dec_1869a16bd6",
   "title": "Shipped both delivery fixes: realpath the hook path + content-matched constraints (record-constraint --match) that survive file churn",
-  "status": "proposed",
+  "topic": null,
+  "status": "accepted",
   "context": "dec_e0a36efbf5 diagnosed two real delivery gaps end-to-end. This implements and proves both.",
   "decision": "FIX 1: toRepoRel (cli/index.ts) now realpath-normalizes both root and abs via a realpathNorm() that resolves the longest existing ancestor (handles a not-yet-created file), so the edit-time hook still delivers under a symlinked root (/tmp, /var, symlinked $HOME) instead of silently emitting 0 bytes. FIX 2: constraints gain an optional `match` regex (ConstraintSchema.match; `hunch record-constraint --match <regex>`). A content-matched invariant is decided by whether an ADDED diff/edit line actually trips the regex — verifiable per commit — so isStrictBlocker is called with stale=false for it: it keeps blocking the real violation across the file's whole life, and stays QUIET on edits that touch scope but don't break the rule (dropped from the direct report → no false positive). Wired through buildCheckReport (commit/CI gate, via analyzeDiff.addedLinesByFile) and blockingInScope (edit-time deny, now passed proposedEditLines). New shared helper src/core/constraintmatch.ts (constraintMatcher compiles defensively — bad regex is inert; contentViolates). Scope-only constraints are unchanged (still staleness-gated).",
   "consequences": [
@@ -41,7 +42,8 @@
       "src/cli/index.ts",
       "test/contentmatch.test.ts",
       "demo/real-world-scenarios.sh"
-    ]
+    ],
+    "last_verified": "2026-08-06T11:38:57.643Z"
   },
   "date": "2026-06-26T19:57:29.462Z"
 }
