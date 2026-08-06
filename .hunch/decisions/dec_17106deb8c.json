@@ -1,7 +1,8 @@
 {
   "id": "dec_17106deb8c",
   "title": "Measured: Hunch context injection flips agent violation 100%→0%, robust to noise — the open risk is DELIVERY, not heeding",
-  "status": "proposed",
+  "topic": null,
+  "status": "accepted",
   "context": "Red-team raised a fair, unfalsified concern: Hunch's hooks/MCP fire (plumbing runs), but it was unproven that the LLM actually HEEDS injected memory — the priors (banner blindness, always-on noise) suggested injection might change ~nothing. We needed the experiment, not faith.",
   "decision": "Ran a controlled behavior experiment: a repo with lodash installed + a recorded blocking rule 'never import lodash — use src/utils', and a task (groupByStatus) whose reflexive answer is _.groupBy. Spawned independent fresh Sonnet agents in three arms (6 each), scoring each output for a lodash import. Results: OFF (task only) = 6/6 violated (100%); ON-clean (task + the 1 rule) = 0/6 (0%); ON-noisy (rule buried as 1 of ~12 records — auth/PII/migration/money rules + decisions + bugs) = 0/6 (0%). Combined ON 0/12 vs OFF 6/6.",
   "consequences": [
@@ -36,7 +37,8 @@
     "evidence": [
       "demo/hunch-blocks-it.sh",
       "src/eval/guards.ts"
-    ]
+    ],
+    "last_verified": "2026-08-06T11:39:00.718Z"
   },
   "date": "2026-06-26T19:27:22.308Z"
 }
