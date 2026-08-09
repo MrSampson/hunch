@@ -17,8 +17,8 @@ complements `HANDOFF-v1.10.6.md` (the release half is still open — see §1).
    git push origin v1.10.6     # publishes to npm — irreversible, no approval gate
    ```
 2. **Review + merge the `claude/hunch-org-memory-zs4hcg` branch** — it carries
-   ONE unmerged commit: `334215f` **premise decay** (see §3). Product code;
-   should ride the next release train (1.10.7), not a hotfix push.
+   TWO unmerged product commits for the 1.10.7 train: `334215f` **premise
+   decay** (§3) and `43b2bb5` **authorship stamp** (§3b) — plus this handoff.
 3. **After the next npm release** (first one carrying `mcpName`, i.e. 1.10.7):
    publish to the official MCP registry:
    ```bash
@@ -78,6 +78,21 @@ this session's transcript: escalation-only authority, attestation-fatigue
 scope, prior art = architectural-assumption research, positioning = first to
 productize), and consider premises for 1–2 of the repo's own blocking
 constraints as the dogfood.
+
+## 3b. The branch: authorship stamp (`43b2bb5`) — review before merging
+
+Memory-supply-chain thin slice (red-team-corrected): only a consumed capture
+token mints `human_confirmed` in `hunch_record_decision`; un-token'd writes
+land as `agent_recorded` testimony (confidence 0.75) — advisory, never
+strict/veto authority, marked as testimony in pre-edit grounding.
+Diff-synthesized records keep standing. The issue-#23 overwrite guard now
+protects testimony too. **Deliberate behavior change:** manual un-interviewed
+records used to get `human_confirmed` @0.95 — they no longer do; `/capture`
+countersigns. **Open product decision left for you:** `hunch_record_correction`
+still mints enforced constraints without a token — tiering it the same way
+would harden the write path fully but softens "Never Twice lands enforced
+immediately". Decide before positioning anything as "memory supply chain"
+(rule from the red team: build the locks first, market the safe second).
 
 ## 4. Open queue (not blocking anything)
 
