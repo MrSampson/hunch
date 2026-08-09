@@ -2,7 +2,7 @@
   "id": "dec_0e7bbf9287",
   "title": "G3 handoff: pause EXP-03 revision 1; redesign the review in plain language before a fresh independent run",
   "topic": "g3-experiment-handoff",
-  "status": "proposed",
+  "status": "accepted",
   "context": "EXP-01 remains positive internal evidence. EXP-03 revision 1 exposed a review UX/protocol defect: the evidence and instructions use policy-IR jargon and sometimes describe symbols or current calls without plainly stating the durable required relationship. Seven terminal pilot reviews produced five assistance/clarification abandonments, one uncompilable judgment, and one accepted compiler candidate. Continuing after training would mix incompatible reviewer conditions. The owner was also the target labeler, so the pilot is not independent-reviewer evidence.",
   "decision": "Pause the current EXP-03 run and retain it only as onboarding/UX pilot evidence. Before any new timed review, create a fresh preregistered revision with plain normative evidence, one plain review question, jargon-free choices, a manual fill-in template, excluded training/comprehension cases, and a reviewer who did not label targets. Do not continue revision 1 or use it for compiler-quality, blocking, marketing, or G3 sign-off.",
   "consequences": [
@@ -35,7 +35,8 @@
   "provenance": {
     "source": "human_confirmed",
     "confidence": 0.95,
-    "evidence": []
+    "evidence": [],
+    "last_verified": "2026-08-09T10:48:22.410Z"
   },
   "date": "2026-07-12T04:14:19.852Z"
 }
