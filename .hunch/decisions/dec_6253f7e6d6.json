@@ -2,7 +2,7 @@
   "id": "dec_6253f7e6d6",
   "title": "Compounding-value surface: hunch stats --json is the one data source; VS Code extension is the flagship human surface + distribution; public web shrinks to a single proof-curve",
   "topic": "human-ui-strategy",
-  "status": "proposed",
+  "status": "accepted",
   "context": "Extends dec_df253f50b4 ('no web UI; build review-queue in extension') into the full human surface. Distribution is the bottleneck (1 star, no traction); the VS Code Marketplace is a search-indexed discovery channel and one build reaches Cursor/Windsurf/Copilot/VSCode, which a Vercel link cannot. The moat is the accumulated .hunch/ graph, not the gate (a PreToolUse deterministic check is a commodity primitive Anthropic can ship natively) — so every surface must render accumulation->return ('this happened because the graph existed'), never activity ('47 memories saved'). Positioning to gate-forward ('blocks the change + hands you the receipt') is a framing refinement of the already-live dec_78bff967ce (Architectural Conformance for AI code), not re-litigated here.",
   "decision": "Build `hunch stats --json` as the SINGLE data contract (stock -> return -> compounding), rendered read-only by three panes of glass: (1) CLI receipt footer for headless Claude Code, (2) the VS Code extension (status-bar ambient number, sidebar compounding curve, hover-to-see-decision, inline block receipt) as the flagship + marketplace distribution play, (3) a single shareable public proof-curve for cold-share (the one job the extension structurally can't do). The only new persistence is a git-tracked JSONL catch-log at .hunch/events.log. Non-negotiable: the extension and web compute nothing; if a number can't come from `hunch stats --json` or a .hunch/ file it doesn't exist — otherwise the pane of glass forks into a second product.",
   "consequences": [
@@ -49,7 +49,8 @@
       "src/core/checkreport.ts",
       "src/core/types.ts",
       "vscode-extension/"
-    ]
+    ],
+    "last_verified": "2026-08-09T10:48:25.465Z"
   },
   "date": "2026-07-09T05:51:58.742Z"
 }
