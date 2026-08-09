@@ -104,6 +104,8 @@ should be re-verified before quoting.
   when the ambient token is rejected.
 - Adopt "context engineering" vocabulary in outward positioning; do not adopt
   "guardrails."
+- Strategic response to this snapshot: own the category's measuring stick —
+  see [strategy-driftbench.md](./strategy-driftbench.md) (2026-08-09).
 
 This document tracks public product direction around persistent memory, code intelligence, and
 governance for AI coding agents. It is not a feature-scorecard or a legal conclusion. The sources
