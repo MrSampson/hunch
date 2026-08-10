@@ -14,9 +14,9 @@
   "data_class": "public",
   "content_hash": "sha1:2d71c9c2d55e749b742c81385151c50d903e5926",
   "compiler": {
-    "status": "eligible",
+    "status": "uncompilable",
     "policy": null,
-    "reason": "package.json is not a clean committed source baseline; commit the fix before Hunch builds a proof packet. The legacy Constraint remains active.",
+    "reason": "Correction has no exact structured forbidden-package meaning. The legacy Constraint remains active.",
     "scope_suggestion": {
       "repos": [],
       "paths": [],
