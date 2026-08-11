@@ -167,6 +167,39 @@ export function gitNullDevice(): string {
   return process.platform === "win32" ? "NUL" : devNull;
 }
 
+/** How long a live gitindex.lock can plausibly be held: every Hunch git spawn
+ *  carries a timeout well under this, so an OLDER lock provably has no living
+ *  owner in any Hunch flow. */
+const STALE_INDEX_LOCK_MS = 30_000;
+
+/** Heal a stranded `.git/index.lock` (issue #53). Two ways one appears:
+ *  (a) THIS call's git was timeout-killed — TerminateProcess on Windows skips
+ *      git's cleanup, so a lock created at/after this attempt started is ours;
+ *  (b) a PREVIOUS run crashed/was killed — git then fails FAST forever after,
+ *      and the best-effort flush paths swallow it, so captures keep "succeeding"
+ *      while nothing commits. A pre-existing lock older than any live git's
+ *      possible hold time has no living owner and is safe to remove.
+ *  Returns true when a lock was removed (a retry is then sensible). */
+function clearStrandedIndexLock(repoDir: string, env: NodeJS.ProcessEnv, sinceMs: number, error: unknown): boolean {
+  const killed = (error as NodeJS.ErrnoException)?.code === "ETIMEDOUT" || !!(error as { signal?: string | null })?.signal;
+  try {
+    const rel = execFileSync("git", ["-C", repoDir, "rev-parse", "--git-path", "index.lock"], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env, timeout: 5_000,
+    }).trim();
+    const lockPath = isAbsolute(rel) ? rel : join(repoDir, rel);
+    const mtimeMs = statSync(lockPath).mtimeMs;
+    const stranded = killed
+      ? mtimeMs >= sinceMs                          // created by the git we just killed
+      : mtimeMs <= Date.now() - STALE_INDEX_LOCK_MS; // left behind long before this attempt
+    if (!stranded) return false;
+    rmSync(lockPath, { force: true });
+    console.error(`hunch: removed a stranded index.lock at "${repoDir}" (${killed ? "this git operation timed out" : "left by an earlier interrupted git"}); retrying.`);
+    return true;
+  } catch {
+    return false; // no lock present, or git itself unavailable — nothing to heal
+  }
+}
+
 /** Compare physical directory identity before path text. Git for Windows can
  * return an 8.3/short or differently-cased spelling for the same top-level
  * directory that Node reached through its long path. A nonzero file ID keeps
@@ -526,12 +559,19 @@ export function commitAndPushHunch(hunchDir: string, message: string, opts: Hunc
       GIT_ATTR_NOSYSTEM: "1",
     });
     const run = (args: string[]): boolean => {
-      try {
-        execFileSync("git", ["-C", hunchDir, ...args], { stdio: "ignore", env });
-        return true;
-      } catch {
-        return false; // best-effort: nothing staged / not a repo / offline
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const startedAt = Date.now();
+        try {
+          execFileSync("git", ["-C", hunchDir, ...args], { stdio: "ignore", env });
+          return true;
+        } catch (error) {
+          // best-effort: nothing staged / not a repo / offline — EXCEPT a
+          // stranded index.lock, which would otherwise fail every future
+          // flush silently (issue #53); heal it and retry once.
+          if (!clearStrandedIndexLock(hunchDir, env, startedAt, error)) return false;
+        }
       }
+      return false;
     };
     if (opts.push !== false) {
       if (!overlayAttributeSourcesAreSafe(hunchDir, env)) {
@@ -544,7 +584,7 @@ export function commitAndPushHunch(hunchDir: string, message: string, opts: Hunc
       // remote .gitignore, local info/exclude, or ambient excludesFile must not
       // be able to silently stop the shared graph's heartbeat.
       for (let index = 0; index < paths.length; index += 128) {
-        if (!run(["-c", `core.attributesFile=${gitNullDevice()}`, "add", "-f", "--", ...paths.slice(index, index + 128)])) {
+        if (!run(["-c", `core.attributesFile=${gitNullDevice()}`, "-c", "core.autocrlf=false", "add", "-f", "--", ...paths.slice(index, index + 128)])) {
           run(["reset", "-q", "--", "."]);
           return null;
         }
@@ -557,8 +597,8 @@ export function commitAndPushHunch(hunchDir: string, message: string, opts: Hunc
     // a clean overlay store — most dangerously, the overlay was never its own git repo so `git -C`
     // walked UP to the PROJECT repo. Committing/pushing there would overwrite/delete the user's
     // code (we shipped exactly this). Refuse hard: unstage and bail without committing or pushing.
-    const memoryPaths = stagedMemoryPaths(hunchDir, env);
-    if (memoryPaths === null) {
+    const staged = stagedMemoryPaths(hunchDir, env);
+    if (staged === null) {
       try { execFileSync("git", ["-C", hunchDir, "reset", "-q", "--", "."], { stdio: "ignore", env }); } catch { /* best-effort unstage */ }
       // Public-store commits (push:false) skip QUIETLY: a non-memory staged set there is
       // usually just the user's own staged work, not a misconfigured overlay — the record
@@ -569,6 +609,15 @@ export function commitAndPushHunch(hunchDir: string, message: string, opts: Hunc
       }
       return null;
     }
+    // Unstage every derived artifact the scan skipped (catch-log, SQLite index,
+    // atomic-write temps). A public store keeps ordinary ignore semantics, so one
+    // created before those ignore entries existed still stages them above — and the
+    // commit below is `--only` over the memory paths, which would leave them in the
+    // index forever. A permanently dirty index is what the release gate reads as an
+    // unstable tree, and it is exactly what `git reset -- .` used to clean up as a
+    // side effect of the abort path these artifacts no longer take.
+    if (staged.derived.length) run(["reset", "-q", "--", ...staged.derived]);
+    const memoryPaths = staged.memory;
     if (memoryPaths.length === 0) return null;
     // Grounding docs refreshed by this capture ride the same memory commit, so committed record
     // counts can never go stale (the refresh-counts treadmill: every capture commit bumped the
@@ -577,9 +626,12 @@ export function commitAndPushHunch(hunchDir: string, message: string, opts: Hunc
     // docs the caller verified git-clean BEFORE rewriting, so it can neither weaken the
     // bug_overlay_clobber detection above nor sweep user edits.
     for (const file of opts.alsoStage ?? []) {
+      // core.autocrlf=false on every memory add/checkout: the Git-for-Windows
+      // installer default (system gitconfig autocrlf=true) would re-encode the
+      // graph's JSON bytes in transit, breaking byte-exact content hashes.
       run(opts.push === false
-        ? ["add", "--", file]
-        : ["-c", `core.attributesFile=${gitNullDevice()}`, "add", "--", file]);
+        ? ["-c", "core.autocrlf=false", "add", "--", file]
+        : ["-c", `core.attributesFile=${gitNullDevice()}`, "-c", "core.autocrlf=false", "add", "--", file]);
     }
     // Only sync+push when a memory commit was actually created — never run pull/push against the
     // enclosing repo on an empty stage. Two-way sync: MERGE the remote BEFORE pushing so a push
@@ -598,16 +650,27 @@ export function commitAndPushHunch(hunchDir: string, message: string, opts: Hunc
     const hooksDir = disabledHooksDir(hunchDir);
     if (!hooksDir) return null;
     const commitPaths = [...memoryPaths, ...(opts.alsoStage ?? [])];
-    try {
-      execFileSync("git", [
-        "-C", hunchDir,
-        "-c", `core.hooksPath=${hooksDir}`,
-        ...(opts.push === false ? [] : ["-c", `core.attributesFile=${gitNullDevice()}`]),
-        "-c", "commit.gpgsign=false",
-        "commit", "--no-gpg-sign", "--only", "-m", message, "--", ...commitPaths,
-      ], { stdio: "ignore", env, timeout: 15_000 });
-      committed = true;
-    } catch { /* nothing staged / not a repo */ }
+    // One retry after healing a stranded index.lock (issue #53): a lock left by
+    // a timeout-killed or crashed git otherwise fails EVERY later flush fast and
+    // silently — captures keep reporting success while nothing commits.
+    for (let attempt = 0; attempt < 2 && !committed; attempt++) {
+      const commitStartedAt = Date.now();
+      try {
+        execFileSync("git", [
+          "-C", hunchDir,
+          "-c", `core.hooksPath=${hooksDir}`,
+          ...(opts.push === false ? [] : ["-c", `core.attributesFile=${gitNullDevice()}`]),
+          "-c", "core.autocrlf=false",
+          "-c", "commit.gpgsign=false",
+          "commit", "--no-gpg-sign", "--only", "-m", message, "--", ...commitPaths,
+        ], { stdio: "ignore", env, timeout: 15_000 });
+        committed = true;
+      } catch (error) {
+        // Nothing staged / not a repo stays quiet, as before; only a healed
+        // stranded lock earns the single retry.
+        if (!clearStrandedIndexLock(hunchDir, env, commitStartedAt, error)) break;
+      }
+    }
     if (!committed) return null;
     if (opts.push !== false) {
       // The overlay remote is mutable process state. Re-prove the publication
@@ -650,12 +713,35 @@ export function isGitCleanPath(root: string, rel: string): boolean {
   }
 }
 
+/** The committed (HEAD) content of a tracked file, or null when the path is
+ *  untracked/absent at HEAD or git is unavailable. Used to decide whether a
+ *  dirty grounding doc differs from HEAD ONLY inside its generated section
+ *  (the stranded-grounding heal, fnd_b269d5c422). */
+export function headFileContent(root: string, rel: string): string | null {
+  try {
+    return execFileSync("git", ["-C", root, "show", `HEAD:${rel.replace(/\\/g, "/")}`], {
+      encoding: "utf8",
+      env: foreignRepoEnv(process.env),
+      maxBuffer: 16 * 1024 * 1024,
+    });
+  } catch {
+    return null;
+  }
+}
+
 /** Is the staged set a clean, MEMORY-ONLY change — only JSON record adds/updates, nothing else?
  *  The overlay store is entirely JSON (decisions/, bugs/, …, manifest.json). A real memory sync
  *  is purely additive; a DELETION, rename, or any non-.json staged path means hunchDir is NOT a
  *  clean overlay repo (e.g. it resolved to the project repo), so committing there would clobber
- *  code. Empty stage ⇒ [] (nothing to commit); invalid stage ⇒ null. The transient mkdir lock is ignored. */
-function stagedMemoryPaths(hunchDir: string, env: NodeJS.ProcessEnv): string[] | null {
+ *  code. Empty stage ⇒ [] (nothing to commit); invalid stage ⇒ null. The transient mkdir lock is ignored.
+ *
+ *  Returns the derived artifacts it skipped alongside the memory paths. The caller MUST
+ *  unstage those: the commit is `--only` over the memory paths, so anything skipped but
+ *  left staged sits in the index forever. (The old code never had to care — it returned
+ *  null on any non-JSON path, and the caller's blanket `reset -- .` swept the index
+ *  clean as a side effect of aborting.) */
+interface StagedMemory { memory: string[]; derived: string[] }
+function stagedMemoryPaths(hunchDir: string, env: NodeJS.ProcessEnv): StagedMemory | null {
   let out = "";
   let prefix = "";
   try { prefix = execFileSync("git", ["-C", hunchDir, "rev-parse", "--show-prefix"], { encoding: "utf8", env }).trim().replace(/\\/g, "/"); }
@@ -664,8 +750,9 @@ function stagedMemoryPaths(hunchDir: string, env: NodeJS.ProcessEnv): string[] |
   try { out = execFileSync("git", ["-C", hunchDir, "diff", "--cached", "--no-ext-diff", "--no-textconv", "--name-status"], { encoding: "utf8", env }); }
   catch { return null; }
   const lines = out.split("\n").map((l) => l.trim()).filter(Boolean);
-  if (!lines.length) return [];
+  if (!lines.length) return { memory: [], derived: [] };
   const memoryPaths: string[] = [];
+  const derivedPaths: string[] = [];
   for (const line of lines) {
     const parts = line.split("\t");
     const status = (parts[0] ?? "").trim();
@@ -676,10 +763,29 @@ function stagedMemoryPaths(hunchDir: string, env: NodeJS.ProcessEnv): string[] |
     if (!normalizedPath.startsWith(prefix)) return null; // never bless another staged JSON file
     const memoryRelativePath = normalizedPath.slice(prefix.length);
     if (!memoryRelativePath || memoryRelativePath === "local.json") return null; // machine-local overlay pointer; never publish it
+    // Known CLONE-LOCAL/DERIVED artifacts are skipped, never treated as a topology
+    // violation — mirroring committableOverlayJsonPaths below, which already carves
+    // out exactly these. Without this, the strict hook's own catch-log
+    // (.hunch/events.log, append-only with no rotation) made this function return
+    // null forever from its first line onward: the public flush then unstaged
+    // everything and aborted SILENTLY on every later capture, while the MCP tool
+    // still reported success and records piled up untracked.
+    if (isDerivedStoreArtifact(memoryRelativePath)) { derivedPaths.push(memoryRelativePath); continue; }
     if (!normalizedPath.endsWith(".json")) return null; // the store is entirely JSON records
     memoryPaths.push(memoryRelativePath);
   }
-  return [...new Set(memoryPaths)];
+  return { memory: [...new Set(memoryPaths)], derived: [...new Set(derivedPaths)] };
+}
+
+/** Clone-local / DERIVED artifacts that legitimately sit inside a `.hunch` store but
+ *  are never memory records: the SQLite index, temp files, and the strict hook's
+ *  append-only catch-log. A store carrying one of these is a NORMAL store, not a
+ *  topology violation — so both enumerators skip them rather than refusing the whole
+ *  commit. Shared so the public and overlay paths can never disagree again. */
+function isDerivedStoreArtifact(relativeName: string): boolean {
+  return /^[^/]+\.sqlite[^/]*$/i.test(relativeName)
+    || relativeName.split("/").some((segment) => segment.includes(".tmp"))
+    || relativeName === "events.log";
 }
 
 /** Enumerate ordinary JSON files already contained under an overlay. Push-capable
@@ -707,9 +813,7 @@ function committableOverlayJsonPaths(hunchDir: string): string[] | null {
           paths.push(relativeName);
         } else if (relativeName === "local.json") {
           return false;
-        } else if (/^[^/]+\.sqlite[^/]*$/i.test(relativeName)
-          || relativeName.split("/").some((segment) => segment.includes(".tmp"))
-          || relativeName === "events.log") {
+        } else if (isDerivedStoreArtifact(relativeName)) {
           // Known clone-local/derived artifacts are never staged. Everything
           // else is a topology violation: a shared graph repository cannot
           // quietly carry arbitrary source alongside its JSON memory.
@@ -1025,6 +1129,7 @@ function adoptContractHead(
       "-C", hunchDir,
       "-c", `core.hooksPath=${hooksDir}`,
       "-c", `core.attributesFile=${gitNullDevice()}`,
+      "-c", "core.autocrlf=false",
       "reset", "--hard", fetchedHead,
     ], {
       stdio: "ignore", env, timeout: 5_000,
@@ -1069,11 +1174,13 @@ function mergeRemote(
   const hooksDir = disabledHooksDir(hunchDir);
   if (!hooksDir) return "failed";
   const tryGit = (args: string[], timeout = timeoutMs): boolean => {
+    const startedAt = Date.now();
     try {
       execFileSync("git", [
         "-C", hunchDir,
         "-c", `core.hooksPath=${hooksDir}`,
         "-c", `core.attributesFile=${gitNullDevice()}`,
+        "-c", "core.autocrlf=false",
         "-c", "commit.gpgsign=false",
         ...args,
       ], {
@@ -1081,7 +1188,12 @@ function mergeRemote(
       });
       return true;
     }
-    catch { return false; }
+    catch (error) {
+      // Same stranding class as the commit path: a timeout-killed merge/fetch
+      // leaves index.lock behind and wedges every later sync (issue #53).
+      clearStrandedIndexLock(hunchDir, env, startedAt, error);
+      return false;
+    }
   };
   let fetchedHead = "";
   if (contract) {
@@ -1448,6 +1560,12 @@ function waitForCommitLockHandoff(
     Atomics.wait(sleeper, 0, 0, Math.min(25, deadline - Date.now()));
     attempt = acquireCommitLock(lock);
   }
+  // The deadline can expire DURING the final wait+acquire; without this check an
+  // acquire that succeeded on that last iteration returned false while this
+  // process's owner directory held the lock — never released (the caller bails
+  // before its try/finally), wedging every flush in every process until this one
+  // exited (issue #48).
+  if (attempt.state === "acquired") return true;
   return false;
 }
 
@@ -1522,7 +1640,7 @@ export function currentBranch(cwd: string): string {
 /** Files changed in a single commit. `--root` makes the initial commit (which
  *  has no parent) report its files as additions instead of returning nothing. */
 export function commitFiles(sha: string, cwd: string): string[] {
-  const out = gitSafe(["diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha], cwd);
+  const out = gitSafe(["-c", "core.quotePath=false", "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha], cwd);
   return out ? out.split("\n").filter(Boolean) : [];
 }
 
@@ -1945,7 +2063,7 @@ export function fileGitMetrics(
 
   // churn — one windowed log; tally each wanted path's appearances (= commits).
   if (days > 0) {
-    const raw = gitSafe(["log", `--since=${days}.days.ago`, "--name-only", "--format="], cwd);
+    const raw = gitSafe(["-c", "core.quotePath=false", "log", `--since=${days}.days.ago`, "--name-only", "--format="], cwd);
     if (raw) {
       for (const line of raw.split("\n")) {
         const e = line && out.get(line);
@@ -1957,7 +2075,7 @@ export function fileGitMetrics(
   // last commit — one newest-first log; the FIRST time a path appears is its most
   // recent commit. NUL-prefixed lines mark commit boundaries; the rest are paths.
   // 256MB buffer for the all-history name-only stream on large repos.
-  const raw = gitSafe(["log", "--name-only", "--format=%x00%h"], cwd, 256 * 1024 * 1024);
+  const raw = gitSafe(["-c", "core.quotePath=false", "log", "--name-only", "--format=%x00%h"], cwd, 256 * 1024 * 1024);
   if (raw) {
     let remaining = out.size;
     let sha = "";
@@ -1974,9 +2092,15 @@ export function fileGitMetrics(
   return out;
 }
 
-/** Files staged for commit (for `hunch check` pre-commit enforcement). */
+/** Files staged for commit (for `hunch check` pre-commit enforcement).
+ *
+ *  Every path enumerator here pins `core.quotePath=false` (issue #50): with
+ *  git's default quotePath, any path holding bytes > 0x7F comes back
+ *  octal-quoted (`"src/caf\303\251.ts"`), which matches neither the store's
+ *  POSIX paths nor constraint scope globs — a blocking constraint over such a
+ *  file graded as a vacuous PASS, and its churn/last-commit metrics read zero. */
 export function stagedFiles(cwd: string): string[] {
-  const out = gitSafe(["diff", "--cached", "--no-ext-diff", "--no-textconv", "--name-only", "--diff-filter=ACMR"], cwd);
+  const out = gitSafe(["-c", "core.quotePath=false", "diff", "--cached", "--no-ext-diff", "--no-textconv", "--name-only", "--diff-filter=ACMR"], cwd);
   return out ? out.split("\n").filter(Boolean) : [];
 }
 
@@ -1984,8 +2108,8 @@ export function stagedFiles(cwd: string): string[] {
  * and unstaged tracked files, plus untracked files. This powers the local,
  * pre-commit Change Gate; it never mutates the index or asks an agent/model. */
 export function workingFiles(cwd: string): string[] {
-  const changed = gitSafe(["diff", "HEAD", "--no-ext-diff", "--no-textconv", "--name-only", "--diff-filter=ACMR"], cwd).split("\n").filter(Boolean);
-  const untracked = gitSafe(["ls-files", "--others", "--exclude-standard"], cwd).split("\n").filter(Boolean);
+  const changed = gitSafe(["-c", "core.quotePath=false", "diff", "HEAD", "--no-ext-diff", "--no-textconv", "--name-only", "--diff-filter=ACMR"], cwd).split("\n").filter(Boolean);
+  const untracked = gitSafe(["-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard"], cwd).split("\n").filter(Boolean);
   return [...new Set([...changed, ...untracked])].sort();
 }
 
@@ -1999,7 +2123,7 @@ export function revExists(ref: string, cwd: string): boolean {
 /** Files a PR/branch changes vs `base` (3-dot: changes on HEAD since the merge-base,
  *  i.e. exactly the PR's own commits — the CI Constraint Guard's surface). */
 export function rangeFiles(base: string, cwd: string, head = "HEAD"): string[] {
-  const out = gitSafe(["diff", "--no-ext-diff", "--no-textconv", "--name-only", "--diff-filter=ACMR", `${base}...${head}`], cwd);
+  const out = gitSafe(["-c", "core.quotePath=false", "diff", "--no-ext-diff", "--no-textconv", "--name-only", "--diff-filter=ACMR", `${base}...${head}`], cwd);
   return out ? out.split("\n").filter(Boolean) : [];
 }
 
@@ -2032,8 +2156,8 @@ export function stagedDiff(cwd: string, maxBytes = 60_000): string {
  * intentionally contribute no synthetic content to regression analysis. */
 export function workingDiff(cwd: string, maxBytes = 60_000): string {
   let out = gitSafe(["diff", "HEAD", "--no-ext-diff", "--no-textconv", "--no-color", "--unified=2", "--", ...DIFF_NOISE], cwd);
-  const tracked = new Set(gitSafe(["diff", "HEAD", "--no-ext-diff", "--no-textconv", "--name-only", "--diff-filter=ACMR"], cwd).split("\n").filter(Boolean));
-  const untracked = gitSafe(["ls-files", "--others", "--exclude-standard"], cwd).split("\n").filter((f) => f && !tracked.has(f));
+  const tracked = new Set(gitSafe(["-c", "core.quotePath=false", "diff", "HEAD", "--no-ext-diff", "--no-textconv", "--name-only", "--diff-filter=ACMR"], cwd).split("\n").filter(Boolean));
+  const untracked = gitSafe(["-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard"], cwd).split("\n").filter((f) => f && !tracked.has(f));
   const readWorkingFile = createRepoFileReader(cwd);
   for (const file of untracked) {
     try {
@@ -2084,7 +2208,7 @@ export function fixCommits(spec: string, cwd: string, max = 200): string[] {
 
 /** All tracked files matching the given extensions. */
 export function trackedFiles(cwd: string, exts: string[]): string[] {
-  const out = gitSafe(["ls-files"], cwd);
+  const out = gitSafe(["-c", "core.quotePath=false", "ls-files"], cwd);
   const all = out ? out.split("\n").filter(Boolean) : [];
   return all.filter((f) => exts.some((e) => f.endsWith(e)));
 }

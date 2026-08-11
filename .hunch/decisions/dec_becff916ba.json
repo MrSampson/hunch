@@ -16,7 +16,6 @@
   "related_files": [
     "site/blog/posts.js",
     "test/release-gate.test.ts",
-    "test/vscode-marketplace-workflow.test.ts",
     "test/vscode-open-vsx-workflow.test.ts",
     "test/workflow-release-contract.test.ts",
     "tooling/changelog-locales.mjs",
@@ -42,7 +41,6 @@
       "branch:codex/openvsx-only-v1.9.1",
       "site/blog/posts.js",
       "test/release-gate.test.ts",
-      "test/vscode-marketplace-workflow.test.ts",
       "test/vscode-open-vsx-workflow.test.ts",
       "test/workflow-release-contract.test.ts",
       "tooling/changelog-locales.mjs",

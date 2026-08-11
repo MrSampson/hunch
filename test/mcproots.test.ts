@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -18,7 +18,10 @@ function git(root: string, ...args: string[]): string {
 }
 
 function repo(prefix = "hunch-roots-"): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
+  // canonicalRootPath() realpaths every root (issue #54), so the fixture must be
+  // canonical too: on macOS tmpdir() is the /var -> /private/var symlink, and a raw
+  // path would compare unequal to the resolved root the server legitimately returns.
+  const root = mkdtempSync(join(realpathSync(tmpdir()), prefix));
   git(root, "init", "-q");
   git(root, "config", "user.email", "mcp-roots@example.invalid");
   git(root, "config", "user.name", "MCP Roots Test");
@@ -74,6 +77,23 @@ test("resolveActiveRoot follows one advertised worktree and falls back when none
     assert.equal(resolveActiveRoot([pathToFileURL(fixture.worktree).href], fixture.root), fixture.worktree);
   } finally {
     fixture.cleanup();
+  }
+});
+
+test("case-variant spellings of ONE repo resolve to one canonical root, not an ambiguous pair (issue #54)", () => {
+  const root = repo("hunch-roots-case-");
+  try {
+    // VS Code advertises file:///c%3A/… (lowercase drive) while the spawn cwd
+    // says C:\… — same repo, two spellings. Both single-root resolution and the
+    // multi-candidate dedup must collapse them.
+    const swapped = process.platform === "win32" && /^[A-Za-z]:/.test(root)
+      ? (root[0] === root[0]!.toLowerCase() ? root[0]!.toUpperCase() : root[0]!.toLowerCase()) + root.slice(1)
+      : root; // POSIX is case-sensitive: same spelling, test degenerates to dedup-of-identical
+    const resolved = resolveActiveRoot([pathToFileURL(root).href, pathToFileURL(swapped).href], root);
+    assert.notEqual(resolved, null, "one repo in two spellings must never read as ambiguous");
+    assert.equal(resolveActiveRoot([pathToFileURL(swapped).href], root), resolved, "either spelling resolves to the same canonical root");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

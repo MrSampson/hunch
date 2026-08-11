@@ -13,14 +13,14 @@
 import { resolve, join, dirname, isAbsolute, relative } from "node:path";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { toPosixTarget, hunchPathsForDir, type HunchPaths } from "../core/paths.js";
-import { ENTITY_KINDS, type Component, type Constraint, type Bug, type Decision, type Symbol, type Edge, type RejectedTripwire, type EntityKind, type EntityFor } from "../core/types.js";
+import { ENTITY_KINDS, type Component, type Constraint, type Bug, type Decision, type Symbol, type Edge, type Finding, type RejectedTripwire, type EntityKind, type EntityFor } from "../core/types.js";
 import { openDb, withTx, type DB } from "./db.js";
 import { RESET_SQL, embedHash } from "./schema.js";
 import { selectEmbedder, type Embedder } from "./embedder.js";
 import { JsonStore } from "./jsonStore.js";
 import { gitCommonDir, gitWorktreeRoot, sameGitPublication } from "../extractors/git.js";
 import { pathMatchesGlob } from "../core/glob.js";
-import { currentForTopic } from "../core/topics.js";
+import { currentForTopic, isInForce } from "../core/topics.js";
 import { edgeId } from "../core/ids.js";
 import { isStrictBlocker, isVetoBlocker, type VetoTier } from "../core/strictgate.js";
 import { effectiveForbids, matchForbids, type ForbidMatch } from "../core/constraintmatch.js";
@@ -251,6 +251,22 @@ export class HunchStore {
     return [...byId.values()];
   }
 
+  /** Records for an AGENT-FACING advisory surface (escalations, orientation).
+   *
+   *  In unified ("shared") mode the overlay IS the one store — the public `.hunch/` is
+   *  only a routing shell — so reading the public home alone returns NOTHING and the
+   *  surface reports "all clear" for a store whose every record is elsewhere. That is
+   *  the worst possible answer for escalations, whose entire job is to raise the
+   *  questions only a human can settle: a real topic collision came back as an empty
+   *  list and the agent was affirmatively told there was nothing to escalate.
+   *
+   *  In "private" mode the split is a real privacy boundary, so this stays public-only:
+   *  private records must not surface on a public advisory surface. Mode-aware, not a
+   *  blanket union — the distinction is the point. */
+  advisoryRecs<K extends EntityKind>(kind: K): EntityFor[K][] {
+    return this.unified ? this.recs(kind) : this.json.loadAll(kind);
+  }
+
   /** Records from exactly one storage home (no public/private union). Capture
    * paths use this for identity/lineage checks so a private record can never
    * inherit or disclose relationships from an identically-shaped public record. */
@@ -401,6 +417,15 @@ export class HunchStore {
         fts(r.id, "runbooks", r.task, `${r.trigger.join(" ")} ${r.steps.join(" ")} ${r.gotchas.join(" ")} ${r.outcome} ${r.files.join(" ")}`);
       }
       counts.runbooks = runbooks.length;
+
+      // Findings (observations — audited, no diff): advisory records, same
+      // FTS-only ride as runbooks (dec_d32af7b821) — no dedicated SQL table.
+      const fnds = this.recs("findings");
+      for (const f of fnds) {
+        fts(f.id, "findings", f.title,
+          `${f.observation} ${f.evidence.join(" ")} ${f.affected_files.join(" ")} ${f.affected_symbols.join(" ")} ${f.triage}`);
+      }
+      counts.findings = fnds.length;
       void j;
     });
     // Reconcile embeddings AFTER the FTS rebuild (model-free): drop vectors whose
@@ -435,22 +460,38 @@ export class HunchStore {
 
   /** Portable bounded fallback over titles/bodies. Each natural-language token
    * is an OR candidate, mirroring the high-recall FTS query closely enough for
-   * runtimes whose SQLite build omits the optional FTS5 module. */
+   * runtimes whose SQLite build omits the optional FTS5 module.
+   *
+   * `_` is BOTH a LIKE single-character wildcard and the dominant character in this
+   * codebase's identifiers (dec_/con_/bug_ ids, snake_case symbols). The old code
+   * STRIPPED it, so a search for `hunch_record_decision` looked for the literal
+   * `hunchrecorddecision` and matched nothing — on precisely the runtimes with no FTS5,
+   * where this fallback is the only search there is. Escaping keeps the term literal;
+   * leaving `_` unescaped would silently over-match instead. */
   private likeSearch(query: string, limit: number, kind?: string): SearchHit[] {
     const terms = (query.toLowerCase().match(/[\p{L}\p{N}_]+/gu)
-      ?? [query.toLowerCase().replace(/[%_]/g, "").trim()].filter(Boolean)).slice(0, 32);
+      ?? [query.toLowerCase().trim()].filter(Boolean)).slice(0, 32);
     if (!terms.length) return [];
-    const predicates = terms.map(() => `(lower(title) LIKE ? OR lower(body) LIKE ?)`).join(" OR ");
+    const predicates = terms.map(() => `(lower(title) LIKE ? ESCAPE '\\' OR lower(body) LIKE ? ESCAPE '\\')`).join(" OR ");
     const likes = terms.flatMap((term) => {
-      const like = `%${term.replace(/[%_]/g, "")}%`;
+      const like = `%${term.replace(/[\\%_]/g, "\\$&")}%`;
       return [like, like];
     });
     const where = kind ? `kind = ? AND (${predicates})` : `(${predicates})`;
     const params: Array<string | number> = kind ? [kind, ...likes, limit] : [...likes, limit];
+    // Ordered so a TRUNCATING limit drops the least relevant row rather than an
+    // arbitrary one: a title hit outranks a body-only hit, then shortest title
+    // (a constraint's one-line statement beats a long decision body that merely
+    // mentions the term), then id for determinism. Without this, `LIMIT` returned
+    // rowid order and could drop the constraint a caller was checking for.
+    const titleLikes = terms.map(() => `lower(title) LIKE ? ESCAPE '\\'`).join(" OR ");
+    const titleParams = terms.map((term) => `%${term.replace(/[\\%_]/g, "\\$&")}%`);
     const rows = this.db.prepare(
       `SELECT ref, kind, title, substr(body,1,120) AS snip FROM search
-       WHERE ${where} LIMIT ?`,
-    ).all(...params) as Array<{ ref: string; kind: string; title: string; snip: string }>;
+       WHERE ${where}
+       ORDER BY CASE WHEN ${titleLikes} THEN 0 ELSE 1 END, length(title), ref
+       LIMIT ?`,
+    ).all(...(kind ? [kind, ...likes, ...titleParams, limit] : [...likes, ...titleParams, limit])) as Array<{ ref: string; kind: string; title: string; snip: string }>;
     return rows.map((r) => ({ ref: r.ref, kind: r.kind, title: r.title, snippet: r.snip, score: 0 }));
   }
 
@@ -531,14 +572,30 @@ export class HunchStore {
   }
 
   /** Post-fusion rerank by graph PRIORS (dec_25e277f479): relevance ordering, not
-   *  just reachability. Rank-based blend — blended(i) = 1/(60+i) × liveness ×
-   *  provenance × recency — so bm25's negative scale never leaks in. Priors are
-   *  BOUNDED (a superseded or ancient record dims, never disappears): liveness 0.6
+   *  just reachability. Trust weight w = liveness × provenance × recency: liveness 0.6
    *  for superseded/retired/rejected, provenance 1.0 / 0.85 / 0.75 for
    *  human_confirmed / llm_draft / extracted-inferred, recency 0.7 + 0.3·½^(age/90d).
    *  Runbook trigger phrases matching the query boost ×1.5 (exact intent beats
    *  keyword luck). Structural refs (symbols/components/edges) stay neutral.
-   *  Deterministic; ties keep fused order (stable sort). */
+   *
+   *  The prior is applied as a BOUNDED POSITIONAL SHIFT, not as a multiplier on a
+   *  rank-derived score. That is deliberate and load-bearing. The old form —
+   *  `1/(60+i) × w`, sorted descending, sliced to `limit` — could not keep the
+   *  "dims, never disappears" promise it made: across a fused pool of 24 the
+   *  positional term spans only 1/60…1/83 (a 0.72 ratio) while w spans 0.48…1.0 on
+   *  this repo's own records, so the prior was WIDER than the entire pool's
+   *  positional spread and simply overrode fusion. Worse, `priorMeta` returns null
+   *  for structural refs, which left them at w = 1 — a ceiling above what any record
+   *  that is not both human_confirmed and brand-new can reach. Measured over this
+   *  repo's 152 committed decisions with the rest of the pool structural (symbols are
+   *  ~91% of the corpus): 38% of decisions were dropped from the top-12 even when
+   *  they were the #1 fused hit, and 88% from fused rank 8. Both retrieval layers
+   *  ranked the record first and the rerank alone threw it away.
+   *
+   *  A shift of at most ±MAX_PRIOR_SHIFT positions restores the intended semantics:
+   *  a stale or low-provenance record visibly dims, an exact runbook-trigger match
+   *  visibly promotes, and neither can leapfrog the whole pool. Same measurement
+   *  after: 0% evicted from fused ranks 0–8. Deterministic; ties keep fused order. */
   private rerankByPriors(hits: SearchHit[], limit: number, query?: string): SearchHit[] {
     if (!hits.length) return hits; // a SINGLE hit still runs — topic-chain promotion must fire for the lone stale match
     const now = Date.now();
@@ -548,10 +605,10 @@ export class HunchStore {
     // predecessor's rank — the reader asked about the topic, and the graph's one
     // live answer must be reachable even when only history matches lexically.
     const present = new Set(hits.map((h) => h.ref));
-    // Each candidate carries its BASE rank position; an injected successor
-    // inherits its predecessor's position (× a hair under, so an exact-match
-    // live record already in the pool is never displaced by an injection).
-    const pool = hits.map((h, i) => ({ h, base: 1 / (60 + i) }));
+    // Each candidate carries its fused POSITION; an injected successor inherits its
+    // predecessor's position + a half step, so it lands immediately after it and an
+    // exact-match live record already in the pool is never displaced by an injection.
+    const pool = hits.map((h, i) => ({ h, pos: i }));
     for (const [i, h] of hits.entries()) {
       if (h.kind !== "decisions") continue;
       const d = this.recs("decisions").find((x) => x.id === h.ref);
@@ -561,24 +618,36 @@ export class HunchStore {
       present.add(cur.id);
       pool.push({
         h: { ref: cur.id, kind: "decisions", title: cur.title, snippet: `current for topic "${d.topic}" (supersedes ${h.ref})`, score: h.score },
-        base: (1 / (60 + i)) * 0.98,
+        pos: i + 0.5,
       });
     }
-    const scored = pool.map(({ h, base }) => {
+    const scored = pool.map(({ h, pos }) => {
       const m = this.priorMeta(h.ref, h.kind);
       let w = 1;
       if (m) {
         if (m.dead) w *= 0.6;
-        w *= m.provenance.includes("human_confirmed") ? 1 : m.provenance.includes("llm_draft") ? 0.85 : 0.75;
+        // agent_recorded sits BETWEEN human_confirmed and llm_draft. It is testimony —
+        // a human directed the capture but did not countersign it through /capture — so
+        // it must not carry human authority (strict/veto gates key on human_confirmed).
+        // But it is a deliberate, human-prompted write, and the unlabelled tier (0.75)
+        // is for extracted/inferred machine output. Without this it fell to 0.75 and
+        // ranked BELOW an llm_draft the model produced unprompted, which inverts what
+        // the authorship stamp is trying to express.
+        w *= m.provenance.includes("human_confirmed") ? 1
+          : m.provenance.includes("agent_recorded") ? 0.9
+            : m.provenance.includes("llm_draft") ? 0.85
+              : 0.75;
         if (m.at) {
           const ageDays = Math.max(0, now - Date.parse(m.at)) / 86400000;
           if (Number.isFinite(ageDays)) w *= 0.7 + 0.3 * Math.pow(0.5, ageDays / 90);
         }
         if (q && m.triggers?.some((tr) => q.includes(tr) || tr.includes(q))) w *= 1.5;
       }
-      return { h, s: base * w };
+      // w > 1 (a trigger match) shifts UP, w < 1 shifts DOWN, both clamped.
+      const shift = Math.max(-MAX_PRIOR_SHIFT, Math.min(MAX_PRIOR_SHIFT, (1 - w) * PRIOR_SHIFT_SCALE));
+      return { h, pos: pos + shift };
     });
-    scored.sort((a, b) => b.s - a.s);
+    scored.sort((a, b) => a.pos - b.pos);
     return scored.slice(0, limit).map((x) => x.h);
   }
 
@@ -797,13 +866,16 @@ export class HunchStore {
     const components = this.recs("components");
     const asOf = opts.asOf;
 
-    const matchedSymbols = symbols.filter((s) => s.file === target || s.name === target || s.id === target || s.file.endsWith(target));
+    // pathRelated, not bare endsWith: "scenario.ts".endsWith("io.ts") is true,
+    // so an unanchored suffix pulled unrelated files' records into why()/the
+    // pre-edit grounding block (issue #32). Segment-anchored matching only.
+    const matchedSymbols = symbols.filter((s) => s.file === target || s.name === target || s.id === target || pathRelated(s.file, target));
     const symIds = new Set(matchedSymbols.map((s) => s.id));
     const fileSet = new Set(matchedSymbols.map((s) => s.file));
     const isPath = target.includes("/") || target.includes(".");
 
     const fileMatch = (files: string[]) =>
-      files.some((f) => f === target || (isPath && (f.endsWith(target) || target.endsWith(f))) || fileSet.has(f));
+      files.some((f) => f === target || (isPath && pathRelated(f, target)) || fileSet.has(f));
 
     return {
       target,
@@ -1041,6 +1113,22 @@ export class HunchStore {
       .filter((c) => c.scope.some((g) => pathMatchesGlob(scope, g) || pathMatchesGlob(g, scope) || g === scope))
       .filter((c) => (asOf ? inWindow(c.valid_from, c.valid_to, asOf) : c.status !== "retired"))
       .sort((a, b) => sev(b.severity) - sev(a.severity));
+  }
+
+  /** LIVE findings (observations — audited, no diff yet) concerning a file/scope:
+   *  triage open / accepted-risk / scheduled; resolved and stale stay silent. The
+   *  matcher mirrors checkConstraints: an affected entry may be a concrete path or a
+   *  glob, and the queried scope may be either too. Advisory only — findings never
+   *  enter any block path. Sorted worst-first, then id for stable output. */
+  liveFindingsFor(scope: string): Finding[] {
+    const t = toPosixTarget(scope);
+    const live = (f: Finding): boolean => f.triage === "open" || f.triage === "accepted-risk" || f.triage === "scheduled";
+    return this.recs("findings")
+      .filter(live)
+      .filter((f) =>
+        f.affected_files.some((af) => pathMatchesGlob(t, af) || pathMatchesGlob(af, t) || pathRelated(toPosixTarget(af), t))
+        || f.affected_symbols.some((s) => s === scope))
+      .sort((a, b) => (SEV_FINDING[b.severity] ?? 0) - (SEV_FINDING[a.severity] ?? 0) || a.id.localeCompare(b.id));
   }
 
   /** The causal chain behind a constraint — the WHY a diff-only reviewer can't see.
@@ -1293,9 +1381,9 @@ export class HunchStore {
     // attribution (the strict guard fails on `blocking`).
     const ordered = [...decisions].sort((a, b) => Number(blockingDec.has(b.id)) - Number(blockingDec.has(a.id)));
     for (const d of ordered) {
-      // Only IN-FORCE decisions: re-adding what an OUTDATED (superseded) decision
-      // removed is not a regression against the current design.
-      if (d.superseded_by || d.status === "superseded") continue;
+      // Only IN-FORCE decisions: re-adding what an OUTDATED (superseded), REJECTED, or
+      // window-closed decision removed is not a regression against the current design.
+      if (!isInForce(d)) continue;
       if (!d.retired.symbols.length && !d.retired.deps.length) continue;
       if (!fileRelevant(d.related_files)) continue;
       for (const s of d.retired.symbols) if (addedSyms.has(s)) add(d, "symbol", s);
@@ -1316,7 +1404,7 @@ export class HunchStore {
     const out: VetoHit[] = [];
     const seen = new Set<string>(); // dedup: one hit per decision+alternative
     for (const d of this.recs("decisions")) {
-      if (d.superseded_by || d.status === "superseded") continue; // in-force only
+      if (!isInForce(d)) continue; // in-force only (excludes rejected + window-closed)
       const tripwires = d.rejected_tripwires ?? [];
       if (!tripwires.length) continue;
       const stale = staleDecisions.has(d.id);
@@ -1382,7 +1470,7 @@ export class HunchStore {
   retiredForFile(file: string): RetiredNote[] {
     const out: RetiredNote[] = [];
     for (const d of this.recs("decisions")) {
-      if (d.superseded_by || d.status === "superseded") continue;
+      if (!isInForce(d)) continue;
       if (!d.retired.symbols.length && !d.retired.deps.length) continue;
       if (!d.related_files.some((f) => pathRelated(f, file))) continue;
       out.push({ decision: d.id, title: d.title, symbols: d.retired.symbols, deps: d.retired.deps });
@@ -1465,6 +1553,12 @@ export class HunchStore {
     };
     for (const d of this.recs("decisions")) check("decision", d.id, d.related_files, d.provenance.last_verified);
     for (const c of this.recs("constraints")) check("constraint", c.id, c.scope, c.provenance.last_verified);
+    // A LIVE finding whose affected files changed after it was observed/verified may
+    // be silently fixed (or worse) — flag for re-verification (re-run its method).
+    for (const f of this.recs("findings")) {
+      if (f.triage === "resolved" || f.triage === "stale") continue;
+      check("finding", f.id, f.affected_files, f.provenance.last_verified ?? f.observed_at);
+    }
     return out.sort((a, b) => b.changed_at.localeCompare(a.changed_at));
   }
 
@@ -1491,6 +1585,7 @@ export class HunchStore {
       bugs,
       blast_radius: [...blast.values()].sort((a, b) => a.depth - b.depth).slice(0, 12),
       components: w.components,
+      findings: this.liveFindingsFor(target).slice(0, 8),
       budget_tokens: budget,
     };
     return ctx;
@@ -1561,12 +1656,15 @@ export interface AssembledContext {
   bugs: Bug[];
   blast_radius: Array<{ id: string; depth: number; via: string }>;
   components: Component[];
+  findings: Finding[];
   budget_tokens: number;
 }
 
 function sev(s: string): number {
   return ({ blocking: 3, warning: 2, advisory: 1 } as Record<string, number>)[s] ?? 0;
 }
+
+const SEV_FINDING: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
 
 /** Is a valid-time window open at `asOf`? `valid_from` undefined = always-started
  *  (legacy records). `valid_to` null = still in force. `asOf` undefined disables
@@ -1602,9 +1700,19 @@ const RRF_W_FTS = numEnv("HUNCH_RRF_W_FTS", 1);
 const RRF_W_SEM = numEnv("HUNCH_RRF_W_SEM", 0.7);
 const RRF_W_GRAPH = numEnv("HUNCH_RRF_W_GRAPH", 0.5);
 const GRAPH_GAMMA = numEnv("HUNCH_GRAPH_GAMMA", 0.25);
+
+/** Prior tuning: how far a trust weight may move a hit from its FUSED position.
+ *  SCALE maps the weight's realistic span onto positions (this repo's own decisions
+ *  span w 0.48…1.0, so ×12 reaches the clamp at the low end); MAX_PRIOR_SHIFT is the
+ *  hard bound that keeps the prior a dimmer rather than the primary sort key — see
+ *  rerankByPriors for the measurement that fixed it at 4. */
+const PRIOR_SHIFT_SCALE = numEnv("HUNCH_PRIOR_SHIFT_SCALE", 12);
+const MAX_PRIOR_SHIFT = numEnv("HUNCH_MAX_PRIOR_SHIFT", 4);
 function numEnv(name: string, dflt: number): number {
   const v = Number(process.env[name]);
-  return Number.isFinite(v) && v > 0 ? v : dflt;
+  // >= 0, not > 0: zero is the documented kill-switch (HUNCH_RRF_W_*=0 disables
+  // a stream); rejecting it silently re-enabled the default weight (issue #33).
+  return Number.isFinite(v) && v >= 0 ? v : dflt;
 }
 
 /** Pack a vector's exact bytes for SQLite. Explicit offset+length so a SUBARRAY

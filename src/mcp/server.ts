@@ -11,10 +11,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { RootsListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { hunchPaths, findRoot, toPosixTarget } from "../core/paths.js";
-import { resolveActiveRoot } from "./roots.js";
+import { canonicalRootPath, resolveActiveRoot } from "./roots.js";
 import { HunchStore } from "../store/hunchStore.js";
 import { selectEmbedder } from "../store/embedder.js";
-import { decisionId } from "../core/ids.js";
+import { decisionId, findingId } from "../core/ids.js";
 import { buildCorrectionConstraint } from "../core/correction.js";
 import { knownRepoDeps } from "../synthesis/tripwires.js";
 import { refreshExistingGrounding } from "../integrations/providers.js";
@@ -32,9 +32,10 @@ import { renderMarkdown, renderImpact, verdict } from "../core/checkreport.js";
 import { nowData, wikiStatus, publicHome, readWikiManifestAt } from "../wiki/wiki.js";
 import { HUNCH_VERSION } from "../core/version.js";
 import { assertCompleteRepoScan, indexRepo, scanRepo } from "../extractors/indexer.js";
-import type { Decision, Symbol } from "../core/types.js";
+import type { Decision, Finding, Symbol } from "../core/types.js";
 import { liveForTopic, historyForTopic, rejectedForTopic, captureConflicts } from "../core/topics.js";
 import { pendingEscalations, policyEscalations, type Escalation } from "../core/escalations.js";
+import { premiseEscalations } from "../core/premises.js";
 import { issueCaptureToken as issueToken, consumeCaptureToken as consumeToken } from "../core/capturetoken.js";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -55,6 +56,15 @@ const flushNote = (flush: "pushed" | "committed" | null, home: "public" | "priva
         : " (auto-committed to .hunch/ — rides your next push)"
       : "";
 
+/** When an overlay exists, a PUBLIC write deserves one visible line: a record that
+ *  lands in the committed store publishes on the next push, and an agent writing
+ *  strategy/competitive content there is a leak nobody notices until it ships
+ *  (2026-08-09: 15 roadmap records caught pre-push only by a release sweep). */
+const publicHomeNote = (home: "public" | "private", hasPrivate: boolean): string =>
+  home === "public" && hasPrivate
+    ? "\nℹ Landed in the COMMITTED PUBLIC store (publishes with the repo). For sensitive/strategy content, re-record with private:true — the overlay store."
+    : "";
+
 // Read-side token budgets: every tool result is injected into a Claude Code
 // session, so an uncapped list pollutes the context window. Cap each list to its
 // highest-signal head (records are pre-sorted by severity/confidence) and tell the
@@ -62,6 +72,7 @@ const flushNote = (flush: "pushed" | "committed" | null, home: "public" | "priva
 const WHY_CAP = 6; // per record-type in hunch_why
 const DEP_CAP = 25; // dependents in hunch_get_dependents
 const QUERY_HITS = 8; // hunch_query matches (was 12)
+const FINDINGS_CAP = 12; // hunch_findings listing
 const SEV_CONSTRAINT: Record<string, number> = { blocking: 3, warning: 2, advisory: 1 };
 const SEV_BUG: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
 const more = (total: number, cap: number, hint = ""): string =>
@@ -248,6 +259,10 @@ export type RootControlledServer = {
   server: McpServer;
   getRoot: () => string;
   setRoot: (next: string) => void;
+  /** Drop a swap parked by `setRoot` while a request was in flight. The roots
+   *  wiring calls this when a LATER resolution is ambiguous, so a stale parked
+   *  swap can never apply after the client stopped unambiguously advertising it. */
+  cancelPendingRoot: () => void;
 };
 
 export function buildServerWithRootControl(initialRoot: string): RootControlledServer {
@@ -309,8 +324,11 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
   let closed = false;
 
   const activateRoot = (next: string): void => {
-    const canonical = findRoot(next);
-    if (canonical === root) return;
+    // canonicalRootPath: a case/8.3 spelling difference must not read as a
+    // DIFFERENT repo — that closed the live store and re-prepared everything
+    // on every same-repo client connect (issue #54).
+    const canonical = canonicalRootPath(findRoot(next));
+    if (canonical === canonicalRootPath(root)) return;
     const prepared = prepareRoot(canonical, explicitOverlay, true);
     const previous = store;
     root = prepared.root;
@@ -430,10 +448,16 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
           if (teamAdvertised && !matchesStartupTeamRoute()) {
             return err("The team-memory route changed during refresh. Refusing to serve a stale or redirected graph; reconnect Hunch first.");
           }
-          try {
-            if (store.sourceStamp() !== indexedSourceStamp) refreshIndex();
-          } catch { /* corrupt/churning local source — serve the last durable indexed view */ }
         }
+        // Stamp check in EVERY mode, not only shared: a CLI capture or post-commit
+        // hook in another terminal writes JSON that mtime-invalidated loadAll sees
+        // immediately, while the SQLite FTS/graph index this long-lived process
+        // serves would stay frozen at startup — split-brain answers within one
+        // session (JSON-backed tools fresh, query/structure/dependents stale)
+        // until restart (issue #49).
+        try {
+          if (store.sourceStamp() !== indexedSourceStamp) refreshIndex();
+        } catch { /* corrupt/churning local source — serve the last durable indexed view */ }
         const result = await callback(...args);
         if (teamAdvertised && !matchesStartupTeamRoute()) {
           return err("The team-memory route changed while the tool was running. Its startup destination was not published; reconnect Hunch before retrying.");
@@ -675,7 +699,8 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
       if (!roadmap.length) L.push("  (empty — record intent as a PROPOSED decision and it appears here)");
       for (const r of roadmap) L.push(`  • ${r.title} (${r.id}${r.topic ? `, ${r.topic}` : ""}, since ${r.date})\n      ${r.note}`);
       if (pendingReview > 0) L.push("", `${pendingReview} legacy un-vouched draft(s) — \`hunch adopt-drafts\` auto-trusts them as advisory (new captures land trusted automatically).`);
-      const escalations = pendingEscalations(store.json.loadAll("decisions"));
+      const escalations = pendingEscalations(store.advisoryRecs("decisions"));
+      escalations.push(...premiseEscalations(store.advisoryRecs("decisions"), { now: new Date().toISOString(), exists: (p) => existsSync(join(root, p)) }));
       if (escalations.length) {
         L.push("", `⚖ ${escalations.length} decision(s) need the human's call — ASK inline (never queue): ${escalations.map((e) => e.question).join(" · ")}`);
       }
@@ -695,11 +720,14 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
     {
       title: "Decisions the human must make now (ask inline, not a queue)",
       description:
-        "The rare decisions the graph cannot resolve on its own — surfaced so you ASK THE USER in the prompt at the moment, then act. Auto-captured memory is trusted automatically and never appears here; this returns topic conflicts (>1 live decision for one topic) and Constitution human moments (candidate policies awaiting review, proposed policies awaiting an activation decision). Normally empty. Raise each question with the user; do NOT decide it for them — an entry is a question, never an approval. Public store only.",
+        "The rare decisions the graph cannot resolve on its own — surfaced so you ASK THE USER in the prompt at the moment, then act. Auto-captured memory is trusted automatically and never appears here; this returns topic conflicts (>1 live decision for one topic), premise-stale decisions (a live decision whose recorded REASON no longer holds — its authority is unchanged until the human re-attests, supersedes, or retires), and Constitution human moments (candidate policies awaiting review, proposed policies awaiting an activation decision). Normally empty. Raise each question with the user; do NOT decide it for them — an entry is a question, never an approval. Reads the public store, or the unified overlay when the repo is in shared mode (where the overlay IS the store) — never private-mode overlay records.",
       inputSchema: {},
     },
     async (): Promise<ToolResult> => {
-      const items: Escalation[] = pendingEscalations(store.json.loadAll("decisions"));
+      const items: Escalation[] = pendingEscalations(store.advisoryRecs("decisions"));
+      // Premise decay: a live decision whose recorded reason died. Question-framed
+      // like every entry here — authority never changes until the human answers.
+      items.push(...premiseEscalations(store.advisoryRecs("decisions"), { now: new Date().toISOString(), exists: (p) => existsSync(join(root, p)) }));
       try {
         items.push(...policyEscalations(new ConstitutionService(store, root).list({ publicOnly: true }).map((p) => ({ ...p, last_action: p.audit.at(-1)?.action ?? null }))));
       } catch { /* constitution unavailable — memory escalations still surface */ }
@@ -824,6 +852,20 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
           related_files: z.array(z.string()).optional(),
           related_components: z.array(z.string()).optional(),
           topic: z.string().optional().describe("decision-grounding anchor — one topic per decision; enables doc≠graph drift detection for it. Omit to leave un-anchored."),
+          // FLAT, matching PremiseSchema exactly. A nested { check: {...} } shape is
+          // silently STRIPPED by Zod, leaving a claim-only premise — and a claim-only
+          // premise is "documented only (no check attached)", which ALWAYS HOLDS. An
+          // agent following a wrong schema would record a premise that can never fire:
+          // the exact fail-open this feature exists to prevent. Keep in lockstep with
+          // PremiseSchema in src/core/types.ts.
+          premises: z.array(z.object({
+            claim: z.string().min(1).describe("the human-readable reason this decision rests on"),
+            path_absent: z.string().optional().describe("premise holds while this repo-relative path does NOT exist. REQUIRES `under`. Prefer path_exists where you can — a negative probe fails OPEN, a positive one fails closed."),
+            under: z.string().optional().describe("required with path_absent: an EXISTING repo-relative ANCESTOR of it (path_absent 'src/gateway' -> under 'src'). When the anchor disappears the premise reads unevaluable instead of silently 'still absent'."),
+            path_exists: z.string().optional().describe("premise holds while this repo-relative path exists"),
+            review_by: z.string().optional().describe("dated attestation: premise holds until this ISO date, then needs re-attesting"),
+            attested: z.string().optional().describe("ISO date a human last attested the claim (informational)"),
+          })).optional().describe("the checkable reasons this decision rests on — at most ONE check per premise (path_absent | path_exists | review_by). A dead premise NEVER changes authority; it raises an escalation for the human. Omit on re-record to keep the incumbent's premises."),
           status: z.enum(["proposed", "accepted", "rejected", "superseded"]).optional(),
           commit: z.string().optional(),
           supersedes: z.string().optional().describe("id of a decision this one replaces — closes its valid-time window (invalidate, don't delete)"),
@@ -858,19 +900,53 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
         const sameHumanIdentity = existing?.topic && decision.topic
           ? decision.topic === existing.topic
           : existing?.title === decision.title;
-        const conflictsWithHuman = !!existing?.provenance.source.includes("human_confirmed")
-          && !sameHumanIdentity;
+        // CURATED slots are overwrite-protected, not just human-confirmed ones:
+        // agent_recorded testimony carries session content a silent replace would
+        // destroy (issue #23's harm, one tier down). Only regenerable machine
+        // drafts (llm_draft/inferred synthesis, deterministically re-derivable
+        // from the commit) stay upgradeable by a different identity. Same-identity
+        // re-record remains the countersign/refine path for every tier.
+        const curated = ["human_confirmed", "agent_recorded"].some((t) => existing?.provenance.source.split("+").includes(t));
+        // AUTHORSHIP STAMP (memory supply chain): only a consumed capture token — proof a
+        // grilling interview preceded this write — mints human_confirmed. Any agent can
+        // CALL this tool mid-session, possibly steered by untrusted content it read;
+        // "the human probably asked me to" is testimony, not a signature.
+        //
+        // Resolved HERE, before the overwrite guard, because the guard's answer depends on
+        // it: testimony must yield to a signature. (Consuming before a possible refusal
+        // burns the token, which is the safe direction — a re-run of /capture mints another.)
+        const gated = consumeCaptureToken(capture_token);
+        const existingTiers = existing?.provenance.source.split("+") ?? [];
+        const existingIsHuman = existingTiers.includes("human_confirmed");
+        // A slot held only by AGENT TESTIMONY must not block a later human capture — the
+        // stamp's own contract says so ("never lock the id slot against a later human
+        // capture"), but including agent_recorded in `curated` did exactly that. A
+        // human_confirmed slot stays protected as before (issue #23): a signature is never
+        // displaced by a differently-identified record, vouched or not.
+        const conflictsWithHuman = curated && !sameHumanIdentity && !(gated && !existingIsHuman);
         if (conflictsWithHuman) {
           return err(
-            `Decision id ${id} already identifies a different human-confirmed decision: ` +
+            `Decision id ${id} already identifies a different curated decision: ` +
             `"${existing!.title}"${existing!.topic ? ` (topic "${existing!.topic}")` : ""}. ` +
             `Refusing to overwrite it with "${decision.title}"${decision.topic ? ` (topic "${decision.topic}")` : ""}. ` +
             "Record the additional decision without commit, or reuse the incumbent topic/title when refining the same decision.",
           );
         }
+        // Un-token'd writes land as agent_recorded: fully functional advisory memory that
+        // never carries human authority (strict/veto gates key on human_confirmed) and
+        // surfaces with a testimony marker. Re-record through /capture to countersign.
+        //
+        // A signature already on this slot is INHERITED, never erased. The un-token'd path
+        // is exactly what the nudge below tells an agent to do ("re-record… supersedes"),
+        // and the tier expression preserved `llm_draft` while dropping `human_confirmed` —
+        // so an un-vouched agent write silently stripped human authority from a decision a
+        // human had vouched for. That inverts the whole point of the stamp: it exists to
+        // stop an agent CLAIMING human authority, not to let one DESTROY it. Downgrading a
+        // signature is a human act (`hunch review --reject`, or supersede via /capture).
+        const tier = gated || existingIsHuman ? "human_confirmed" : "agent_recorded";
         const source = existing && existing.provenance.source.includes("llm_draft")
-          ? "llm_draft+human_confirmed"
-          : "human_confirmed";
+          ? `llm_draft+${tier}`
+          : tier;
         const now = new Date().toISOString();
 
         const rec: Decision = {
@@ -883,6 +959,14 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
           consequences: decision.consequences ?? [],
           alternatives_rejected: decision.alternatives_rejected ?? [],
           rejected_tripwires: existing?.rejected_tripwires ?? [], // preserve confirmed tripwires across re-record
+          // Premises survive a re-record for the same reason tripwires do. Rebuilding the
+          // record field-by-field WITHOUT them silently deleted the decision's recorded
+          // reasons — so the escalation for a dead premise stopped firing while the
+          // decision kept full authority, and nothing reported the loss. That is the exact
+          // fail-open premise decay exists to prevent, relocated from the evaluator to the
+          // writer — and the escalation's own advice ("re-attest… or re-record") walked
+          // straight into it. Caller-supplied premises win; otherwise the incumbent's carry.
+          premises: decision.premises ?? existing?.premises ?? [],
           related_components: decision.related_components ?? existing?.related_components ?? [],
           related_files: (decision.related_files ?? existing?.related_files ?? []).map(toPosixTarget),
           supersedes: decision.supersedes ?? existing?.supersedes ?? null,
@@ -892,7 +976,7 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
           valid_from: existing?.valid_from ?? now,
           valid_to: existing?.valid_to ?? null,
           retired: existing?.retired ?? { symbols: [], deps: [] },
-          provenance: { source, confidence: 0.95, evidence: (decision.related_files ?? existing?.provenance.evidence ?? []).map(toPosixTarget) },
+          provenance: { source, confidence: gated ? 0.95 : 0.75, evidence: (decision.related_files ?? existing?.provenance.evidence ?? []).map(toPosixTarget) },
           date: now,
         };
         // Where this write will actually land (see captureHome). Resolved BEFORE the
@@ -926,8 +1010,14 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
         // Route the write to its ONE home: an explicit private:true goes to the overlay
         // (putPrivate throws rather than silently falling public); in unified ("shared")
         // mode EVERY capture goes to the overlay; else the public store.
-        if (home === "private") store.putPrivate("decisions", rec);
-        else store.json.put("decisions", rec);
+        // Through putCapture, NOT the raw per-home writers: it carries the cross-home
+        // twin guard. Branching on `home` here bypassed that guard, so one id could
+        // exist in BOTH stores — after which the merged/private-first read makes the
+        // topic-uniqueness check see one record while a later public `supersedes:`
+        // closes the other, leaving two live decisions on one topic and grounding
+        // silently injecting nothing for it. The guard throws; the surrounding catch
+        // turns that into a clean tool error instead of a silent twin.
+        store.putCapture("decisions", rec, !!decision.private);
         // Invalidate, don't delete: closing the superseded decision's valid-time window
         // (+ a supersedes edge) preserves the why-it-changed trail. Route the close to the
         // same store the new record landed in — a private decision supersedes within the
@@ -941,17 +1031,18 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
         // record commits+pushes its overlay repo; a public one commits .hunch/ in THIS repo
         // (commit only — it rides the user's next push, never auto-pushing their code branch).
         const flush = flushCapture(store, hunchPaths(root).hunch, !!decision.private, `hunch: capture ${id}`, startupTeamRoute ?? undefined);
-        const flushed = flushNote(flush, home, store.mode);
-        // Capture-session gate (staged deprecation, §9.3): a token proves an interview
-        // preceded the write. No token still writes (non-breaking), but returns a nudge
-        // toward /capture so the un-interviewed bypass is visible, not silent. A token
-        // presented but unknown to THIS process (server restart/expiry) is not shamed.
-        const gated = consumeCaptureToken(capture_token);
+        const flushed = flushNote(flush, home, store.mode) + publicHomeNote(home, store.hasPrivate);
+        // Capture-session gate (staged deprecation, §9.3): the token was consumed
+        // above (it also decides the provenance tier). No token still writes
+        // (non-breaking) but lands as agent_recorded with a nudge toward /capture.
+        // A token presented but unknown to THIS process (server restart/expiry) is
+        // not shamed — but it also cannot be VERIFIED, so the record still lands
+        // agent_recorded with a note saying how to countersign.
         const captureNote = gated
           ? " [via capture front door]"
           : capture_token
-            ? ""
-            : `\n\n⚠ Recorded WITHOUT a capture interview — the record stands, but harden it NOW in one exchange instead of switching flows: answer the first grilling question directly — "What alternative did you seriously consider and reject for '${rec.title.slice(0, 60)}', and what breaks if a future session re-introduces it?" — then fold the answer into alternatives_rejected via hunch_record_decision(supersedes: ${id}) or start the full interview with hunch_capture_decision. (A future major version will require a capture token here.)`;
+            ? `\n\nℹ The capture token could not be verified (server restart or expiry), so this record is stamped agent_recorded. Re-record through hunch_capture_decision → hunch_record_decision to countersign it as human_confirmed.`
+            : `\n\n⚠ Recorded WITHOUT a capture interview — the record stands as agent_recorded TESTIMONY (advisory: it never carries human authority; a /capture interview on the same topic/title countersigns it). Harden it NOW in one exchange instead of switching flows: answer the first grilling question directly — "What alternative did you seriously consider and reject for '${rec.title.slice(0, 60)}', and what breaks if a future session re-introduces it?" — then fold the answer into alternatives_rejected via a /capture interview (hunch_capture_decision → hunch_record_decision(supersedes: ${id})), which countersigns the record as human_confirmed. (A future major version will require a capture token here.)`;
         // Quality nudge only when the untokened deprecation nudge isn't already
         // grilling — one advisory voice per response, never two.
         const quality = gated || capture_token ? qualityNudge(rec) : "";
@@ -976,19 +1067,29 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
         "When a human corrects the agent ('no, do it this way' / 'never call X here'), persist that correction as a first-class, SCOPED Constraint with provenance — so the pre-edit hook and the CI Constraint Guard hold EVERY assistant to it from now on, instead of it being forgotten next session. Writes to the shared .hunch/ graph (client-agnostic). Set severity:'blocking' only when the human said never/must; set applies_to_all:true only when the rule is genuinely repo-wide (otherwise it is scoped to scope_hint_file).",
       inputSchema: {
         rule: z.string().describe("The invariant in the human's words, e.g. \"never call the pay-per-token API here\"."),
-        scope_hint_file: z.string().optional().describe("A file the correction was about; scopes the constraint to it (the conservative default)."),
+        scope_hint_file: z.string().optional().describe("A file the correction was about; scopes the constraint to it (the conservative default). Prefer a REPO-RELATIVE path (src/foo.ts); an absolute path is relativized against the repo root, and one outside the repo is discarded rather than scoped to a path that could never match."),
         severity: z.enum(["advisory", "warning", "blocking"]).optional().describe("Default 'warning'. Use 'blocking' only for a hard never/must rule."),
         applies_to_all: z.boolean().optional().describe("True ONLY if the rule is genuinely repo-wide (scopes to **); required to make a repo-wide rule blocking."),
         type: z.enum(["security", "performance", "correctness", "architecture", "compliance"]).optional(),
         rationale: z.string().optional().describe("Why it must hold."),
         source_decision: z.string().optional().describe("id of a decision this correction derives from."),
         private: z.boolean().optional().describe("write into the PRIVATE overlay store (HUNCH_PRIVATE_DIR) instead of the committed repo — a sensitive rule enforced locally (pre-edit hook + local check) but never exposed in a public PR comment. Errors if no private store is configured."),
+        capture_token: z.string().optional().describe("token from hunch_capture_decision. The rule is recorded and enforced either way — the token only decides whether it may DENY: without one it lands as advisory testimony capped at severity 'warning'."),
       },
     },
     async (input): Promise<ToolResult> => {
       try {
         if (!input.rule || !input.rule.trim()) return err("rule is required — state the invariant in plain words.");
-        const rec = buildCorrectionConstraint({ ...input, knownDeps: knownRepoDeps(root) }, new Date().toISOString());
+        // root: relativizes an ABSOLUTE scope_hint_file. Agents naturally send absolute
+        // paths (edit-tool payloads and MCP roots are absolute) and every consumer matches
+        // repo-relative — without this the rule would be blocking-but-inert and would leak
+        // the local filesystem path into the committed graph.
+        // Same authorship tier as hunch_record_decision: a consumed token mints the
+        // signature, an un-token'd write is testimony. Here the stakes are HIGHER — a
+        // blocking constraint DENIES edits, so an un-vouched write is capped at
+        // "warning" rather than being refused. Never Twice still lands immediately.
+        const vouched = consumeCaptureToken(input.capture_token);
+        const rec = buildCorrectionConstraint({ ...input, knownDeps: knownRepoDeps(root), root, vouched }, new Date().toISOString());
         // Private corrections go to the overlay (enforced locally via the merged read,
         // never rendered into the public CI comment, which is public-only by construction).
         const home = store.captureHome(!!input.private);
@@ -997,8 +1098,8 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
           return err(`Refusing to record public correction ${rec.id}: source decision ${rec.source_decision} ${location}.`);
         }
         const existing = home === "private" ? store.getPrivateRec("constraints", rec.id) : store.json.get("constraints", rec.id);
-        if (home === "private") store.putPrivate("constraints", rec);
-        else store.json.put("constraints", rec);
+        // Same cross-home twin guard as the decision path above.
+        store.putCapture("constraints", rec, !!input.private);
         store.reindex();
         // Propagate the new rule to EVERY assistant's ambient grounding (Cursor/Copilot/
         // Windsurf/AGENTS.md/CLAUDE.md), so a correction captured in one assistant is held
@@ -1010,7 +1111,7 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
         // dirty AGENTS/assistant docs. Manual mode still refreshes in place.
         if (home === "public" && !store.autoCommit) refreshExistingGrounding(root, store); // overlay rules never render into committed grounding
         const flush = flushCapture(store, hunchPaths(root).hunch, !!input.private, `hunch: capture ${rec.id}`, startupTeamRoute ?? undefined);
-        const flushed = flushNote(flush, home, store.mode);
+        const flushed = flushNote(flush, home, store.mode) + publicHomeNote(home, store.hasPrivate);
         const enforce = rec.severity === "blocking"
           ? "blocks a DIRECT edit to its scope at strict firmness, and fails a PR whose diff touches that scope (CI guard); blast-radius hits and lower firmness stay advisory"
           : "flags violating edits and PRs (advisory)";
@@ -1020,10 +1121,115 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
         // The Constraint itself is the durable retry queue. Normal `hunch index`
         // and post-commit sync rescan it; no in-process timer can be lost on exit.
         const reviewNote = "\n\nREVIEW PENDING: After the fix is committed, run hunch index; an installed post-commit hook retries this automatically on the fixing commit. Only the supported static ESM import-declaration package projection is eligible, and it remains activation-blocked; the immediate guard is already durable.";
-        return ok(`${existing ? "Updated" : "Recorded"} ${rec.severity} constraint ${rec.id}: "${rec.statement}" (scope: ${rec.scope.join(", ")}).${where} It now ${enforce}.${reviewNote}`);
+        // Say plainly which tier this landed in. A silent downgrade would be its own
+        // dishonesty: the caller asked for "blocking" and must be told it is not.
+        const tierNote = vouched
+          ? ""
+          : `
+
+⚠ Recorded WITHOUT a capture interview — this rule is agent_recorded TESTIMONY${input.severity === "blocking" ? ' and was capped from "blocking" to "warning"' : ""}. It IS enforced: the pre-edit hook and CI surface it on every matching edit from now on. What it cannot do is DENY an edit — only a rule a human countersigned may block. Countersign it by re-recording through hunch_capture_decision → hunch_record_correction(capture_token).`;
+        return ok(`${existing ? "Updated" : "Recorded"} ${rec.severity} constraint ${rec.id}: "${rec.statement}" (scope: ${rec.scope.join(", ")}).${where} It now ${enforce}.${reviewNote}${tierNote}`);
       } catch (e) {
         return err(`Failed to record correction: ${(e as Error).message}`);
       }
+    },
+  );
+
+  // -- hunch_record_finding (write-back: observations, no diff) ---------------
+  server.registerTool(
+    "hunch_record_finding",
+    {
+      title: "Record a finding (an observation with no code change)",
+      description:
+        "Persist an OBSERVATION into Hunch — audited knowledge with no diff: an audit that surfaced a gap (e.g. queries missing tenant scoping), a measured number, a vendor/platform fact, an incident with no code fix. The anchor is a date + evidence, not a commit. Advisory: it grounds future edits to the affected files/symbols (pre-edit hook + hunch_context) and is listed by hunch_findings; it never blocks. Re-record the SAME title to update triage (e.g. triage:'resolved' + resolved_commit once fixed). If the finding is a violation of a rule that ISN'T recorded yet, record the rule first (hunch_record_correction) and link it via violates_constraint.",
+      inputSchema: {
+        finding: z.object({
+          title: z.string().describe("stable one-line name — re-recording the same title updates the finding"),
+          observation: z.string().describe("what was observed, in plain words"),
+          evidence: z.array(z.string()).optional().describe("the query/command run + representative output — a finding without evidence is an opinion"),
+          method: z.string().optional().describe("rb_* runbook that re-runs the audit (makes it re-verifiable)"),
+          severity: z.enum(["low", "medium", "high", "critical"]).optional(),
+          triage: z.enum(["open", "accepted-risk", "scheduled", "resolved", "stale"]).optional().describe("default 'open'. 'resolved' should carry resolved_commit."),
+          affected_files: z.array(z.string()).optional().describe("paths or globs the observation concerns"),
+          affected_symbols: z.array(z.string()).optional().describe("symbols/objects concerned (e.g. dbo.GetOrders)"),
+          violates_constraint: z.string().optional().describe("con_* this finding is a known violation of"),
+          spawned_decision: z.string().optional().describe("dec_* recorded in response"),
+          resolved_commit: z.string().optional().describe("the commit that fixed it (with triage:'resolved')"),
+          private: z.boolean().optional().describe("write into the PRIVATE overlay store instead of the committed repo. Errors if no private store is configured."),
+        }),
+      },
+    },
+    async ({ finding }): Promise<ToolResult> => {
+      try {
+        if (!finding.title.trim()) return err("title is required.");
+        if (!finding.observation.trim()) return err("observation is required — state what you saw.");
+        const id = findingId(finding.title);
+        const home = store.captureHome(!!finding.private);
+        const existing = home === "private" ? store.getPrivateRec("findings", id) : store.json.get("findings", id);
+        const now = new Date().toISOString();
+        const triage = finding.triage ?? existing?.triage ?? "open";
+        if (triage === "resolved" && !(finding.resolved_commit ?? existing?.resolved_commit)) {
+          return err(`Refusing to mark ${id} resolved without resolved_commit — a resolution claim needs the fixing commit (or use triage:'stale' if it no longer applies).`);
+        }
+        const rec: Finding = {
+          id,
+          title: finding.title,
+          observation: finding.observation,
+          evidence: finding.evidence ?? existing?.evidence ?? [],
+          method: finding.method ?? existing?.method ?? null,
+          severity: finding.severity ?? existing?.severity ?? "medium",
+          triage,
+          affected_files: (finding.affected_files ?? existing?.affected_files ?? []).map(toPosixTarget),
+          affected_symbols: finding.affected_symbols ?? existing?.affected_symbols ?? [],
+          violates_constraint: finding.violates_constraint ?? existing?.violates_constraint ?? null,
+          spawned_decision: finding.spawned_decision ?? existing?.spawned_decision ?? null,
+          observed_at: existing?.observed_at ?? now, // first observation wins — updates re-verify, not re-date
+          resolved_commit: finding.resolved_commit ?? existing?.resolved_commit ?? null,
+          provenance: { source: "human_confirmed", confidence: 0.95, evidence: finding.evidence ?? existing?.provenance.evidence ?? [], last_verified: now },
+        };
+        store.putCapture("findings", rec, !!finding.private);
+        store.reindex();
+        const flush = flushCapture(store, hunchPaths(root).hunch, !!finding.private, `hunch: capture ${id}`, startupTeamRoute ?? undefined);
+        const flushed = flushNote(flush, home, store.mode) + publicHomeNote(home, store.hasPrivate);
+        const where = finding.private
+          ? ` [PRIVATE overlay — not committed to this repo]${flushed}`
+          : home === "private" ? ` [SHARED store — one source of truth for the whole team]${flushed}` : flushed;
+        // Advisory nudges, never gates: an unresolvable constraint link and missing
+        // evidence both record fine, but say so.
+        const danglingCon = rec.violates_constraint && !store.getRec("constraints", rec.violates_constraint)
+          ? `\n\n△ violates_constraint ${rec.violates_constraint} resolves to no known constraint — if the rule isn't recorded yet, hunch_record_correction it and re-record this finding with the real id.`
+          : "";
+        const noEvidence = rec.evidence.length ? "" : "\n\n△ No evidence attached — a finding without the query/output that produced it is an opinion. Re-record with evidence when you have it.";
+        return ok(`${existing ? "Updated" : "Recorded"} finding ${id}: "${rec.title}" (${rec.triage}/${rec.severity}, observed ${rec.observed_at.slice(0, 10)}).${where} It now grounds edits to: ${[...rec.affected_files, ...rec.affected_symbols].join(", ") || "(nothing — add affected_files/symbols so it surfaces at edit time)"}.${danglingCon}${noEvidence}`);
+      } catch (e) {
+        return err(`Failed to record finding: ${(e as Error).message}`);
+      }
+    },
+  );
+
+  // -- hunch_findings (read: the open-observations ledger) --------------------
+  server.registerTool(
+    "hunch_findings",
+    {
+      title: "Open findings for a scope",
+      description:
+        "List LIVE findings (observed gaps/debt with no fix yet — triage open/accepted-risk/scheduled) concerning a file, glob, or symbol; omit scope for the whole ledger. Call before planning work in an area to inherit past audits instead of re-discovering them. Advisory; resolved/stale findings are excluded unless all:true.",
+      inputSchema: {
+        scope: z.string().optional().describe("a path, glob, or symbol (e.g. src/procs/** or dbo.GetOrders); omit for all"),
+        all: z.boolean().optional().describe("include resolved/stale findings (the full history)"),
+      },
+    },
+    async ({ scope, all }): Promise<ToolResult> => {
+      const live = (f: Finding): boolean => f.triage === "open" || f.triage === "accepted-risk" || f.triage === "scheduled";
+      const list = (scope ? store.liveFindingsFor(scope) : store.recs("findings").filter(all ? () => true : live))
+        .filter(all ? () => true : live)
+        .sort((a, b) => (SEV_BUG[b.severity] ?? 0) - (SEV_BUG[a.severity] ?? 0) || a.id.localeCompare(b.id));
+      if (!list.length) return ok(`No ${all ? "" : "live "}findings${scope ? ` for "${scope}"` : ""}. (Record one after an audit with hunch_record_finding.)`);
+      const L = list.slice(0, FINDINGS_CAP).map((f) => {
+        const links = [f.violates_constraint ? `violates ${f.violates_constraint}` : "", f.method ? `re-verify via ${f.method}` : "", f.resolved_commit ? `fixed in ${f.resolved_commit.slice(0, 9)}` : ""].filter(Boolean).join("; ");
+        return `• [${f.triage}/${f.severity}] ${f.title} (${f.id}, observed ${f.observed_at.slice(0, 10)})\n    ${f.observation}\n    concerns: ${[...f.affected_files, ...f.affected_symbols].join(", ") || "(unscoped)"}${links ? `\n    ${links}` : ""}`;
+      });
+      return ok(`${list.length} finding(s)${scope ? ` for "${scope}"` : ""}:\n${L.join("\n")}${more(list.length, FINDINGS_CAP)}`);
     },
   );
 
@@ -1646,6 +1852,7 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
     server,
     getRoot: () => root,
     setRoot,
+    cancelPendingRoot: () => { pendingRoot = null; },
   };
 }
 
@@ -1674,6 +1881,14 @@ export function wireClientRoots(control: RootControlledServer, fallback: string)
       if (mine !== generation) return;
       const next = resolveActiveRoot((response?.roots ?? []).map((root) => root.uri), fallback);
       if (!next) {
+        // Cancel a swap parked by an EARLIER generation. setRoot defers when a tool
+        // request is in flight; if the client's advertised set has since become
+        // ambiguous, applying that stale swap once the request drains would re-home
+        // to a repo the client no longer unambiguously advertises — writing (and
+        // auto-committing) a capture into the wrong repository, which is precisely
+        // what this refusal exists to prevent. Without this the message below was
+        // also a lie: the root did NOT stay put.
+        control.cancelPendingRoot();
         console.error("[hunch-mcp] multiple client roots are equally plausible; keeping the current Hunch root");
         return;
       }

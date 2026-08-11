@@ -3,14 +3,26 @@
  * context loaded every session for free"). We own ONLY the region between the
  * HUNCH markers — any user-authored content outside it is preserved verbatim.
  */
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { readFileSync, existsSync, mkdirSync } from "node:fs";
+import { writeFileAtomic } from "../core/io.js";
+import { basename, join, dirname } from "node:path";
 import type { HunchStore } from "../store/hunchStore.js";
 import { wikiSummary } from "../wiki/wiki.js";
 import { PolicyRepository } from "../constitution/repository.js";
 
 const START = "<!-- HUNCH:START — auto-generated, do not edit by hand -->";
 const END = "<!-- HUNCH:END -->";
+
+/** Remove the managed HUNCH section (markers inclusive), leaving only the
+ *  user-authored surroundings. Lets a caller decide whether two versions of a
+ *  doc differ ONLY in generated content (the stranded-grounding heal,
+ *  fnd_b269d5c422): equal outside the block ⇒ regenerating cannot lose prose. */
+export function stripManagedSection(text: string): string {
+  const iStart = text.indexOf(START);
+  const iEnd = text.indexOf(END);
+  if (iStart < 0 || iEnd <= iStart) return text;
+  return text.slice(0, iStart) + text.slice(iEnd + END.length);
+}
 
 export function renderHunchSection(store: HunchStore, root?: string): string {
   const constraints = store.json
@@ -23,6 +35,7 @@ export function renderHunchSection(store: HunchStore, root?: string): string {
     constraints: store.json.loadAll("constraints").length,
     components: store.json.loadAll("components").length,
     policies: root ? new PolicyRepository(root, store).listPolicies({ publicOnly: true }).length : 0,
+    findings: store.json.loadAll("findings").filter((f) => f.triage === "open" || f.triage === "accepted-risk" || f.triage === "scheduled").length,
   };
 
   const lines: string[] = [];
@@ -32,7 +45,7 @@ export function renderHunchSection(store: HunchStore, root?: string): string {
   lines.push(
     "This repo has **Hunch** — a curated graph of *why* the code is the way it is " +
       "(decisions, bug history, invariants). It currently holds " +
-      `**${counts.decisions} decisions, ${counts.bugs} bugs, ${counts.constraints} constraints, ${counts.components} components, ${counts.policies} policies**.`,
+      `**${counts.decisions} decisions, ${counts.bugs} bugs, ${counts.constraints} constraints, ${counts.components} components, ${counts.policies} policies${counts.findings ? `, ${counts.findings} open findings` : ""}**.`,
   );
   lines.push("");
   lines.push("**Consult Hunch via the `hunch_*` MCP tools — pick by MOMENT, not from memory:**");
@@ -53,6 +66,7 @@ export function renderHunchSection(store: HunchStore, root?: string): string {
   lines.push("");
   lines.push("**Before editing:**");
   lines.push("- `hunch_check_constraints(scope)` and `hunch_get_dependents(symbol)` / `hunch_blast_radius(target)` — invariants in scope + who you'd break. (The pre-edit hook injects this per file automatically; call these for PLANNING breadth.)");
+  lines.push("- `hunch_findings(scope?)` — known-but-unfixed gaps in the area (past audits, measurements, incidents) so you inherit them instead of re-discovering them.");
   lines.push("");
   lines.push("**Before committing / merging:**");
   lines.push("- `hunch_conformance()` — does the code still SATISFY recorded intent? Run before and after a refactor.");
@@ -66,6 +80,7 @@ export function renderHunchSection(store: HunchStore, root?: string): string {
   lines.push("**After deciding / when corrected:**");
   lines.push("- `hunch_capture_decision(topic?)` → `hunch_record_decision(...)` — interview first, then write; status `proposed` = roadmap intent (shows in `hunch now`).");
   lines.push("- `hunch_record_correction(...)` — a human correction becomes an ENFORCED rule (Never Twice), not a one-session memory.");
+  lines.push("- `hunch_record_finding(...)` — an OBSERVATION with no code change (an audit that found a gap, a measured number, an incident) becomes durable memory anchored to a date + evidence; `/audit` runs the ritual.");
   lines.push("- `hunch_timeline(target)` — decision history when investigating how something evolved.");
   const wiki = root ? wikiSummary(root) : null;
   if (wiki) {
@@ -106,13 +121,15 @@ export function upsertSection(file: string, section: string, fallbackTitle: stri
     content = `${fallbackTitle}\n\n${section}\n`;
   }
   mkdirSync(dirname(file), { recursive: true }); // e.g. .github/ for copilot-instructions
-  writeFileSync(file, content);
+  // Atomic: this file carries the USER'S prose around the managed block — a torn
+  // write must not be able to truncate it (issue #43).
+  writeFileAtomic(file, content);
   return file;
 }
 
 /** Insert/replace the HUNCH section in CLAUDE.md, preserving everything else. */
 export function updateClaudeMd(root: string, store: HunchStore): string {
-  return upsertSection(join(root, "CLAUDE.md"), renderHunchSection(store, root), `# ${root.split("/").pop()}`);
+  return upsertSection(join(root, "CLAUDE.md"), renderHunchSection(store, root), `# ${basename(root)}`);
 }
 
 function sev(s: string): number {

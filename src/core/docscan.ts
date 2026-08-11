@@ -22,7 +22,11 @@ import { parseDocAnchors } from "./docanchors.js";
 import { currentForTopic } from "./topics.js";
 import { compareCodeUnits } from "./canonicalOrder.js";
 
-export const STALE_MARKER = /\b(proposed|not yet implemented|no code yet)\b/i;
+// Self-referential status declarations only. A bare "proposed" is too loose:
+// the auto-generated grounding block in AGENTS.md legitimately DESCRIBES the
+// proposed decision status ("candidate/proposed rules") and was graded stale
+// for it — a false alarm in the machinery that polices false alarms.
+export const STALE_MARKER = /\b(?:status|state)\s*[:\-—]\s*(?:proposed|draft)\b|\bnot yet implemented\b|\bno code yet\b/i;
 export const SRC_REF = /\bsrc\/[A-Za-z0-9_\-/]+\.ts\b/g;
 
 const SKIP_DIRS = new Set(["node_modules", ".git", ".hunch", ".hunch-private", "dist", "vscode-extension", "site"]);
@@ -104,6 +108,14 @@ export function scanRepoDocs(decisions: readonly Decision[], root: string): Repo
         issues.push(`line ${a.line}: pinned to ${a.pin} (topic "${a.topic}"), which does not exist`);
       } else if (superseded && current && current.id !== a.pin) {
         issues.push(`line ${a.line}: pinned to superseded ${a.pin}; current for "${a.topic}" is ${current.id}`);
+      } else if (pinned.status === "rejected") {
+        // The ledger tells readers to "Trust ✅". A doc pinned to an approach the team
+        // explicitly REJECTED is the opposite of grounded — and the pre-edit hook, which
+        // only injects live decisions, already disagrees with the ✅ this used to award.
+        issues.push(`line ${a.line}: pinned to ${a.pin}, a REJECTED decision (topic "${a.topic}")${current ? `; current is ${current.id}` : ""}`);
+      } else if (pinned.status === "proposed") {
+        // Roadmap intent, not an in-force answer: it neither grounds the doc nor makes
+        // it stale, so the doc falls to the honest "unverified" tier.
       } else if (!superseded) {
         groundedPins++;
       }

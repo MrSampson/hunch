@@ -126,6 +126,40 @@ export const ConformancePredicateSchema = z.object({
 });
 export type ConformancePredicate = z.infer<typeof ConformancePredicateSchema>;
 
+// A premise: the WHY under the decision, as a checkable record. Decisions decay
+// when their REASONS die, not (only) when code changes — a premise makes one
+// recorded reason watchable. Exactly one check per premise (or none: claim-only
+// premises document the reason but can never fire). Checks are deterministic and
+// explicit — path presence or a dated human attestation — never semantic guesses.
+// A failing premise NEVER changes authority; it only raises an inline escalation
+// (the human renews, supersedes, or retires — same ethos as topic anchors).
+export const PremiseSchema = z.object({
+  claim: z.string().min(1).describe("the human-readable reason this decision rests on"),
+  path_absent: z.string().optional().describe("premise holds while this repo-relative path does NOT exist. Requires `under`. PREFER path_exists where you can: a negative probe cannot tell 'verified absent' from 'wrong path', so it fails OPEN, while path_exists fails closed."),
+  under: z.string().optional().describe("required with path_absent: an EXISTING repo-relative ancestor of it. When this anchor disappears (a directory deleted or moved), the premise reads unevaluable instead of silently 'still absent'."),
+  path_exists: z.string().optional().describe("premise holds while this repo-relative path exists"),
+  review_by: z.string().optional().describe("dated attestation: premise holds until this ISO date, then needs re-attesting"),
+  attested: z.string().optional().describe("ISO date a human last attested the claim (informational)"),
+}).refine((p) => [p.path_absent, p.path_exists, p.review_by].filter((x) => x !== undefined).length <= 1, {
+  message: "a premise carries at most one check (path_absent | path_exists | review_by)",
+}).refine((p) => p.path_absent === undefined || (typeof p.under === "string" && p.under.trim().length > 0), {
+  message: "path_absent requires `under`: an existing ancestor path. Without an anchor, a deleted or renamed subtree reads as 'still absent' forever. Prefer path_exists where you can — it fails closed.",
+  path: ["under"],
+}).refine((p) => {
+  if (p.path_absent === undefined || typeof p.under !== "string") return true;
+  const norm = (s: string): string => s.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
+  const target = norm(p.path_absent);
+  const anchor = norm(p.under);
+  // Must be a real ANCESTOR, not an arbitrary existing path: `under` is what makes
+  // "absent" meaningful ("nothing named gateway UNDER src"). An unrelated anchor
+  // would prove the premise still evaluable while telling you nothing about it.
+  return anchor !== "" && target !== anchor && target.startsWith(`${anchor}/`);
+}, {
+  message: "`under` must be a proper ancestor of `path_absent` (e.g. path_absent 'src/gateway' with under 'src')",
+  path: ["under"],
+});
+export type Premise = z.infer<typeof PremiseSchema>;
+
 export const DecisionSchema = z.object({
   id: z.string().describe("dec_*"),
   title: z.string(),
@@ -157,6 +191,12 @@ export const DecisionSchema = z.object({
   valid_to: z.string().nullable().default(null).describe("ISO instant it was superseded (null = in force)"),
   retired: RetiredSignalSchema.default({ symbols: [], deps: [] }),
   conformance: z.array(ConformancePredicateSchema).optional().describe("deterministic intent-conformance checks over the graph"),
+  // Optional like `topic`/`conformance`: absent = today's behavior exactly (no
+  // migration, no new burden). Intended to be RARE — blocking constraints and
+  // contested decisions, not every record (attestation fatigue kills reminder
+  // systems). A decision with premises is "conditioned on [these]", never
+  // "verified valid" — the system watches recorded reasons only.
+  premises: z.array(PremiseSchema).optional().describe("the checkable reasons this decision rests on; a dead premise escalates, never auto-relaxes"),
   provenance: ProvenanceSchema,
   date: z.string(),
 });
@@ -248,8 +288,33 @@ export const RunbookSchema = z.object({
 });
 export type Runbook = z.infer<typeof RunbookSchema>;
 
+/** An OBSERVATION — audited knowledge with no diff (the anchor is a date + evidence,
+ *  not a commit). Fills the gap between Bug (broke and got fixed) and Decision (chose
+ *  and changed code): "we looked, we found, we haven't acted yet". Examples: an audit
+ *  that surfaced unscoped tenant queries, a measured perf number, a vendor limit, an
+ *  incident with no code fix. ADVISORY retrieval context (pre-edit grounding + MCP);
+ *  never enters any block path. Lifecycle is `triage`, not valid-time: a finding is
+ *  resolved/stale-marked, never superseded. */
+export const FindingSchema = z.object({
+  id: z.string().describe("fnd_*"),
+  title: z.string(),
+  observation: z.string().default("").describe("what was observed, in plain words"),
+  evidence: z.array(z.string()).default([]).describe("the query/command run + representative output — a finding without evidence is an opinion"),
+  method: z.string().nullable().default(null).describe("rb_* runbook that re-runs the audit (makes the finding re-verifiable)"),
+  severity: z.enum(["low", "medium", "high", "critical"]).default("medium"),
+  triage: z.enum(["open", "accepted-risk", "scheduled", "resolved", "stale"]).default("open"),
+  affected_files: z.array(z.string()).default([]).describe("concrete paths or globs the observation concerns"),
+  affected_symbols: z.array(z.string()).default([]).describe("symbols/objects concerned (e.g. dbo.GetOrders)"),
+  violates_constraint: z.string().nullable().default(null).describe("con_* this finding is a known violation of"),
+  spawned_decision: z.string().nullable().default(null).describe("dec_* recorded in response to this finding"),
+  observed_at: z.string().describe("ISO instant the observation was made — the anchor (findings have no commit)"),
+  resolved_commit: z.string().nullable().default(null).describe("the commit that fixed it (set when triage becomes resolved)"),
+  provenance: ProvenanceSchema,
+});
+export type Finding = z.infer<typeof FindingSchema>;
+
 /** The entity collections, keyed by their on-disk directory name. */
-export const ENTITY_KINDS = ["components", "edges", "symbols", "decisions", "bugs", "constraints", "runbooks"] as const;
+export const ENTITY_KINDS = ["components", "edges", "symbols", "decisions", "bugs", "constraints", "runbooks", "findings"] as const;
 export type EntityKind = (typeof ENTITY_KINDS)[number];
 
 export const SCHEMAS = {
@@ -260,6 +325,7 @@ export const SCHEMAS = {
   bugs: BugSchema,
   constraints: ConstraintSchema,
   runbooks: RunbookSchema,
+  findings: FindingSchema,
 } as const;
 
 export type EntityFor = {
@@ -270,6 +336,7 @@ export type EntityFor = {
   bugs: Bug;
   constraints: Constraint;
   runbooks: Runbook;
+  findings: Finding;
 };
 
 /** Default provenance helper for deterministic (extracted) records. */

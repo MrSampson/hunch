@@ -1,7 +1,8 @@
 {
   "id": "dec_45a4c23180",
   "title": "v0.36.0: parsed-import constraint matcher (forbids) + auto-derive on capture — replaces the shallow regex with the precise machinery the codebase already had",
-  "status": "proposed",
+  "topic": null,
+  "status": "accepted",
   "context": "Red-team of v0.35's `--match` regex confirmed two real holes: comment/string false-positives (incl. block-comment bodies) and submodule misses; and the SEAMLESS capture paths (correction, synthesis) still minted scope-only rules that silently go stale. The precise matcher already existed: the Veto Guard's tripwire ladder over analyzeDiff.addedDeps.",
   "decision": "Added `forbids: { deps, symbols, patterns }` to constraints and routed matching through a single shared matchForbids (src/core/constraintmatch.ts) that HunchStore.matchTripwire now delegates to — so the Veto Guard and content-matched constraints use ONE audited matcher. The dep tier matches the PARSED import set (addedDeps) gated by importsDep on scoped lines, so comments/strings naming the module can't false-positive and a submodule (lodash/groupBy) is caught by 'lodash' (prefix). record-constraint --forbid-dep/--forbid-symbol; --match kept as a lint-grade textual fallback (now comment-stripped via matchableCode). deriveForbids() auto-extracts a forbidden dep from a NEGATIVE natural-language rule ('never import lodash' -> deps:['lodash']; gated on a negative cue so 'always use react' never forbids react; stop-token list); wired into buildCorrectionConstraint (Never-Twice) and as a record-constraint fallback. Content-matched rules stay staleness-immune (isStrictBlocker stale=false). buildCheckReport + blockingInScope both use it (the hook parses imports from proposed lines via importedDeps).",
   "consequences": [
@@ -43,7 +44,8 @@
       "src/core/correction.ts",
       "src/cli/index.ts",
       "test/contentmatch.test.ts"
-    ]
+    ],
+    "last_verified": "2026-08-06T11:38:54.599Z"
   },
   "date": "2026-06-26T20:32:52.891Z"
 }

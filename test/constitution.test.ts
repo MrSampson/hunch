@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { HunchStore } from "../src/store/hunchStore.js";
@@ -31,6 +31,7 @@ import { policyEscalations } from "../src/core/escalations.js";
 import { directConflict } from "../src/constitution/structural.js";
 import { ensureGitignore } from "../src/integrations/gitignore.js";
 import { runSourceMutation } from "../src/constitution/sourceMutation.js";
+import { SYMLINK_SKIP } from "./helpers.js";
 
 const NOW = "2026-07-10T10:00:00.000Z";
 
@@ -61,7 +62,7 @@ function decision(id: string, opts: { private?: boolean } = {}): Decision {
 }
 
 function layeredRepo(apiBody = 'import { fetchOrders } from "../services/orders.js";\nexport function listOrders(u){ return fetchOrders(u); }\n') {
-  const root = execFileSync("mktemp", ["-d", join(tmpdir(), "hunch-constitution-XXXXXX")], { encoding: "utf8" }).trim();
+  const root = mkdtempSync(join(tmpdir(), "hunch-constitution-"));
   const git = (...args: string[]): void => { execFileSync("git", args, { cwd: root, stdio: "ignore" }); };
   git("init", "-q");
   git("config", "user.email", "test@example.com");
@@ -816,7 +817,7 @@ test("private composite receipts and member hashes never cross into the public p
 });
 
 test("private migration moves policy/proof artifacts only after validation", () => {
-  const root = execFileSync("mktemp", ["-d", join(tmpdir(), "hunch-policy-migrate-XXXXXX")], { encoding: "utf8" }).trim();
+  const root = mkdtempSync(join(tmpdir(), "hunch-policy-migrate-"));
   const privateHome = join(root, "private/.hunch");
   const publicHome = join(root, ".hunch");
   try {
@@ -859,7 +860,7 @@ test("private migration moves policy/proof artifacts only after validation", () 
 });
 
 test("private migration preserves the public source when any policy artifact is invalid", () => {
-  const root = execFileSync("mktemp", ["-d", join(tmpdir(), "hunch-policy-invalid-XXXXXX")], { encoding: "utf8" }).trim();
+  const root = mkdtempSync(join(tmpdir(), "hunch-policy-invalid-"));
   const privateHome = join(root, "private/.hunch");
   const publicHome = join(root, ".hunch");
   try {
@@ -874,7 +875,7 @@ test("private migration preserves the public source when any policy artifact is 
 });
 
 test("private migration validates late corpus artifacts before moving an earlier valid policy", () => {
-  const root = execFileSync("mktemp", ["-d", join(tmpdir(), "hunch-corpus-migrate-invalid-XXXXXX")], { encoding: "utf8" }).trim();
+  const root = mkdtempSync(join(tmpdir(), "hunch-corpus-migrate-invalid-"));
   const privateHome = join(root, "private/.hunch");
   const publicHome = join(root, ".hunch");
   const fixture = layeredRepo();
@@ -3340,7 +3341,7 @@ test("MD-1a private proof packet is byte-reusable across differently named linke
   fixture.store.close();
   const producer = `${fixture.root}-md1-producer`;
   const consumer = `${fixture.root}-md1-consumer-with-a-different-directory-name`;
-  const overlayRoot = execFileSync("mktemp", ["-d", join(tmpdir(), "hunch-md1-worktree-overlay-XXXXXX")], { encoding: "utf8" }).trim();
+  const overlayRoot = mkdtempSync(join(tmpdir(), "hunch-md1-worktree-overlay-"));
   const privateRoot = join(overlayRoot, ".hunch");
   let producerStore: HunchStore | null = null;
   let consumerStore: HunchStore | null = null;
@@ -3437,7 +3438,7 @@ test("MD-1a private proof packet is byte-reusable across differently named linke
 test("MD-1a private proof packet is byte-reusable across ordinary clones after origin is renamed", () => {
   const fixture = layeredRepo();
   fixture.store.close();
-  const base = execFileSync("mktemp", ["-d", join(tmpdir(), "hunch-md1-clone-identity-XXXXXX")], { encoding: "utf8" }).trim();
+  const base = mkdtempSync(join(tmpdir(), "hunch-md1-clone-identity-"));
   const remote = join(base, "canonical-history.git");
   const producer = join(base, "producer-checkout");
   const consumer = join(base, "consumer-checkout-with-a-different-name");
@@ -3772,8 +3773,8 @@ test("MD-1a keeps non-TypeScript/JavaScript corrections on the legacy path", () 
   }
 });
 
-test("MD-1a rejects a tracked source symlink without touching its external target", () => {
-  const outsideRoot = execFileSync("mktemp", ["-d", join(tmpdir(), "hunch-md1-symlink-target-XXXXXX")], { encoding: "utf8" }).trim();
+test("MD-1a rejects a tracked source symlink without touching its external target", { skip: SYMLINK_SKIP }, () => {
+  const outsideRoot = mkdtempSync(join(tmpdir(), "hunch-md1-symlink-target-"));
   const outsideFile = join(outsideRoot, "outside.ts");
   const outsideBytes = 'import { fetchOrders } from "./orders.js";\nexport function listOrders(u){ return fetchOrders(u); }\n';
   writeFileSync(outsideFile, outsideBytes);
@@ -3815,8 +3816,8 @@ test("MD-1a rejects a tracked source symlink without touching its external targe
   }
 });
 
-test("source mutation independently refuses a symlink and preserves the external target", () => {
-  const outsideRoot = execFileSync("mktemp", ["-d", join(tmpdir(), "hunch-mutation-symlink-target-XXXXXX")], { encoding: "utf8" }).trim();
+test("source mutation independently refuses a symlink and preserves the external target", { skip: SYMLINK_SKIP }, () => {
+  const outsideRoot = mkdtempSync(join(tmpdir(), "hunch-mutation-symlink-target-"));
   const outsideFile = join(outsideRoot, "outside.ts");
   const outsideBytes = 'import { fetchOrders } from "./orders.js";\nexport function listOrders(u){ return fetchOrders(u); }\n';
   writeFileSync(outsideFile, outsideBytes);
@@ -3834,7 +3835,25 @@ test("source mutation independently refuses a symlink and preserves the external
     const symlinkHead = commitFiles(root, ["src/api/orders.ts"], "fixture: track source symlink");
 
     const outcome = runSourceMutation(root, policy, { ...regularBase, head: symlinkHead });
-    assert.equal(outcome.error_code, "mutation-source-symlink-unsupported");
+    // Where Git materializes symlinks (POSIX; Windows with core.symlinks=true) the
+    // fresh mutation worktree contains a real symlink and the dedicated guard fires.
+    // Default Git-for-Windows (core.symlinks=false) checks the mode-120000 entry out
+    // as a PLAIN TEXT FILE holding the target path — there is no symlink to refuse,
+    // and the mutation still fails closed at the source layer: the path string
+    // either fails to parse or parses to nothing the subject can resolve to (which
+    // of the two depends on the literal bytes of the temp path). Never a mutation.
+    const gitMaterializesSymlinks = execFileSync(
+      "git", ["-C", root, "config", "--type=bool", "--default", process.platform === "win32" ? "false" : "true", "core.symlinks"],
+      { encoding: "utf8" },
+    ).trim() === "true";
+    if (gitMaterializesSymlinks) {
+      assert.equal(outcome.error_code, "mutation-source-symlink-unsupported");
+    } else {
+      assert.ok(
+        outcome.error_code === "mutation-source-unparseable" || outcome.error_code === "mutation-subject-definition-unresolved",
+        `expected a fail-closed source error, got ${outcome.error_code}`,
+      );
+    }
     assert.equal(outcome.snapshot, undefined);
     assert.equal(outcome.source_patch, undefined);
     assert.equal(readFileSync(outsideFile, "utf8"), outsideBytes);
@@ -4307,12 +4326,25 @@ test("MD-1a capture survives a dirty baseline and ordinary index retries it afte
     client = new Client({ name: "automatic-correction-upgrade-test", version: "1.0.0" });
     await client.connect(transport);
 
+    // Countersigned on purpose. This correction is later upgraded into a Constitution
+    // policy candidate ("correction reviews: 1 proved" below), and candidate eligibility
+    // has always required human_confirmed provenance (bootstrap.ts) — testimony must not
+    // become policy evidence. Since the authorship stamp, an un-token'd correction lands
+    // as agent_recorded and is capped at "warning", so it could neither block nor prove.
+    const correctionInterview = await client.callTool({
+      name: "hunch_capture_decision",
+      arguments: { topic: "transport.http-client" },
+    });
+    const correctionToken = ((correctionInterview.content[0] as { type: "text"; text: string }).text
+      .match(/capture_token:"([^"]+)"/) ?? [])[1];
+    assert.ok(correctionToken, "capture interview must mint a token");
     const capture = await client.callTool({
       name: "hunch_record_correction",
       arguments: {
         rule: "never import axios",
         scope_hint_file: "src/api/orders.ts",
         severity: "blocking",
+        capture_token: correctionToken,
         rationale: "Direct HTTP clients bypass the shared transport controls.",
       },
     });
@@ -4458,7 +4490,7 @@ test("MD-1a normal public sync folds capture, correction review, graph, and grou
 
 test("MD-1a private split sync commits its proposal only to a standalone overlay and leaves both repositories clean", () => {
   const fixture = layeredRepo('import billing from "@secret/billing";\nexport function listOrders(u){ return billing.fetch(u); }\n');
-  const overlayRoot = execFileSync("mktemp", ["-d", join(tmpdir(), "hunch-private-sync-XXXXXX")], { encoding: "utf8" }).trim();
+  const overlayRoot = mkdtempSync(join(tmpdir(), "hunch-private-sync-"));
   const privateRoot = join(overlayRoot, ".hunch");
   const projectRoot = process.cwd();
   const tsx = join(projectRoot, "node_modules/tsx/dist/cli.mjs");

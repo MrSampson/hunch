@@ -3,10 +3,70 @@
    global so it works on a static host with no build step. */
 window.POSTS = [
   {
+    slug: "only-blocks-if-you-signed",
+    title: "Hunch 1.11: a rule only blocks you if you actually signed it",
+    dek: "The scariest failure mode of an AI memory isn't forgetting — it's remembering with your voice. Three releases in one week close the gap between what an assistant believes you said and what you actually vouched for: records now carry who vouched, the reasons they rest on get checked, and blocking authority has to be countersigned by you.",
+    date: "2026-08-09", tag: "Release", read: "5 min", pinned: true,
+    body: `
+<p class="lead">An engineering memory is an <strong>authoritative channel</strong>: what it records gets injected into every assistant's context as settled truth, shown on every matching edit, enforced in CI. That's the whole point — and it's exactly why the write path is the dangerous part. Until this release line, an assistant could turn something it <em>believed</em> you'd said into a hard rule that blocks commits across your whole repository, recorded as if you had personally confirmed it. Memory poisoning is now a named risk class for agentic systems for good reason: a wrong rule that speaks with your voice is worse than no memory at all.</p>
+
+<h2>Three releases, one principle: authority is earned</h2>
+<p><strong>1.10.7 — records say who vouched for them.</strong> A decision captured through a proper interview is now marked differently from one an assistant wrote on its own initiative. The second kind still works and is still searchable; it just never carries human authority, so it can't block your commits on its own say-so. And the protection runs both ways: an assistant can no longer take your signature <em>off</em> a decision you already vouched for by re-recording it. A stray instruction in a file the agent happened to open can't produce a record that speaks as you.</p>
+<p><strong>1.10.8 — the reasons you write down actually get checked.</strong> 1.10.7 also introduced premises: the checkable reasons a decision rests on. The tool that records them described the wrong shape, so the check was silently dropped on the way in and the premise was stored as a plain note — one that can never go stale, and therefore never asks you anything. Fixed, with a test that fails if the check is ever dropped again, and with the same fail-safe rule everywhere: an unreadable clock counts as "can't tell", never as "still fine".</p>
+<p><strong>1.11.0 — blocking requires your countersignature.</strong> A correction still lands the moment it's made. It still shows up on every matching edit and in CI. What it can no longer do is <em>block</em> until you've been interviewed and countersigned it. The gap between "the assistant noted this" and "you signed this" is now structural, not stylistic — and everything already in your graph keeps the authority it has.</p>
+
+<h2>Premises: reasons that expire out loud</h2>
+<p>A decision that rests on "we don't have an API gateway yet" is only as good as that reason staying true. As of 1.11, a premise like that has to say where it's looking:</p>
+<pre><code>premise: "no gateway module exists yet"
+under: "src"</code></pre>
+<p>When that whole area is renamed or deleted, Hunch says <em>"I can't tell any more"</em> and asks you — instead of quietly reporting that nothing's changed. A dead reason never silently changes what a decision enforces; it only raises the question. <code>hunch heal</code> lists dead premises, <code>hunch drift</code> reports them, and re-attesting is a conscious act.</p>
+
+<h2>Honest limits, on the record</h2>
+<p>Two trade-offs stated plainly. A mistyped path still reads as "absent" — the checker can't tell a typo from a truth — so re-check the path when you re-attest, and prefer premises that state what <em>does</em> exist, which fail safely. And the countersign gate is deliberately one-directional: nothing already vouched-for gets demoted retroactively. Tightening the write path must never silently rewrite the graph it's protecting — that would be the exact failure it exists to prevent.</p>
+
+<h2>Upgrade</h2>
+<pre><code>npm i -g @davesheffer/hunch@1.11.0
+cd your-repo
+hunch init</code></pre>
+<p>Corrections an assistant recorded before 1.10.7 keep working as advisory context; the next time one matters enough to block, Hunch interviews you and earns the signature.</p>
+`,
+  },
+
+  {
+    slug: "memory-you-never-babysit",
+    title: "Hunch 1.9.4: memory you never have to babysit",
+    dek: "A memory tool that needs babysitting is a memory tool you stop trusting — and worse, one that can quietly record the wrong thing. v1.9.4 closes the two failure smells that corrode trust fastest: one assistant working across projects colliding with itself, and generated hooks running a different Hunch than the one that wrote them. 1.9 made memory shared; the point of everything since is to make it boring.",
+    date: "2026-07-31", tag: "Release", read: "6 min", pinned: false,
+    body: `
+<p class="lead">Engineering memory has a property most tools don't: <strong>its value collapses the moment you doubt it.</strong> A flaky linter is annoying. A flaky memory is worse than none — a decision that half-lands, a capture that files itself under the wrong project, a hook running last month's version against this month's graph doesn't just fail, it <em>records something untrue</em>, and every future session inherits the lie. <a class="link" href="/blog/post?slug=one-memory-for-the-whole-team">v1.9.0</a> made memory shared across a whole team. v1.9.4 is about the less glamorous obligation that creates: the substrate has to be boring.</p>
+
+<h2>Two failure smells every multi-project setup knows</h2>
+<p><strong>The assistant that works everywhere, colliding with itself.</strong> Modern MCP assistants hop between workspaces in one long-lived session. Until now, that shape could go wrong two ways: the server's idea of the repository root could drift when the client's workspace changed, and two decision captures landing at the same moment could step on each other. In a memory system both are corruption vectors, not inconveniences — a record attached to the wrong root is a graph that lies about which codebase learned the lesson.</p>
+<p><strong>"Works on my install."</strong> Hunch generates things that run later, elsewhere: MCP configs, git hooks, the editor plugin's launcher, the CI guard. Those used to execute whatever Hunch happened to be on the machine — a stale global install, or a retired GitHub-tarball path. The hook that captures your decisions could be a version behind the graph schema it writes into. Version skew in a compiler wastes an afternoon; version skew in a memory pipeline quietly writes yesterday's format into tomorrow's source of truth.</p>
+
+<h2>What v1.9.4 does about it</h2>
+<p><strong>Roots are honored, requests are pinned.</strong> The MCP server now tracks the client's roots across workspace changes, and every request runs against one stable store epoch — a request that starts on a graph finishes on that graph, no matter what the workspace does mid-flight. Multi-project sessions stop being a trust hazard.</p>
+<p><strong>Collisions are refused, iteration is not.</strong> Two human decision captures against the same commit now get refused instead of silently interleaved — while draft upgrades and same-topic refinements still pass. The guard distinguishes <em>conflict</em> from <em>iteration</em>: never two contradictory records from one moment, never a lock on the normal loop of sharpening a decision you're still writing.</p>
+<p><strong>Generated commands pin the release that generated them.</strong> Every MCP config, hook, plugin launcher, and CI command Hunch writes now executes the exact npm release that wrote it. The stale-global and tarball failure paths are gone, and installs stay deterministic end to end. The version that captures is the version the graph was designed for — always.</p>
+
+<h2>Boring is a security property here</h2>
+<p>This is the same principle that runs through the whole 1.9 line, applied inward. A gate can only carry authority if the machinery beneath it is deterministic: a graph that can be corrupted by a workspace race can't be trusted to block a commit, the same way a release you can't verify can't be trusted to run in CI. That's why the unglamorous releases between 1.9.0 and today were all substrate: one explicit public home for the editor companion on Open VSX (1.9.1), npm publishing through short-lived OIDC credentials with every long-lived token rejected (1.9.2), Sigstore-verified, content-addressed publication receipts (1.9.3), and now collision-safe, version-pinned execution (1.9.4). Shared, then verifiable, then boring — in that order, on purpose.</p>
+
+<h2>Honest limits, on the record</h2>
+<p>Two trade-offs worth stating plainly. The collision guard is scoped to what it can decide deterministically — simultaneous captures against the same commit; teammates racing across different commits are the Matrix merge layer's job, resolved by identity as before. And pinned launchers mean upgrades are explicit: a new Hunch version doesn't silently take over your hooks — re-running <code>hunch init</code> re-pins them. We'll take a visible upgrade step over an invisible skew every time.</p>
+
+<h2>Upgrade</h2>
+<pre><code>npm i -g @davesheffer/hunch@1.9.4
+cd your-repo
+hunch init     # re-pins generated MCP, hook, and CI commands to this release</code></pre>
+<p>Then forget about it. That's the feature.</p>
+`
+  },
+  {
     slug: "one-memory-for-the-whole-team",
     title: "Hunch 1.9: one living memory for the whole team",
     dek: "Matrix mode moves engineering memory into a dedicated private Git repository your team controls, then keeps every clone, worktree, CLI check, and connected assistant on the same live graph.",
-    date: "2026-07-22", tag: "Release", read: "5 min", pinned: true,
+    date: "2026-07-22", tag: "Release", read: "5 min", pinned: false,
     body: `
 <p class="lead">Hunch began with a deliberately simple home for engineering memory: plain JSON beside the code it explains. <strong>Version 1.9 adds Matrix mode</strong> for teams that need one memory spine across many repositories, clones, worktrees, operating systems, and coding assistants.</p>
 

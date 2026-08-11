@@ -1,7 +1,8 @@
 {
   "id": "dec_475a52fc7a",
   "title": "Implemented the corrected-strategy priorities: trustworthy-or-silent auto-capture (0.36.2) + honest guard-eval for content-matched rules (0.36.3)",
-  "status": "proposed",
+  "topic": null,
+  "status": "accepted",
   "context": "After the GOAT red-team relocated the priority to capture quality (#1) and benchmark credibility (#3) — not 'more enforcement' — implemented the two cleanest finishable items end-to-end.",
   "decision": "0.36.2 — capture quality: deriveForbids now takes the repo's real deps (knownRepoDeps from package.json) and auto-mints a dep matcher ONLY for a dep that actually exists. 'never import foo' where foo is a typo/non-dependency falls back to a scope-only rule + the warning instead of silently minting a never-firing rule (which also used to suppress the warning). Threaded through both capture paths (CLI record-constraint + hunch_record_correction via CorrectionInput.knownDeps set in the client-agnostic server). Submodule-aware; skips validation when no package.json. 0.36.3 — benchmark honesty: generateGuardCases synthesizes the REAL violation (import the forbidden dep / call the forbidden symbol) for content-matched constraints and requires a hard BLOCK, instead of a diff-less case the matcher could never trip; scope-only rules keep the surface-or-warn 'catch'. The eval number now separates rules that hard-block their real violation from rules that only warn.",
   "consequences": [
@@ -37,7 +38,8 @@
       "src/core/correction.ts",
       "src/mcp/server.ts",
       "src/eval/guards.ts"
-    ]
+    ],
+    "last_verified": "2026-08-06T11:38:48.784Z"
   },
   "date": "2026-06-26T21:03:52.171Z"
 }

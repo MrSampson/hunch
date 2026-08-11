@@ -2,7 +2,7 @@
   "id": "dec_cd37bf2d9a",
   "title": "Harness-driven auto-review: hunch auto-review delegates draft relevance to the subscription CLI, gated by the Critic (never reverses dec_a466655539)",
   "topic": "auto-review",
-  "status": "accepted",
+  "status": "superseded",
   "context": "User wanted an auto-review that delegates to the harness, dedups, auto-approves only relevant drafts, and deletes duplicates + irrelevant ones. Existing machinery already had deterministic dedup (dupdetect.draftDuplicateOf), grounding/Critic segmentation (reviewqueue.partitionReview/isReady), and CLI batch verbs (--reject-duplicates, --accept-verified). Missing piece: a per-draft RELEVANCE judgment. Doctrinal constraint: dec_a466655539 makes the human vouch / Critic gate the floor for confirmation (--accept-verified is deliberately limited to Critic-verified drafts so a machine never confirms an un-audited draft). Blocking invariant con_2ce3f2a547: synthesis must run on the subscription, stripping ANTHROPIC_API_KEY/AUTH_TOKEN.",
   "decision": "Add a `hunch auto-review` command that (1) delegates a per-draft RELEVANCE judgment to the coding-assistant CLI via a new feature-detected SynthProvider.judgeDraft (implemented on CliSynthProvider, reusing the same subscription-only run() path so API-key stripping is inherited, not re-implemented); (2) folds that RelevanceVerdict together with the two deterministic signals (draftDuplicateOf for dedup, reviewqueue.isReady for grounding/verification) in a PURE, unit-tested planner (src/core/autoreview.ts, planAutoReview) into four disjoint buckets: accept / rejectDuplicate / rejectIrrelevant / keep. The accept bucket is GATED: a draft is auto-confirmed ONLY when the Critic already verified+grounded it (isReady) AND the harness judged it relevant+non-dup — the harness verdict can VETO an accept but never CREATE one on an un-audited draft, so dec_a466655539 stays intact. Deletion happens for near-duplicates (deterministic OR harness-named restatement) and CONFIDENTLY-irrelevant drafts (harness confidence >= --min-reject-confidence, default 0.7); everything else is kept for a human. The command is DRY-RUN by default (prints the plan, changes nothing); --apply executes it, then reindex + refreshExistingGrounding. --no-llm falls back to dedup+grounding only. The VS Code extension (v0.4.0) delegates via an 'Auto-review Drafts (harness)…' action on the Review Queue group that always shows the dry-run plan in a webview and prompts before applying.",
   "consequences": [
@@ -30,11 +30,11 @@
     "vscode-extension/src/extension.ts"
   ],
   "supersedes": null,
-  "superseded_by": null,
+  "superseded_by": "dec_6c1a51eb8b",
   "caused_by_bug": null,
   "commit": null,
   "valid_from": "2026-07-09T03:36:12.644Z",
-  "valid_to": null,
+  "valid_to": "2026-07-12T07:27:23.975Z",
   "retired": {
     "symbols": [],
     "deps": []

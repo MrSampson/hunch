@@ -17,6 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { test } from "node:test";
+import { SYMLINK_SKIP } from "./helpers.js";
 
 const PROJECT_ROOT = process.cwd();
 const TSX = join(PROJECT_ROOT, "node_modules/tsx/dist/cli.mjs");
@@ -357,7 +358,7 @@ test("an existing shared-overlay CLI check refreshes a teammate's new blocking c
   }
 });
 
-test("explicit shared setup rejects an unsafe cloned overlay before integration writes", { timeout: 60_000 }, () => {
+test("explicit shared setup rejects an unsafe cloned overlay before integration writes", { timeout: 60_000, skip: SYMLINK_SKIP }, () => {
   const base = mkdtempSync(join(tmpdir(), "hunch-shared-unsafe-clone-"));
   try {
     const victim = join(base, "outside.txt");
@@ -396,7 +397,7 @@ test("explicit shared setup rejects an unsafe cloned overlay before integration 
   }
 });
 
-test("explicit shared attach rejects an unsafe fetched tree before merge or integration writes", { timeout: 60_000 }, () => {
+test("explicit shared attach rejects an unsafe fetched tree before merge or integration writes", { timeout: 60_000, skip: SYMLINK_SKIP }, () => {
   const base = mkdtempSync(join(tmpdir(), "hunch-shared-unsafe-fetch-"));
   try {
     const victim = join(base, "outside.json");
@@ -502,7 +503,14 @@ test("strict CLI refuses an existing shared overlay whose remote differs from co
   }
 });
 
-test("MCP refuses an existing shared overlay whose remote differs from committed team.json", { timeout: 90_000 }, () => {
+// Budget note (issue #56): the ASSERTION here is fast — the inner
+// runCliWithTimeout(…, 10_000, "mcp") passes, i.e. the refusal returns in under
+// 10s. The wall time is fixture setup, which spawns ~8 CLI processes through tsx;
+// on Windows that measured 88–91s against the old 90s budget, so the test was a
+// coin flip standalone and tipped over reliably under full-suite load. Budget
+// raised to match measured cost — this is not masking a hang, it is sizing the
+// harness to what it actually does.
+test("MCP refuses an existing shared overlay whose remote differs from committed team.json", { timeout: 240_000 }, () => {
   const base = mkdtempSync(join(tmpdir(), "hunch-team-remote-mismatch-mcp-"));
   try {
     const fixture = makeMismatchedTeamFixture(base, "mismatch-mcp");

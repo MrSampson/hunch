@@ -1,10 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, lstatSync, mkdtempSync, rmSync, mkdirSync, readFileSync, symlinkSync, writeFileSync, existsSync, readdirSync } from "node:fs";
+import { chmodSync, lstatSync, mkdtempSync, rmSync, mkdirSync, readFileSync, symlinkSync, utimesSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { commitAndPushHunch, pullHunch, pullHunchStatus, syncExistingHunch } from "../src/extractors/git.js";
+import { SYMLINK_SKIP, cleanupDir, shPath } from "./helpers.js";
 
 const g = (cwd: string, ...a: string[]): void => { execFileSync("git", a, { cwd, stdio: ["ignore", "ignore", "ignore"] }); };
 const cfg = (repo: string): void => { g(repo, "config", "user.email", "t@example.com"); g(repo, "config", "user.name", "T"); };
@@ -29,8 +30,9 @@ function setup(): { A: string; B: string; cleanup: () => void } {
   const A = join(base, "A"), B = join(base, "B");
   g(base, "clone", "-q", remote, A); cfg(A);
   g(base, "clone", "-q", remote, B); cfg(B);
-  return { A, B, cleanup: () => rmSync(base, { recursive: true, force: true }) };
+  return { A, B, cleanup: () => cleanupDir(base) };
 }
+
 
 /** A local overlay with one commit-capable branch pointing at a genuinely empty bare remote. */
 function setupEmptyRemote(): {
@@ -112,18 +114,20 @@ test("two-way sync: one bounded retry closes a remote advance between B's pull a
     const marker = join(B, "race-receive-pack-fired");
     const invocations = join(B, "race-receive-pack-invocations");
     const receivePack = join(B, "race-receive-pack");
+    // Paths that reach sh (the config value AND the ones embedded in the script)
+    // must be forward-slashed — sh eats backslashes outside quotes on Windows.
     writeFileSync(receivePack, [
       "#!/bin/sh",
-      `echo x >> '${invocations}'`,
-      `if [ ! -f '${marker}' ]; then`,
-      `  : > '${marker}'`,
-      `  git -C '${A}' push -q origin main`,
+      `echo x >> '${shPath(invocations)}'`,
+      `if [ ! -f '${shPath(marker)}' ]; then`,
+      `  : > '${shPath(marker)}'`,
+      `  git -C '${shPath(A)}' push -q origin main`,
       "fi",
       "exec git-receive-pack \"$1\"",
       "",
     ].join("\n"));
     chmodSync(receivePack, 0o755);
-    g(B, "config", "remote.origin.receivepack", receivePack);
+    g(B, "config", "remote.origin.receivepack", shPath(receivePack));
 
     writeDec(B, "dec_b");
     const result = commitAndPushHunch(bh, "B: race dec_b", { push: true, protectedRepoRoot: join(B, "..") });
@@ -146,14 +150,50 @@ test("two-way sync: an unchanged-upstream transport rejection is not retried", (
     const bh = join(B, ".hunch");
     const invocations = join(B, "reject-receive-pack-invocations");
     const receivePack = join(B, "reject-receive-pack");
-    writeFileSync(receivePack, ["#!/bin/sh", `echo x >> '${invocations}'`, "exit 1", ""].join("\n"));
+    writeFileSync(receivePack, ["#!/bin/sh", `echo x >> '${shPath(invocations)}'`, "exit 1", ""].join("\n"));
     chmodSync(receivePack, 0o755);
-    g(B, "config", "remote.origin.receivepack", receivePack);
+    g(B, "config", "remote.origin.receivepack", shPath(receivePack));
     writeDec(B, "dec_rejected");
     const result = commitAndPushHunch(bh, "B: rejected", { push: true, protectedRepoRoot: join(B, "..") });
     assert.equal(result, "committed");
     assert.equal(readFileSync(invocations, "utf8").trim().split("\n").length, 1,
       "a policy/auth rejection with no upstream movement must not loop");
+  } finally {
+    cleanup();
+  }
+});
+
+test("a stale index.lock stranded by an earlier interrupted git is healed and the flush commits (issue #53)", () => {
+  const { B, cleanup } = setup();
+  try {
+    const bh = join(B, ".hunch");
+    writeDec(B, "dec_after_stranding");
+    // A lock left by a crashed/killed git: old mtime proves no living owner
+    // (every Hunch git spawn times out far sooner than the staleness window).
+    const lock = join(B, ".git", "index.lock");
+    writeFileSync(lock, "");
+    const old = new Date(Date.now() - 5 * 60_000);
+    utimesSync(lock, old, old);
+
+    const result = commitAndPushHunch(bh, "B: heal the wedge", { push: true, protectedRepoRoot: join(B, "..") });
+    assert.equal(result, "pushed", "the flush must heal the stale lock and commit, not silently no-op");
+    assert.equal(existsSync(lock), false, "the stranded lock is gone");
+    assert.ok(decFiles(bh).includes("dec_after_stranding.json"));
+  } finally {
+    cleanup();
+  }
+});
+
+test("a FRESH index.lock (a live git may own it) is never removed by the flush", () => {
+  const { B, cleanup } = setup();
+  try {
+    const bh = join(B, ".hunch");
+    writeDec(B, "dec_live_lock");
+    const lock = join(B, ".git", "index.lock");
+    writeFileSync(lock, ""); // just created — could belong to a running git
+    const result = commitAndPushHunch(bh, "B: must not steal a live lock", { push: true, protectedRepoRoot: join(B, "..") });
+    assert.equal(result, null, "with a possibly-live lock the flush stays a quiet no-op");
+    assert.equal(existsSync(lock), true, "a fresh lock is left for its owner");
   } finally {
     cleanup();
   }
@@ -308,7 +348,7 @@ test("read-side sync refuses dirty memory without invoking the structured merge 
   }
 });
 
-test("read-side sync rejects a later unsafe remote tree and preserves the prior checked-out bytes", () => {
+test("read-side sync rejects a later unsafe remote tree and preserves the prior checked-out bytes", { skip: SYMLINK_SKIP }, () => {
   const { A, B, cleanup } = setup();
   try {
     const ah = join(A, ".hunch"), bh = join(B, ".hunch");
@@ -504,7 +544,7 @@ test("read-side sync times out a slow remote and releases its lock cleanly", () 
     const started = Date.now();
     const status = pullHunchStatus(bh, {
       timeoutMs: 100,
-      env: { ...process.env, GIT_SSH_COMMAND: fakeSsh },
+      env: { ...process.env, GIT_SSH_COMMAND: shPath(fakeSsh) },
     });
     const elapsed = Date.now() - started;
     assert.equal(status, "failed");

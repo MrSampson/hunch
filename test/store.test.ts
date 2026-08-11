@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { tempStore, prov } from "./helpers.js";
 import { openMemoryDb, type DB } from "../src/store/db.js";
 
@@ -44,6 +46,73 @@ test("why() returns decisions/bugs/constraints for a file", () => {
   assert.deepEqual(w.decisions.map((d) => d.id), ["dec_1"]);
   assert.deepEqual(w.bugs.map((b) => b.id), ["bug_1"]);
   assert.deepEqual(w.constraints.map((c) => c.id), ["con_1"]);
+  cleanup();
+});
+
+test("a 0-byte per-record file (merge-driver tombstone) loads as absent — no corrupt warning, no record (issue #37)", () => {
+  const { store, root, cleanup } = seed();
+  writeFileSync(join(root, ".hunch", "decisions", "dec_tombstone.json"), "");
+  const warns: string[] = [];
+  const orig = console.warn;
+  console.warn = (msg: string) => { warns.push(String(msg)); };
+  try {
+    const ids = store.json.loadAll("decisions").map((d) => d.id);
+    assert.ok(ids.includes("dec_1"), "real records still load");
+    assert.ok(!ids.includes("dec_tombstone"), "the tombstone contributes no record");
+    assert.deepEqual(warns.filter((w) => w.includes("tombstone")), [], "sanity");
+    assert.deepEqual(warns.filter((w) => w.includes("corrupt")), [], "no corrupt-warning treadmill for a tombstone");
+  } finally {
+    console.warn = orig;
+    cleanup();
+  }
+});
+
+test("why() matches on path segments, never a bare suffix — 'io.ts' must not pull 'scenario.ts' records (issue #32)", () => {
+  const { store, cleanup } = seed();
+  store.json.put("symbols", { id: "sym_scen", file: "src/x/scenario.ts", name: "scen", kind: "function", signature_hash: "", calls: [], called_by: [], metrics: { loc: 5, churn_90d: 0, bug_count: 0, fan_in: 0, fan_out: 0 }, last_changed: "" } as never);
+  store.json.put("decisions", { id: "dec_scen", title: "Scenario decision", status: "accepted", context: "", decision: "x", consequences: [], alternatives_rejected: [], related_components: [], related_files: ["src/x/scenario.ts"], supersedes: null, caused_by_bug: null, commit: null, provenance: prov(0.9), date: "2026-06-01T00:00:00Z" } as never);
+  store.reindex();
+  const w = store.why("io.ts"); // "scenario.ts".endsWith("io.ts") is true — must NOT match
+  assert.deepEqual(w.symbols.map((s) => s.id), [], "no symbol matches a bare suffix");
+  assert.deepEqual(w.decisions.map((d) => d.id), [], "no decision matches a bare suffix");
+  // Segment-anchored suffix still works: the intended convenience is intact.
+  const anchored = store.why("x/scenario.ts");
+  assert.deepEqual(anchored.decisions.map((d) => d.id), ["dec_scen"]);
+  cleanup();
+});
+
+test("replaceAll writes new records BEFORE deleting stale ones — a mid-operation failure never empties the kind (issue #30)", () => {
+  const { store, root, cleanup } = seed();
+  store.json.put("decisions", { id: "dec_keeper", title: "keeper", status: "accepted", context: "", decision: "", consequences: [], alternatives_rejected: [], related_components: [], related_files: [], supersedes: null, caused_by_bug: null, commit: null, provenance: prov(0.9), date: "2026-06-01T00:00:00Z" } as never);
+  // Second record is oversized: with write-first ordering the operation throws
+  // DURING the write phase, before any delete ran — every pre-existing record
+  // must still be on disk (the old delete-all-first ordering left the kind empty).
+  const huge = "x".repeat(9 * 1024 * 1024);
+  assert.throws(() => store.json.replaceAll("decisions", [
+    { id: "dec_new_ok", title: "ok", status: "accepted", context: "", decision: "", consequences: [], alternatives_rejected: [], related_components: [], related_files: [], supersedes: null, caused_by_bug: null, commit: null, provenance: prov(0.9), date: "2026-06-01T00:00:00Z" },
+    { id: "dec_new_huge", title: "huge", status: "accepted", context: huge, decision: "", consequences: [], alternatives_rejected: [], related_components: [], related_files: [], supersedes: null, caused_by_bug: null, commit: null, provenance: prov(0.9), date: "2026-06-01T00:00:00Z" },
+  ] as never));
+  const ids = store.json.loadAll("decisions").map((d) => d.id);
+  assert.ok(ids.includes("dec_1"), "pre-existing record survives the failed replace");
+  assert.ok(ids.includes("dec_keeper"), "pre-existing record survives the failed replace");
+  // And a SUCCESSFUL replace still removes stale records and lands the new set.
+  store.json.replaceAll("decisions", [
+    { id: "dec_only", title: "only", status: "accepted", context: "", decision: "", consequences: [], alternatives_rejected: [], related_components: [], related_files: [], supersedes: null, caused_by_bug: null, commit: null, provenance: prov(0.9), date: "2026-06-01T00:00:00Z" },
+  ] as never);
+  assert.deepEqual(store.json.loadAll("decisions").map((d) => d.id), ["dec_only"]);
+  void root;
+  cleanup();
+});
+
+test("single-file RMW lock: a stale .rmw-lock is taken over and the write lands; the lock is released after (issue #35)", () => {
+  const { store, root, cleanup } = seed();
+  const lock = join(root, ".hunch", "edges", ".rmw-lock");
+  mkdirSync(lock, { recursive: true });
+  const old = new Date(Date.now() - 60_000);
+  utimesSync(lock, old, old); // provably ownerless — every RMW holds it for milliseconds
+  store.json.put("edges", { id: "e_lock", from: "sym_a", to: "sym_b", type: "calls", reason: "", strength: 1, provenance: prov() } as never);
+  assert.ok(store.json.loadAll("edges").some((e) => e.id === "e_lock"), "the write proceeded through the stale lock");
+  assert.equal(existsSync(lock), false, "the lock is released after the write");
   cleanup();
 });
 

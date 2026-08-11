@@ -24,6 +24,22 @@ export function isLive(d: Decision): boolean {
   return d.status === "accepted" && d.superseded_by === null && d.valid_to === null;
 }
 
+/** In force for ENFORCEMENT — the one predicate every guard must share.
+ *
+ *  Deliberately BROADER than `isLive`: a `proposed` draft still contributes ADVISORY
+ *  signal (its tripwires are `llm_draft`, which `isVetoBlocker` can never promote to a
+ *  block), and that is the curate loop working as designed. What must never contribute
+ *  is a decision the team formally REJECTED, or one whose valid-time window was closed.
+ *
+ *  The guards previously each inlined a weaker `superseded`-only copy of this test, so a
+ *  REJECTED decision kept driving the veto, regression, retired-symbol and conformance
+ *  guards — it went on blocking commits and injecting "don't re-add this" into the
+ *  pre-edit hook, with no way to un-stick it short of hand-editing the JSON. Structural
+ *  parameter so the strict gate (which sees only a partial record) shares it too. */
+export function isInForce(d: { status?: string; superseded_by?: string | null; valid_to?: string | null }): boolean {
+  return d.status !== "superseded" && d.status !== "rejected" && !d.superseded_by && !d.valid_to;
+}
+
 /** Every live decision anchored to `topic`. In a healthy graph this is length 0 or 1;
  *  length > 1 is a topic collision the §4 resolution must settle. */
 export function liveForTopic(decisions: readonly Decision[], topic: string): Decision[] {
@@ -74,13 +90,48 @@ export function captureConflicts(
  *  assembleContext, so no freshness re-check is needed here — a superseded-only-anchored
  *  file is caught by the anchor-stale drift check, and the commit-time staleness gate
  *  applies the age-downgrade. Returns "" when no anchored decision governs the file. */
-export function renderGrounding(fileDecisions: readonly Decision[]): string {
+export function renderGrounding(
+  fileDecisions: readonly Decision[],
+  allDecisions: readonly Decision[] = fileDecisions,
+): string {
+  // A CONTESTED topic must never be stated as authority. This is the same fail-safe
+  // currentForTopic applies (`live.length === 1 ? live[0] : null`) and renderDocGrounding
+  // already honours — this reader was the one that bypassed it, filtering per-decision
+  // instead of per-topic. Two live decisions on one topic each got their own assertive
+  // bullet, and because each bullet lists what it REJECTED, the agent was told, in the
+  // last context before it writes, that both answers are correct and each is forbidden.
+  //
+  // `allDecisions` is the FULL set, not the file slice, on purpose: the colliding pair
+  // can name different files, so a file-scoped check would see one decision, call it
+  // uncontested, and assert it as THE answer while the topic is globally disputed.
+  const contested = topicCollisions(allDecisions);
   const anchored = fileDecisions.filter((d) => d.topic && isLive(d));
   if (!anchored.length) return "";
-  const lines = anchored.map((d) => {
+  const settled = anchored.filter((d) => !contested.has(d.topic!));
+  const disputed = [...new Set(anchored.filter((d) => contested.has(d.topic!)).map((d) => d.topic!))].sort();
+
+  const lines = settled.map((d) => {
     const rej = d.alternatives_rejected.length ? ` (rejected: ${d.alternatives_rejected.join("; ")})` : "";
-    return `• "${d.topic}": ${d.decision || d.title} [${d.id}]${rej}`;
+    // Memory supply chain: an agent-recorded decision (no capture interview, no
+    // human countersign) is TESTIMONY. It still grounds — but never with the same
+    // voice as a human-confirmed record, because this block is delivered with
+    // doc-precedence framing ("follow the graph") and would otherwise launder an
+    // unvouched write into the most trusted context the next agent sees.
+    // Token-aware match (mirrors strictgate.isHumanConfirmed; not imported — that
+    // module imports this one).
+    const testimony = d.provenance.source.split("+").includes("agent_recorded")
+      ? " — ⚠ agent-recorded testimony, no human countersign yet (/capture confirms it)"
+      : "";
+    return `• "${d.topic}": ${d.decision || d.title} [${d.id}]${rej}${testimony}`;
   });
+  // Name the conflict instead of silently dropping it: an unexplained absence would read
+  // as "nothing is recorded here", which is how a contested topic gets re-decided by
+  // accident. This is a question for the human, never an answer for the agent.
+  for (const topic of disputed) {
+    const ids = contested.get(topic)!.map((d) => d.id).join(", ");
+    lines.push(`• "${topic}": ⚠ UNRESOLVED — ${contested.get(topic)!.length} live decisions (${ids}). No current answer; ask the human before choosing. Resolve with \`hunch reconcile-topics\` (supersede one, or split the topic).`);
+  }
+  if (!lines.length) return "";
   return `🧭 Hunch grounding — this file is anchored to recorded decisions; follow the graph, not a stale doc:\n${lines.join("\n")}`;
 }
 

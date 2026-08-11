@@ -8,6 +8,7 @@
  *   - buildCorrectionConstraint(): mint the Constraint record (human-confirmed,
  *     scoped conservatively) that the pre-edit hook + CI guard then enforce.
  */
+import { isAbsolute, relative } from "node:path";
 import { constraintId } from "./ids.js";
 import { toPosixTarget } from "./paths.js";
 import { deriveForbids } from "./constraintmatch.js";
@@ -61,6 +62,39 @@ export interface CorrectionInput {
    *  auto-derived ONLY for a dep that actually exists — so a non-dependency phrasing
    *  never silently mints a never-firing rule. */
   knownDeps?: string[];
+  /** Repo root, used to relativize an ABSOLUTE `scope_hint_file`. Agents naturally
+   *  produce absolute paths (edit-tool payloads and MCP roots are absolute), but every
+   *  consumer matches repo-relative paths — so without this an absolute hint mints a
+   *  scope that can never match. */
+  root?: string;
+  /** True when a capture token was CONSUMED for this write — proof a grilling interview
+   *  preceded it. Determines the TIER, never whether the write lands: an un-vouched
+   *  correction still records immediately and still surfaces at edit time and in CI.
+   *  Only the authority to DENY waits for a countersign. */
+  vouched?: boolean;
+}
+
+/** Normalize a scope hint to a repo-relative POSIX path.
+ *
+ *  An ABSOLUTE hint is the shape an agent naturally sends, but `checkConstraints`
+ *  anchors its globs at `^` against repo-relative paths, so an absolute scope matches
+ *  NOTHING — while the constraint keeps `severity: "blocking"` and
+ *  `provenance: human_confirmed`, and the MCP tool affirmatively reports it as enforced
+ *  at edit time and in CI. It also leaks the developer's local filesystem path into the
+ *  committed graph and CLAUDE.md.
+ *
+ *  Returns "" when the hint cannot be made repo-relative (no root, or a path outside the
+ *  repo). The caller then falls back to "**", where the existing severity guard
+ *  down-ranks a non-explicit blocking rule to a warning — fail-safe and honest, rather
+ *  than a blocking rule enforced nowhere. */
+function repoRelativeHint(rawHint: string, root?: string): string {
+  if (!rawHint) return "";
+  const looksAbsolute = isAbsolute(rawHint) || /^[a-zA-Z]:/.test(rawHint);
+  if (!looksAbsolute) return rawHint;
+  if (!root) return "";
+  const rel = toPosixTarget(relative(root, rawHint));
+  if (!rel || rel === ".." || rel.startsWith("../") || isAbsolute(rel) || /^[a-zA-Z]:/.test(rel)) return "";
+  return rel;
 }
 
 /**
@@ -77,12 +111,24 @@ export function buildCorrectionConstraint(input: CorrectionInput, now: string): 
   // A blank/"." scope hint would mint a meaningless or repo-wide constraint by
   // accident, so fall back to "**" (which the severity guard below then keeps
   // non-blocking unless applies_to_all was explicitly set).
-  const hinted = input.scope_hint_file ? toPosixTarget(input.scope_hint_file) : "";
+  const hinted = repoRelativeHint(input.scope_hint_file ? toPosixTarget(input.scope_hint_file) : "", input.root);
   const scope = input.applies_to_all || !hinted || hinted === "." ? ["**"] : [hinted];
   const repoWide = scope.length === 1 && scope[0] === "**";
 
   let severity: "advisory" | "warning" | "blocking" = input.severity ?? "warning";
   if (severity === "blocking" && repoWide && !input.applies_to_all) severity = "warning";
+  // AUTHORSHIP TIER. This function hardcoded provenance human_confirmed @1, and
+  // isStrictBlocker treats human_confirmed + blocking as a DENY — so an un-interviewed
+  // agent call could mint a repo-wide deny carrying a signature nobody gave. That made
+  // the highest-authority write path the least gated one, and strictly worse than
+  // hunch_record_decision, which only ever produced advisory memory and is now tiered.
+  //
+  // The token sets the TIER, never whether the write lands. An un-vouched correction is
+  // still recorded immediately and still held against every assistant at edit time and
+  // in CI — Never Twice keeps its promise. What waits for a countersign is only the
+  // authority to DENY.
+  const vouched = input.vouched !== false;
+  if (!vouched && severity === "blocking") severity = "warning";
 
   return {
     id: constraintId(rule),
@@ -97,12 +143,20 @@ export function buildCorrectionConstraint(input: CorrectionInput, now: string): 
     // rule that goes stale. Validated against the repo's real deps when supplied → never mints a
     // never-firing rule for a non-dependency. null when nothing derivable → falls back to scope.
     forbids: deriveForbids(rule, input.knownDeps),
-    rationale: input.rationale ?? "Captured from a human correction of the agent (Never Twice).",
+    rationale: input.rationale ?? (vouched
+      ? "Captured from a human correction of the agent (Never Twice)."
+      : "Recorded by the agent as a correction, WITHOUT a capture interview — advisory testimony until a human countersigns it via /capture (Never Twice)."),
     source_decision: input.source_decision ?? null,
     violations: [],
     status: "active",
     valid_from: now,
     valid_to: null,
-    provenance: { source: "human_confirmed", confidence: 1, evidence: [], last_verified: now },
+    // The signature is EARNED, not assumed. isStrictBlocker treats human_confirmed as
+    // authority to deny, so stamping it on an un-interviewed write forges the one thing
+    // the strict gate trusts. agent_recorded is the same tier hunch_record_decision uses
+    // for an un-token'd write — advisory, real, and honest about who wrote it.
+    provenance: vouched
+      ? { source: "human_confirmed", confidence: 1, evidence: [], last_verified: now }
+      : { source: "agent_recorded", confidence: 0.75, evidence: [], last_verified: now },
   } as Constraint;
 }

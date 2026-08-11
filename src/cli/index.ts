@@ -48,7 +48,7 @@ import { runbookId, decisionId } from "../core/ids.js";
 import { deriveForbids, effectiveForbids } from "../core/constraintmatch.js";
 import type { Runbook } from "../core/types.js";
 import { extractInlineIntent } from "../extractors/comments.js";
-import { renderText, renderMarkdown, renderImpact, reportFailsStrict, type CheckReport } from "../core/checkreport.js";
+import { renderText, renderMarkdown, renderSarif, renderImpact, reportFailsStrict, type CheckReport, type SarifExtras } from "../core/checkreport.js";
 import { partitionReview, isReviewDraft, READY_MIN_GROUNDED, type ReviewItem } from "../core/reviewqueue.js";
 import { installPostCommitHook, installPreCommitHook } from "../integrations/hooks.js";
 import { ensureSharedOverlayPointer } from "../integrations/worktree.js";
@@ -66,7 +66,8 @@ import { blockingInScope, vetoInScope, proposedEditLines } from "../core/hookpol
 import { isHumanConfirmed } from "../core/strictgate.js";
 import { appendEvent, readEvents } from "../core/events.js";
 import { computeStats, formatStats } from "../core/stats.js";
-import { injectionMode } from "../core/hookcache.js";
+import { injectionMode, resetSessionInjections } from "../core/hookcache.js";
+import { recordServed, servedSummary } from "../core/served.js";
 import { contextHookOutput, denyHookOutput, hookProvider, normalizeHookEvent, stopHookOutput, type HookProvider } from "../core/agenthook.js";
 import {
   PIPELINE_LOOP,
@@ -89,8 +90,9 @@ import { computeDrift } from "../core/drift.js";
 import { renderCompilerScorecard, scoreCompilerCaseBank } from "../constitution/scorecard.js";
 import { generateWiki, wikiStatus, wikiPrompt, publicHome, privateHome, readWikiManifestAt, nowData, type WikiPack } from "../wiki/wiki.js";
 import { adoptProsePrompt } from "../wiki/adopt.js";
-import { topicCollisions, renderGrounding } from "../core/topics.js";
+import { topicCollisions, renderGrounding, isInForce } from "../core/topics.js";
 import { pendingEscalations, policyEscalations } from "../core/escalations.js";
+import { premiseEscalations } from "../core/premises.js";
 import { parseDocAnchors, renderDocGrounding } from "../core/docanchors.js";
 import { compareCandidates } from "../core/compare.js";
 import { checkConformance } from "../core/conformance.js";
@@ -105,7 +107,7 @@ import { subscriptionCliVersion } from "../constitution/experimentRunner.js";
 import type { CompileExperimentCaseBankInput } from "../constitution/experiment.js";
 import { draftTripwires, knownRepoDeps } from "../synthesis/tripwires.js";
 import { constraintId } from "../core/ids.js";
-import type { Constraint, Decision } from "../core/types.js";
+import type { Constraint, Decision, Finding } from "../core/types.js";
 import { readManifest, writeManifest, SCHEMA_VERSION } from "../core/migrate.js";
 import { mergeHunchJson } from "../store/merge.js";
 import { movePublicMemoryToPrivate } from "../store/privateMigrate.js";
@@ -259,10 +261,25 @@ program
     // the gitignored local.json (merge — never clobber an existing overlay pointer).
     if (opts.autoCommit === false) {
       const localFile = join(paths.hunch, "local.json");
-      let existing: Record<string, unknown> = {};
-      try { existing = JSON.parse(readFileSync(localFile, "utf8")) as Record<string, unknown>; } catch { /* absent/invalid → fresh */ }
-      writeFileAtomic(localFile, JSON.stringify({ ...existing, autoCommit: false }, null, 2) + "\n");
-      console.log("  ✓ auto-commit OFF (captures stay uncommitted; commit .hunch/ yourself)");
+      let existing: Record<string, unknown> | null = {};
+      if (existsSync(localFile)) {
+        // Same contract as every other writer of this file (issue #40): an
+        // unparseable or non-object local.json may hold the private-overlay
+        // pointer — rewriting it from a swallowed parse failure silently
+        // re-routes private captures into the committed public store.
+        try {
+          const parsed: unknown = JSON.parse(readFileSync(localFile, "utf8"));
+          existing = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+        } catch {
+          existing = null;
+        }
+      }
+      if (existing === null) {
+        console.warn(`  ⚠ refusing to rewrite ${localFile}: it is not a JSON object and may hold your private-overlay pointer. Fix or remove it, then re-run \`hunch init --no-auto-commit\`.`);
+      } else {
+        writeFileAtomic(localFile, JSON.stringify({ ...existing, autoCommit: false }, null, 2) + "\n");
+        console.log("  ✓ auto-commit OFF (captures stay uncommitted; commit .hunch/ yourself)");
+      }
     }
 
     if (isGitRepo(root)) {
@@ -294,7 +311,10 @@ program
       console.log(`  ⚠ skipped .mcp.json: ${(e as Error).message}`);
     }
     const cmds = writeSlashCommands(root);
-    console.log(`  ✓ wrote ${cmds.length} slash commands (/hunch-why, /hunch-fix, /hunch-fragile)`);
+    console.log(`  ✓ wrote ${cmds.written.length} slash commands (/hunch-why, /hunch-fix, /hunch-fragile, /capture, /heal, /audit)`);
+    for (const s of cmds.skipped) {
+      console.log(`  ⚠ kept your existing ${rel(root, s)} (no hunch:generated marker — delete the file and re-run init to adopt Hunch's version)`);
+    }
     const cmd = updateClaudeMd(root, store);
     console.log(`  ✓ updated ${rel(root, cmd)} with ambient Hunch context`);
 
@@ -415,7 +435,11 @@ program
     // commit is drafted — not per-commit, and not under --deep (an ensemble may
     // fan out to several distinct workers, each with its own configuration).
     if (!opts.deep && commits.length > 0) {
-      const ctxProvider = await selectProvider();
+      // { root }: the advisory must resolve the SAME provider the synthesis
+      // inside syncCommit resolves (persisted local.json preference included) —
+      // rootless resolution could grade a different provider and swallow the
+      // num_ctx warning for an actual Ollama run (issue #46).
+      const ctxProvider = await selectProvider({ root });
       const ctxWarning = await maybeWarnOllamaContext(ctxProvider.name, process.env);
       if (ctxWarning) console.log(ctxWarning);
     }
@@ -3015,13 +3039,16 @@ program
   .option("--commit <sha>", "check a specific commit's files")
   .option("--base <ref>", "check a PR/branch: files changed vs <ref> (e.g. origin/main) — for CI")
   .option("--strict", "exit non-zero ONLY on a direct, high-confidence, non-stale blocking invariant (near/stale/low-confidence stay advisory)")
-  .option("--format <fmt>", "output: text (default) | markdown (a PR comment)", "text")
+  .option("--format <fmt>", "output: text (default) | markdown (a PR comment) | sarif (SARIF 2.1.0 for code scanning)", "text")
   .option("--blast", "also print the dependency blast radius of the changed files")
   .option("--public-only", "exclude the private overlay (HUNCH_PRIVATE_DIR) from the report — use for any output that may be posted publicly (the CI PR comment passes this)")
   .action((opts: { staged?: boolean; working?: boolean; commit?: string; base?: string; strict?: boolean; format?: string; blast?: boolean; publicOnly?: boolean }) => {
     const sources = [opts.commit && "--commit", opts.base && "--base", opts.staged && "--staged", opts.working && "--working"].filter(Boolean);
     if (sources.length > 1) return fail(`pick one of --staged / --working / --commit / --base (got ${sources.join(", ")})`);
     const markdown = opts.format === "markdown";
+    // SARIF collects every gate family into ONE JSON document at the end, so all
+    // interleaved section prints are suppressed for this format.
+    const sarif = opts.format === "sarif";
     const emptyReport: CheckReport = { fileCount: 0, strict: !!opts.strict, direct: [], near: [], regressions: [], vetoes: [], redundant: [], strictBlockers: 0, regBlocking: 0, vetoBlocking: 0 };
 
     const { store, root, teamPullStatus } = storeFor({ requireFreshTeamMemory: !!opts.strict && !opts.publicOnly });
@@ -3069,7 +3096,7 @@ program
       ? sourceGraphSnapshot(root, graphScan.source, graphScan.symbols, graphScan.edges, graphScan.components)
       : undefined;
     const semanticIssues = graphScan?.issues ?? [];
-    if (semanticIssues.length) {
+    if (semanticIssues.length && !sarif) {
       if (markdown) {
         console.log(`\n### ‼ Incomplete semantic source scan — ${semanticIssues.length} file(s) rejected\n`);
         for (const issue of semanticIssues) console.log(`- **${issue.path}** — ${issue.detail} (${issue.code})`);
@@ -3079,25 +3106,29 @@ program
         console.log("   Strict mode fails closed because an omitted source file could hide a semantic violation.");
       }
     }
-    if (!files.length) {
-      console.log(markdown ? renderMarkdown(emptyReport) : "No changed files to check.");
-      if (teamFreshnessFailure) fail(teamFreshnessFailure);
-      if (opts.strict && semanticIssues.length) process.exitCode = 1;
-      store.close();
-      return;
-    }
     // DIRECT (scope match) + NEAR (blast radius) + REGRESSION (re-added retired
     // code) + REDUNDANT (adds a symbol already defined elsewhere — advisory) + the
     // hardened strict gate + causal `why` citations — all assembled by the shared
     // store.buildCheckReport (also used by the hunch_merge_verdict tool).
-    const diff = exactCommit ? commitDiff(exactCommit, root) : opts.base ? rangeDiff(opts.base, root) : opts.working ? workingDiff(root) : stagedDiff(root);
-    const report: CheckReport = store.buildCheckReport(files, diff, {
-      strict: !!opts.strict,
-      lastChange: (f) => lastChangeDate(f, root),
-      publicOnly: !!opts.publicOnly,
-    });
-
-    if (opts.blast && !markdown) {
+    //
+    // A ZERO-FILE diff must NOT short-circuit the run: the per-file report has nothing
+    // to say, but the GRAPH-WIDE gates below (Architectural Conformance and Constitution
+    // policy) ask "does the code, right now, still satisfy recorded intent?" — a question
+    // independent of what this diff touched. Returning early here made a delete-only PR a
+    // vacuous green (deletions are excluded by the enumerators' --diff-filter=ACMR, so
+    // such a PR enumerates zero files) — including a deletion of the very symbol a
+    // blocking conformance predicate or an active policy guards.
+    const diff = files.length
+      ? (exactCommit ? commitDiff(exactCommit, root) : opts.base ? rangeDiff(opts.base, root) : opts.working ? workingDiff(root) : stagedDiff(root))
+      : "";
+    const report: CheckReport = files.length
+      ? store.buildCheckReport(files, diff, {
+        strict: !!opts.strict,
+        lastChange: (f) => lastChangeDate(f, root),
+        publicOnly: !!opts.publicOnly,
+      })
+      : emptyReport;
+    if (opts.blast && !markdown && !sarif && files.length) {
       console.log(`Blast radius of ${files.length} changed file(s):`);
       for (const f of files) {
         const b = store.blastRadiusFiles(f);
@@ -3107,7 +3138,11 @@ program
       console.log("");
     }
 
-    console.log(markdown ? renderMarkdown(report) : renderText(report));
+    if (!sarif) {
+      console.log(files.length
+        ? (markdown ? renderMarkdown(report) : renderText(report))
+        : (markdown ? renderMarkdown(emptyReport) : "No changed files to check."));
+    }
 
     // ARCHITECTURAL CONFORMANCE: does the RESULTING code still satisfy every recorded
     // architectural invariant? This is graph-reachability, not a diff — so it catches semantic
@@ -3121,7 +3156,7 @@ program
           graph: { symbols: graphScan!.symbols, edges: graphScan!.edges },
         }).filter((c) => !c.satisfied)
       : [];
-    if (confViolations.length) {
+    if (confViolations.length && !sarif) {
       if (markdown) {
         console.log(`\n### ⛔ Architectural conformance — ${confViolations.length} invariant(s) violated\n`);
         for (const c of confViolations) {
@@ -3153,7 +3188,7 @@ program
     const policyResults = hasActivePolicies
       ? constitution.evaluate({ activeOnly: true, publicOnly: !!opts.publicOnly, behavior, snapshot: staticSnapshot })
       : [];
-    if (policyResults.length) {
+    if (policyResults.length && !sarif) {
       if (markdown) {
         console.log(`\n### 📜 Hunch Constitution — ${policyResults.length} policy receipt(s)\n`);
         for (const r of policyResults) {
@@ -3165,6 +3200,25 @@ program
         console.log("");
         renderPolicyEvaluations(policyResults).forEach((line) => console.log(line));
       }
+    }
+
+    if (sarif) {
+      const extras: SarifExtras = {
+        conformance: confViolations.map((c) => {
+          const dec = store.json.get("decisions", c.decision);
+          return { decision: c.decision, title: c.title, detail: c.detail, ...(dec?.context ? { why: dec.context } : {}), ...(dec?.caused_by_bug ? { bug: dec.caused_by_bug } : {}) };
+        }),
+        policies: policyResults.map((r) => ({
+          id: r.policy.id,
+          result: r.evaluation.result,
+          explanation: r.evaluation.explanation,
+          blocks: r.blocks,
+          receipt: r.evaluation.deterministic_hash,
+          ...(r.gate_error ? { gateError: r.gate_error } : {}),
+        })),
+        scanIssues: semanticIssues.map((s) => ({ path: s.path, detail: s.detail, code: s.code })),
+      };
+      console.log(renderSarif(report, HUNCH_VERSION, extras));
     }
 
     const constitutionFails = policyResults.some((r) => r.blocks || r.strict_error);
@@ -3190,6 +3244,13 @@ const vetoCmd = program
     if (opts.base && !revExists(opts.base, root)) {
       store.close();
       return fail(`--base ref "${opts.base}" does not resolve. In CI, fetch the base branch first (git fetch origin <branch>).`);
+    }
+    // Same guard for --commit: an unfetched/mistyped sha would enumerate zero
+    // files and exit 0 — a vacuous pass where CI expects the Decision Guard
+    // to have actually looked (issue #45).
+    if (opts.commit && !revExists(opts.commit, root)) {
+      store.close();
+      return fail(`--commit sha "${opts.commit}" does not resolve. In CI, ensure the commit is fetched (git fetch --depth=... or fetch-depth: 0).`);
     }
     store.reindex();
     const files = opts.commit ? commitFiles(opts.commit, root)
@@ -3224,7 +3285,7 @@ vetoCmd
     let drafted = 0;
     let touched = 0;
     for (const d of store.json.loadAll("decisions")) {
-      if (d.superseded_by || d.status === "superseded") continue;
+      if (!isInForce(d)) continue;
       if (!d.alternatives_rejected.length) continue;
       if ((d.rejected_tripwires?.length ?? 0) > 0) continue; // never clobber existing tripwires
       const tws = draftTripwires(d.alternatives_rejected, d.related_files, knownDeps);
@@ -3418,7 +3479,7 @@ program
       firm: "surfaces + warns on a violating edit",
       strict: "edit-time DENY + CI guard — the teeth are on",
     };
-    console.log(`\nHunch — enforcement status (${root.split("/").pop()})\n`);
+    console.log(`\nHunch — enforcement status (${basename(root)})\n`);
     console.log(`  firmness: ${firmness}   ← ${fnote[firmness] ?? ""}\n`);
     console.log(`  ✓ ARMED        ${blocking.length} confirmed blocking invariant(s) — held against every assistant`);
     if (blocking.length) {
@@ -3484,6 +3545,45 @@ program
   });
 
 program
+  .command("served")
+  .description("Delivery receipts: which memory records actually reached an agent, how often, and which never have")
+  .option("--json", "emit the raw ledger summary")
+  .action((opts: { json?: boolean }) => {
+    const { store, root } = storeFor();
+    try {
+      const summary = servedSummary(root);
+      if (opts.json) {
+        console.log(JSON.stringify(summary, null, 2));
+        return;
+      }
+      if (!summary.total) {
+        console.log("No delivery receipts yet — they accrue as the pre-edit hook and subagent grounding fire on this machine.");
+        return;
+      }
+      console.log(`\nHunch — delivery receipts (this machine)\n`);
+      console.log(`  ${summary.total} deliveries · ${summary.distinct_records} distinct record(s) · ${summary.distinct_sessions} session(s) · ${summary.first_at?.slice(0, 10)} → ${summary.last_at?.slice(0, 10)}\n`);
+      const titleOf = (row: { kind: string; record_id: string }): string => {
+        if (row.kind === "decisions") return store.recs("decisions").find((r) => r.id === row.record_id)?.title ?? row.record_id;
+        if (row.kind === "constraints") return store.recs("constraints").find((r) => r.id === row.record_id)?.statement.slice(0, 70) ?? row.record_id;
+        return row.record_id;
+      };
+      console.log("  Most delivered:");
+      for (const row of summary.rows.slice(0, 10)) {
+        console.log(`    ${String(row.serves).padStart(4)}× (+${row.refreshes} still-current) ${row.record_id} — ${titleOf(row)}`);
+      }
+      const servedIds = new Set(summary.rows.map((r) => r.record_id));
+      const neverServed = [
+        ...store.recs("constraints").filter((c) => c.status === "active" && !servedIds.has(c.id)).map((c) => c.id),
+        ...store.recs("decisions").filter((d) => d.status === "accepted" && !d.superseded_by && !servedIds.has(d.id)).map((d) => d.id),
+      ];
+      console.log(`\n  Never delivered on this machine: ${neverServed.length} in-force record(s)${neverServed.length ? ` — compact candidates start here (${neverServed.slice(0, 5).join(", ")}${neverServed.length > 5 ? ", …" : ""})` : ""}`);
+      console.log(`  Prevented violations live in \`hunch stats\` (events ledger); receipts here are the delivery half.\n`);
+    } finally {
+      store.close();
+    }
+  });
+
+program
   .command("hook")
   .description("Agent-agnostic hook handler: normalizes Claude, VS Code, Cursor, Windsurf, and Antigravity events into Hunch context and strict policy checks. Reads hook JSON on stdin.")
   .option("--provider <provider>", "hook event dialect: claude | vscode | cursor | windsurf | antigravity", "claude")
@@ -3531,22 +3631,109 @@ program
         // When the prompt reads like a correction ("no / that's wrong / never X"),
         // nudge the agent to PERSIST it as an enforced constraint (Never Twice) —
         // not just obey it this once and forget it next session.
-        let text = looksLikeCorrection(evt.prompt) ? `${HOOK_REMINDER}\n\n${CORRECTION_NUDGE}` : HOOK_REMINDER;
+        const isCorrection = looksLikeCorrection(evt.prompt);
+        let text = isCorrection ? `${HOOK_REMINDER}\n\n${CORRECTION_NUDGE}` : HOOK_REMINDER;
+        // Payloads that must NEVER be deduped away. The dedup key hashes CONTENT, and
+        // this content is assembled from constants — so two back-to-back corrections
+        // produce byte-identical text and the second (usually the escalating one) was
+        // silently swallowed, never becoming an enforced rule. Same for the unverified
+        // nag, which is documented as the one nag that must repeat but rode the same
+        // deduped payload and so fired once per streak.
+        let mustDeliver = isCorrection;
         // Pipeline turn bookkeeping (fresh block budget) + the one nag that must
         // repeat: edits from an earlier turn still unverified.
         if (evt.session_id && pipelineEnabled()) {
           const st = onPrompt(loadPipelineState(evt.session_id));
           savePipelineState(evt.session_id, st);
-          if (!st.verifyAfterEdit) text += `\n\n${UNVERIFIED_NAG}`;
+          if (!st.verifyAfterEdit) {
+            text += `\n\n${UNVERIFIED_NAG}`;
+            mustDeliver = true;
+          }
         }
-        // Once per session is enough for the availability reminder — repeating it
-        // every prompt burns context for zero information. A correction nudge has
-        // different content, so it always comes through (dec_244397d920).
-        if (injectionMode(evt.session_id, "prompt-reminder", text) === "delta") return;
+        // Once per session is enough for the bare availability reminder — repeating it
+        // every prompt burns context for zero information (dec_244397d920). Only that
+        // ambient case is deduped.
+        if (!mustDeliver && injectionMode(evt.session_id, "prompt-reminder", text) === "delta") return;
         emitContext(provider, "UserPromptSubmit", text);
         return;
       }
+      if (evt.hook_event_name === "PreCompact") {
+        // Compaction is about to summarize injected grounding out of the agent's
+        // context while the dedup map still says "delivered". Reset it so every
+        // post-compact injection is full again. Emit nothing — this event has no
+        // context channel worth spending.
+        resetSessionInjections(evt.session_id);
+        return;
+      }
+      if (evt.hook_event_name === "SubagentStart") {
+        // A delegated agent starts with NONE of the parent session's grounding:
+        // session orientation never fired inside it and only per-edit PreToolUse
+        // follows it in — so read-only agents (Explore/Plan) could work fully
+        // blind. Slice by what the agent TYPE is about to do (dec_a788cc039b):
+        // explorers get the indexed shape, planners get live decisions + what
+        // was already rejected, everyone else gets the invariant digest. Public
+        // store only; cheap reads.
+        const s = new HunchStore(paths);
+        try {
+          const clip1 = (text: string, max: number): string => {
+            const flat = text.replace(/\s+/g, " ").trim();
+            return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
+          };
+          const type = (evt.agent_type ?? "").toLowerCase();
+          const L: string[] = [];
+          const served: Array<{ kind: string; record_id: string }> = [];
+          if (/explore|search|investigat/.test(type)) {
+            // Orient from the graph, not grep rounds: the component map IS the shape.
+            const components = s.advisoryRecs("components").filter((c) => c.status === "active");
+            if (!components.length) return;
+            L.push(`🧠 Hunch — repo shape for a delegated explorer: ${components.length} component(s).`);
+            for (const c of components.slice(0, 12)) {
+              L.push(`- ${c.name}${c.paths.length ? ` (${c.paths.slice(0, 2).join(", ")})` : ""}${c.responsibility ? ` — ${clip1(c.responsibility, 90)}` : ""}`);
+              served.push({ kind: "components", record_id: c.id });
+            }
+            if (components.length > 12) L.push(`…and ${components.length - 12} more — hunch_structure() for the full map.`);
+            L.push("Orient: hunch_structure(target) · hunch_why(target) · hunch_context(task).");
+          } else if (/plan|architect|design/.test(type)) {
+            // A plan drafted blind re-proposes what the graph already rejected.
+            const decisions = s.advisoryRecs("decisions")
+              .filter((d) => d.status === "accepted")
+              .sort((a, b) => (a.date < b.date ? 1 : -1));
+            if (!decisions.length) return;
+            L.push(`🧠 Hunch — live decisions for a delegated planner (${decisions.length} in force; plans must not re-propose the rejected).`);
+            for (const d of decisions.slice(0, 6)) {
+              L.push(`- ${d.title} (${d.id})${d.alternatives_rejected.length ? ` — rejected: ${clip1(d.alternatives_rejected[0]!, 80)}` : ""}`);
+              served.push({ kind: "decisions", record_id: d.id });
+            }
+            L.push("Before finalizing a plan: hunch_why(target) · hunch_current_decision(topic) · hunch_check_constraints(scope).");
+          } else {
+            const sevRank = { blocking: 0, warning: 1, advisory: 2 } as const;
+            const constraints = s.advisoryRecs("constraints")
+              .filter((c) => c.status === "active")
+              .sort((a, b) => sevRank[a.severity] - sevRank[b.severity]);
+            if (!constraints.length) return;
+            L.push(`🧠 Hunch — delegated agent grounding: ${constraints.length} invariant(s) in force in this repo.`);
+            for (const c of constraints.slice(0, 8)) {
+              L.push(`- [${c.severity}] ${clip1(c.statement, 140)}${c.scope.length ? ` (scope: ${c.scope.slice(0, 3).join(", ")})` : ""}`);
+              served.push({ kind: "constraints", record_id: c.id });
+            }
+            if (constraints.length > 8) L.push(`…and ${constraints.length - 8} more — hunch_check_constraints(scope) for your files.`);
+            L.push("Before editing: hunch_check_constraints(scope) · hunch_why(target). Orient: hunch_context(task).");
+          }
+          // No dedup here: the hook event carries the PARENT session id, but each
+          // spawned agent is a fresh empty context — deduping would ground the
+          // first Explore and silently starve every later one.
+          recordServed(root, served.map((r) => ({ ...r, event: "served", target: `(subagent:${evt.agent_type ?? "any"})`, session_id: evt.session_id })));
+          emitContext(provider, "SubagentStart", L.join("\n"));
+        } finally {
+          s.close();
+        }
+        return;
+      }
       if (evt.hook_event_name === "SessionStart") {
+        // A compact-resume means everything injected so far was just summarized
+        // away — the dedup map must forget it delivered anything, or the rest of
+        // the session gets delta one-liners against grounding that is gone.
+        if (evt.source === "compact") resetSessionInjections(evt.session_id);
         // Orientation at the moment it matters: what just happened + what's next,
         // straight from the graph — the agent sits down already knowing where it
         // is instead of pulling (or worse, grepping) for it. Cheap reads only
@@ -3554,7 +3741,12 @@ program
         // travel further than a terminal. Union view: `hunch now --private`.
         const s = new HunchStore(paths);
         try {
-          const decisions = s.json.loadAll("decisions");
+          // Mode-aware: in unified ("shared") mode the public `.hunch/` is only a routing
+          // shell, so loading it alone makes session-start orientation — recent work,
+          // roadmap, escalations — report an empty graph for a repo whose memory is all
+          // in the overlay. Private mode stays public-only: session transcripts travel
+          // further than a terminal.
+          const decisions = s.advisoryRecs("decisions");
           const { recent, roadmap, pendingReview } = nowData(decisions, 3);
           if (!decisions.length) {
             // Fresh graph: nothing to orient on, but the operating loop still ships.
@@ -3572,6 +3764,7 @@ program
           }
           if (pendingReview > 0) L.push(`${pendingReview} legacy un-vouched draft(s) — adopt as advisory memory with \`hunch adopt-drafts\` (new captures auto-trust).`);
           const escalations = pendingEscalations(decisions);
+          escalations.push(...premiseEscalations(decisions, { now: new Date().toISOString(), exists: (p) => existsSync(join(paths.root, p)) }));
           try {
             // Constitution human moments ride the same line; a broken policy store
             // must never take session-start orientation down (fail open). Public
@@ -3665,7 +3858,7 @@ program
       // not a block; the commit-time `hunch check` does the actual gating.
       const retired = store.retiredForFile(target).filter((r) => r.symbols.length || r.deps.length);
       const hasContent =
-        ctx.constraints.length || ctx.decisions.length || ctx.bugs.length || ctx.blast_radius.length || retired.length || docGround;
+        ctx.constraints.length || ctx.decisions.length || ctx.bugs.length || ctx.blast_radius.length || ctx.findings.length || retired.length || docGround;
       if (!hasContent) return; // no noise on files Hunch hasn't learned yet
       let text = formatContext(ctx).trim();
       if (firmness !== "advisory" && ctx.constraints.length) {
@@ -3678,13 +3871,26 @@ program
       }
       // Decision-grounding (§3): for topic-anchored decisions governing this file, state
       // the current decision assertively (graph over any stale doc) + what it rejected.
-      const grounding = renderGrounding(ctx.decisions);
+      // The FULL decision set is passed alongside the file slice so a topic contested
+      // somewhere else in the graph is reported as unresolved instead of being asserted
+      // as settled — the collision's two sides often live in different files.
+      const grounding = renderGrounding(ctx.decisions, store.recs("decisions"));
       if (grounding) text += `\n\n${grounding}`;
       if (docGround) text += `\n\n${docGround}`;
       // Identical grounding already shown this session → one-line delta instead of
       // the full 10-16KB block. Any record change re-sends the full text; the
       // strict-gate deny path above never routes through this (dec_244397d920).
+      // Delivery receipts (dec_925f4bcaad): the ledger of what actually reached
+      // an agent. A full injection is a serve; a delta one-liner attests the
+      // earlier serve is still standing. Never throws, never blocks.
+      const receipts = (event: "served" | "refreshed") => recordServed(root, [
+        ...ctx.constraints.map((c) => ({ event, kind: "constraints", record_id: c.id, target, session_id: evt.session_id })),
+        ...ctx.decisions.map((d) => ({ event, kind: "decisions", record_id: d.id, target, session_id: evt.session_id })),
+        ...ctx.bugs.map((b) => ({ event, kind: "bugs", record_id: b.id, target, session_id: evt.session_id })),
+        ...ctx.findings.map((f) => ({ event, kind: "findings", record_id: f.id, target, session_id: evt.session_id })),
+      ]);
       if (injectionMode(evt.session_id, `pre:${target}`, text) === "delta") {
+        receipts("refreshed");
         emitContext(
           provider,
           "PreToolUse",
@@ -3692,6 +3898,7 @@ program
         );
         return;
       }
+      receipts("served");
       emitContext(provider, "PreToolUse", text);
     } catch {
       // swallow — never block an edit on a hook failure
@@ -4094,7 +4301,11 @@ program
   .action(async (opts: { json?: boolean }) => {
     const { store, root } = storeFor();
     try {
-      const items = pendingEscalations(store.recs("decisions"));
+      const decisionsForEsc = store.recs("decisions");
+      const items = pendingEscalations(decisionsForEsc);
+      // Premise decay rides the same inline surface: a decision whose recorded
+      // reason died is a QUESTION for the human — authority never changes here.
+      items.push(...premiseEscalations(decisionsForEsc, { now: new Date().toISOString(), exists: (p) => existsSync(join(root, p)) }));
       // Constitution moments ride the same inline surface (§59.5.3) — never a queue.
       // Fail open: a broken policy store must not take the memory escalations down.
       try {
@@ -4279,6 +4490,34 @@ program
     }
   });
 
+// ---- findings (the open-observations ledger) --------------------------------
+program
+  .command("findings")
+  .description("LIVE findings — observed gaps/debt with no fix landed yet (audits, measurements, incidents; anchored to a date + evidence, not a commit). Same store method as the hunch_findings MCP tool. Read-only, advisory.")
+  .argument("[scope]", "a path, glob, or symbol (e.g. src/procs/** or dbo.GetOrders); omit for all")
+  .option("--all", "include resolved/stale findings (the full history)")
+  .action((scope: string | undefined, opts: { all?: boolean }) => {
+    const { store } = storeFor();
+    try {
+      const live = (f: Finding): boolean => f.triage === "open" || f.triage === "accepted-risk" || f.triage === "scheduled";
+      const list = (scope ? store.liveFindingsFor(scope) : store.recs("findings").filter(opts.all ? () => true : live))
+        .filter(opts.all ? () => true : live);
+      if (!list.length) {
+        console.log(`No ${opts.all ? "" : "live "}findings${scope ? ` for "${scope}"` : ""}. Record one after an audit: /audit (or hunch_record_finding via MCP).`);
+        return;
+      }
+      for (const f of list) {
+        const links = [f.violates_constraint ? `violates ${f.violates_constraint}` : "", f.method ? `re-verify via ${f.method}` : "", f.resolved_commit ? `fixed in ${f.resolved_commit.slice(0, 9)}` : ""].filter(Boolean).join(" · ");
+        console.log(`• [${f.triage}/${f.severity}] ${f.title} (${f.id}, observed ${f.observed_at.slice(0, 10)})`);
+        console.log(`    ${f.observation}`);
+        console.log(`    concerns: ${[...f.affected_files, ...f.affected_symbols].join(", ") || "(unscoped)"}${links ? `\n    ${links}` : ""}`);
+      }
+      console.log(`\n${list.length} finding(s).`);
+    } finally {
+      store.close();
+    }
+  });
+
 // ---- path (shortest dependency chain) --------------------------------------
 program
   .command("path")
@@ -4366,7 +4605,8 @@ program
   .option("--no-llm", "skip LLM prose; deterministic template pages only")
   .option("--prose-heal", "also LLM-rewrite each adopted copy's reconciled overview (subscription; the deterministic corrections always remain)")
   .option("--private", "render the FULL graph (private overlay included) and write the wiki into the OVERLAY repo — nothing lands in this repo")
-  .action(async (opts: { dir?: string; heal?: boolean; check?: boolean; llm?: boolean; proseHeal?: boolean; private?: boolean }) => {
+  .option("--private-prose", "opt in to LLM prose for a PRIVATE-split overlay wiki — this SENDS overlay records (decision text, private constraints, private bug root causes) to the configured provider. Off by default.")
+  .action(async (opts: { dir?: string; heal?: boolean; check?: boolean; llm?: boolean; proseHeal?: boolean; private?: boolean; privateProse?: boolean }) => {
     const { store, root } = storeFor();
     try {
       store.reindex(); // reflect out-of-band JSON edits before reading the graph
@@ -4425,7 +4665,21 @@ program
       if (opts.proseHeal && opts.llm === false) return fail("--prose-heal needs the LLM — drop --no-llm.");
       let prose: ((pack: WikiPack, excerpts: string) => Promise<string | null>) | undefined;
       let adoptionProse: ((doc: Parameters<typeof adoptProsePrompt>[0], content: string) => Promise<string | null>) | undefined;
-      if (opts.llm !== false) {
+      // A PRIVATE-SPLIT overlay's packs carry the full union (source: "all") — overlay
+      // decision context/rationale/rejected alternatives, private constraint statements,
+      // private bug root causes. Sending that to an external subscription CLI would
+      // silently break the storage-private promise every other path here enforces
+      // (public-only CI comments, public-only grounding, public-only wiki manifests), in
+      // the very command documented as the way to build the private wiki. So prose is OFF
+      // by default for that home and needs an explicit --private-prose. A SHARED overlay
+      // is deliberately excluded: there the team already routes captures through the
+      // configured provider by recorded policy.
+      const privateSplit = home.kind === "private" && store.mode === "private";
+      const proseBlockedForPrivacy = privateSplit && !opts.privateProse;
+      if (opts.llm !== false && proseBlockedForPrivacy) {
+        console.log("Private overlay: LLM prose is OFF (pages would send overlay records to the configured provider). Deterministic template pages; pass --private-prose to opt in.");
+      }
+      if (opts.llm !== false && !proseBlockedForPrivacy) {
         const provider = await selectProvider({ root });
         if (provider.draftProse) {
           console.log(`Prose via ${provider.name}; the drift-bearing skeleton stays deterministic.`);
@@ -4533,6 +4787,16 @@ program
         console.log(`${wikiStale.length} generated wiki page(s) drifted from the graph:\n`);
         for (const f of wikiStale) console.log(`· ${f.id} — ${f.detail}`);
         console.log(`\nHeal: run \`hunch wiki --heal\` — regenerates only the stale pages (the wiki is a derived view; never edit it by hand).\n`);
+      }
+      // Every drift kind heals here — see bug_drift_heal_asymmetry above. premise-stale
+      // shipped in the drift report without a section here, so a repo whose ONLY drift
+      // was a dead premise got "N findings" from `hunch drift` and a bare closing line
+      // from `hunch heal` — exactly the broken loop that bug is about.
+      const premiseStale = kind("premise-stale");
+      if (premiseStale.length) {
+        console.log(`${premiseStale.length} decision(s) rest on a premise that no longer holds (world≠graph):\n`);
+        for (const f of premiseStale) console.log(`· ${f.id} — ${f.detail}`);
+        console.log(`\nHeal: this is a HUMAN call — the decision's authority is unchanged until you make it. Re-attest (update the premise's review_by/attested), supersede via /capture, or retire the decision. Keeping it for consistency is a valid answer.\n`);
       }
       console.log(`Hunch never rewrites prose for you; this is a read-only reconciliation report.`);
     } finally {
@@ -4801,7 +5065,7 @@ function toRepoRel(root: string, abs: string): string {
   return relative(realpathNorm(root), realpathNorm(abs)).split("\\").join("/");
 }
 
-function emitContext(provider: HookProvider, event: "PreToolUse" | "UserPromptSubmit" | "SessionStart", text: string): void {
+function emitContext(provider: HookProvider, event: "PreToolUse" | "UserPromptSubmit" | "SessionStart" | "SubagentStart", text: string): void {
   const output = contextHookOutput(provider, event, text);
   if (output) process.stdout.write(JSON.stringify(output));
 }

@@ -1,7 +1,8 @@
 {
   "id": "dec_91d312e383",
   "title": "Huge-project effectiveness test (nestjs/nest, 1683 files): deterministic enforcement is effective + precise at scale; behavioral prevention is situational (capable models often don't commit the violation unprompted)",
-  "status": "proposed",
+  "topic": null,
+  "status": "accepted",
   "context": "Validate that Hunch is effective on a large REAL codebase (not a toy), both mechanics-at-scale and the Hunch-on/off behavioral test. Cloned nestjs/nest (1683 TS/JS files, 2125 tracked).",
   "decision": "Ran three things on the cloned repo with the v0.36.1 built binary. (1) SCALE: hunch init+index in ~1s, building a real graph (5709 symbols, 2812 edges, 6 components); hunch why returns real symbols; hunch check is ~instant. (2) DETERMINISTIC ENFORCEMENT of a REAL architectural invariant ('packages/core must stay HTTP-platform-agnostic — never import express', --forbid-dep express, scope packages/core/**): 5/5 correct — real `import express` BLOCKED; benign edit silent; a COMMENT naming express silent (parsed-import immunity holds at scale); `import type { Express } from express` BLOCKED (type imports caught); the same import in the out-of-scope platform-express package ALLOWED (scope correct). (3) BEHAVIORAL on/off (Sonnet, 6+6 per task, real nest framing): two tasks ('getClientIp' tempting express; 'deepMerge' tempting lodash) both gave 0% violation in BOTH arms — the capable model didn't reach for the dep unprompted (used node:http / hand-rolled native). Injection still measurably shifted behavior (express: ON 6/6 adopted the rule's opaque-type guidance vs OFF 6/6 concrete node:http type), just didn't PREVENT a violation because none occurred.",
   "consequences": [
@@ -35,7 +36,8 @@
       "src/core/constraintmatch.ts",
       "src/store/hunchStore.ts",
       "demo/real-world-scenarios.sh"
-    ]
+    ],
+    "last_verified": "2026-08-06T11:38:51.658Z"
   },
   "date": "2026-06-26T20:47:09.429Z"
 }

@@ -26,13 +26,67 @@ export interface DocAnchor {
 
 const MARKER = /<!--\s*hunch:topic\s+([A-Za-z0-9._/-]+)(?:\s+(dec_[A-Za-z0-9]+))?\s*-->/g;
 
-/** Parse every hunch:topic marker out of a markdown document. */
+/** Character ranges covered by fenced code blocks (``` or ~~~), so a
+ *  documentation EXAMPLE of a marker never registers as a live anchor.
+ *  CommonMark-lite: a fence of N chars (≤3 leading spaces) closes only on a
+ *  line of ≥N of the same char and nothing else; an unclosed fence runs to
+ *  EOF; a backtick fence's info string may not itself contain a backtick. */
+function fencedRanges(text: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  let open: { ch: string; len: number; start: number } | null = null;
+  let offset = 0;
+  for (const line of text.split("\n")) {
+    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (m) {
+      const ch = m[1]![0]!;
+      if (!open) {
+        if (!(ch === "`" && m[2]!.includes("`"))) open = { ch, len: m[1]!.length, start: offset };
+      } else if (ch === open.ch && m[1]!.length >= open.len && m[2]!.trim() === "") {
+        ranges.push([open.start, offset + line.length]);
+        open = null;
+      }
+    }
+    offset += line.length + 1;
+  }
+  if (open) ranges.push([open.start, text.length]);
+  return ranges;
+}
+
+/** Character ranges covered by inline code spans (`…`), same rationale as
+ *  fencedRanges: prose quoting a marker in backticks is showing an example.
+ *  CommonMark-lite: an opener run pairs with the next run of the SAME length
+ *  on the same line; unpaired runs never open a span. */
+function inlineSpanRanges(text: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  let offset = 0;
+  for (const line of text.split("\n")) {
+    let pending: { len: number; start: number } | null = null;
+    const runs = /`+/g;
+    let m: RegExpExecArray | null;
+    while ((m = runs.exec(line))) {
+      if (!pending) pending = { len: m[0].length, start: m.index };
+      else if (m[0].length === pending.len) {
+        ranges.push([offset + pending.start, offset + m.index + m[0].length - 1]);
+        pending = null;
+      }
+    }
+    offset += line.length + 1;
+  }
+  return ranges;
+}
+
+/** Parse every hunch:topic marker out of a markdown document. Markers inside
+ *  fenced code blocks or inline code spans are examples, not declarations,
+ *  and are skipped. */
 export function parseDocAnchors(text: string): DocAnchor[] {
   const out: DocAnchor[] = [];
+  const skip = [...fencedRanges(text), ...inlineSpanRanges(text)];
   MARKER.lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = MARKER.exec(text))) {
-    out.push({ topic: m[1]!, pin: m[2] ?? null, line: text.slice(0, m.index).split("\n").length });
+    const at = m.index;
+    if (skip.some(([s, e]) => at >= s && at <= e)) continue;
+    out.push({ topic: m[1]!, pin: m[2] ?? null, line: text.slice(0, at).split("\n").length });
   }
   return out;
 }

@@ -13,15 +13,16 @@
  *                 `hunch wiki --heal`, never a gate.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { HunchStore } from "../store/hunchStore.js";
 import { toPosixTarget } from "./paths.js";
 import { currentForTopic, isLive } from "./topics.js";
+import { evaluatePremises, type PremiseEnv } from "./premises.js";
 import { parseDocAnchors } from "./docanchors.js";
 import { markdownDocs, STALE_MARKER, SRC_REF } from "./docscan.js";
 import { computeWikiDrift } from "../wiki/wiki.js";
 
-export type DriftKind = "dead-ref" | "supersede" | "doc-stale" | "anchor-stale" | "doc-anchor-stale" | "doc-anchor-dangling" | "wiki-stale";
+export type DriftKind = "dead-ref" | "supersede" | "doc-stale" | "anchor-stale" | "doc-anchor-stale" | "doc-anchor-dangling" | "wiki-stale" | "finding-stale" | "premise-stale";
 
 export interface DriftFinding {
   kind: DriftKind;
@@ -42,6 +43,7 @@ export function computeDrift(store: HunchStore, root: string): DriftReport {
   // anchor-stale. Keeps the doc≠graph gate's false-positive rate ~zero: a routine
   // narrowing supersession (successor lists fewer files) never flags files still governed.
   const liveFiles = new Set(decisions.filter(isLive).flatMap((d) => (d.related_files ?? []).map(toPosixTarget)));
+  const premiseEnv: PremiseEnv = { now: new Date().toISOString(), exists: (p) => existsSync(join(root, p)) };
 
   for (const d of decisions) {
     // 1. DEAD-REFERENCE — only for in-force decisions; a superseded one referencing
@@ -86,6 +88,19 @@ export function computeDrift(store: HunchStore, root: string): DriftReport {
             id: d.id,
             detail: `"${f}" is anchored to superseded decision ${d.id} (topic "${d.topic}"); the current decision is ${current.id} — "${current.title}". Reconcile the file with the current decision.`,
           });
+        }
+      }
+    }
+
+    // 7. PREMISE-STALE (world≠graph) — the decision's recorded REASON no longer
+    //    holds while code and docs may be perfectly in sync. Advisory like every
+    //    kind here, and authority is NEVER changed by a dead premise — the
+    //    escalation surface asks the human (a self-relaxing gate could be
+    //    disarmed by the very actor it guards against).
+    if (isLive(d) && d.premises?.length) {
+      for (const v of evaluatePremises(d, premiseEnv)) {
+        if (!v.holds) {
+          findings.push({ kind: "premise-stale", id: d.id, detail: `premise "${v.claim}" no longer holds — ${v.reason}. Re-attest, supersede, or retire; authority unchanged until a human decides.` });
         }
       }
     }
@@ -135,6 +150,29 @@ export function computeDrift(store: HunchStore, root: string): DriftReport {
   //    fires only when a wiki was adopted. Advisory like every other kind here.
   findings.push(...computeWikiDrift(store, root));
 
+  // 7. FINDING-STALE — a LIVE finding (observation, no diff) whose anchor evaporated:
+  //    an affected file that no longer exists, or a violates_constraint pointing at a
+  //    retired/missing rule. Deterministic + advisory (never the exit-code class):
+  //    the observation may be fixed, moved, or moot — re-verify (re-run its method)
+  //    and re-record with triage resolved/stale, or refresh its paths.
+  for (const f of store.recs("findings")) {
+    if (f.triage === "resolved" || f.triage === "stale") continue;
+    for (const file of f.affected_files) {
+      if (!file || file.includes("*")) continue; // globs can't dead-ref
+      if (!existsSync(join(root, file))) {
+        findings.push({ kind: "finding-stale", id: f.id, detail: `live finding "${f.title}" references missing file "${file}" — re-verify${f.method ? ` (${f.method})` : ""} and re-record, or mark it stale` });
+      }
+    }
+    if (f.violates_constraint) {
+      const con = store.getRec("constraints", f.violates_constraint);
+      if (!con) {
+        findings.push({ kind: "finding-stale", id: f.id, detail: `live finding "${f.title}" claims to violate ${f.violates_constraint}, which does not exist — link the real rule or record it (hunch_record_correction)` });
+      } else if (con.status === "retired") {
+        findings.push({ kind: "finding-stale", id: f.id, detail: `live finding "${f.title}" violates ${f.violates_constraint}, but that constraint is RETIRED — resolve the finding or re-link it` });
+      }
+    }
+  }
+
   return { findings };
 }
 
@@ -155,7 +193,10 @@ function referenceExists(store: HunchStore, root: string, decisionId: string, re
   // A private-scoped reference is an overlay-repo-relative path, not an escape
   // hatch into arbitrary local files.
   const rel = relative(privateRoot, candidate);
-  if (rel === "" || rel === ".." || rel.startsWith(`..${process.platform === "win32" ? "\\\\" : "/"}`) || isAbsolute(rel)) return false;
+  // NOTE: sep, not an escaped literal — `"\\\\"` in a template is the TWO-char
+  // string `\\`, which `relative()` never produces, silently disabling the
+  // containment check on Windows (issue #31).
+  if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return false;
   return existsSync(candidate);
 }
 

@@ -1,6 +1,111 @@
 # Competitive landscape
 
-**Evidence snapshot: 2026-07-16. Re-verify every third-party fact before quoting or publishing an update.**
+**Evidence snapshot: 2026-07-16, updated 2026-08-09 (see "Update — 2026-08-09" below). Re-verify every third-party fact before quoting or publishing an update.**
+
+## Update — 2026-08-09
+
+Web-sourced pass over the July baseline plus new-entrant sweep. The automated
+watch (`npm run research:competitors`) failed this run on a 401 from an invalid
+ambient `GITHUB_TOKEN` — the script should fall back to unauthenticated
+metadata checks instead of dying; until fixed, treat repo-metadata deltas as
+unverified. `memco.ai` and `mem0.ai` were unreachable from this environment
+(egress policy); facts below about them come from search-result snippets and
+should be re-verified before quoting.
+
+### Baseline deltas
+
+- **Roam is the fastest mover and the top threat to the receipt/gate story.**
+  v14.0.0 (2026-08-07) adds a cross-family review workflow
+  (`review-request/accept/verify`), a verdict with a secondary blocking axis,
+  SARIF output, and fail-closed gate semantics; earlier releases added a signed
+  ChangeEvidence packet (Cosign/Sigstore-verifiable offline), a
+  security-procurement template, and a public compare page targeting Cursor,
+  Cody, Windsurf, and CodeRabbit. Positioning is now "local-CLI agent
+  assurance" — enterprise evidence, not memory.
+  ([repo](https://github.com/Cranot/roam-code),
+  [changelog](https://github.com/Cranot/roam-code/blob/main/CHANGELOG.md),
+  [compare page](https://roam-code.com/compare))
+- **Memco pivoted into Hunch's core lane.** The homepage is now "Spark —
+  shared memory for coding agents": captures developer experience and shares
+  it across tools, citing third-party benchmarks (2026-01) of 48% faster task
+  completion and 53% fewer tokens. The enterprise control-plane framing of the
+  July snapshot is now paired with a direct coding-agent product; the company
+  is hiring and shipping weekly with production agent teams.
+  ([memco.ai](https://www.memco.ai/) — unverified from this environment)
+- **GitMem productized**: gitmem.ai, `npx gitmem-mcp init`, MCP-client-agnostic,
+  and messaging that is Never-Twice-shaped — "turns mistakes into permanent
+  lessons that surface before you repeat them." ([gitmem.ai](https://gitmem.ai/))
+- **Copilot Memory keeps commoditizing recall**: on by default for Pro/Pro+
+  since 2026-03-04, user-level preferences beyond repository facts since
+  2026-05-15, deletion/scope/CLI controls and a repository-admin off switch
+  since 2026-05-26. Still public preview; used by cloud agent, code review,
+  and CLI. ([changelog](https://github.blog/changelog/2026-05-26-copilot-memory-has-more-controls-for-deletion-scope-and-the-copilot-cli/))
+- **Cursor**: memories are now deletable via UI and automations; rules can be
+  generated from a conversation; August energy went to model routing (Cursor
+  Router), not memory governance. ([changelog](https://cursor.com/changelog/page/2))
+- **projectmem**: rising paper visibility (HF papers, third-party reviews);
+  actively promoting the term **"Memory-as-Governance"** — competing category
+  language aimed at exactly Hunch's frontier.
+  ([arxiv](https://arxiv.org/abs/2606.12329))
+- **Knowing**: steady; on PyPI at 0.7.0; unchanged thesis (content-addressed
+  extracted relationships + Merkle proofs, auto-expiry on code change). Still
+  structure-derived rather than curated rationale.
+  ([repo](https://github.com/blackwell-systems/knowing))
+- **Knowit / AICTX / Windsurf**: no fresh public signal observed this pass
+  (not a finding of inactivity — the metadata watch was down).
+
+### Ecosystem shifts since the baseline
+
+- **MCP spec 2026-07-28 makes the protocol core stateless** — the largest MCP
+  change to date. Verify Hunch's server against the new revision; long-lived
+  session assumptions are where breakage would hide.
+  ([MCP blog](https://blog.modelcontextprotocol.io/posts/2026-07-28/))
+- **A consumer memory-SaaS cluster has formed around coding agents**:
+  MemoryPlugin (Sync app + official MCP registry listing, late July), Basic
+  Memory, Hindsight, MemNexus, Supermemory, agentmemory, plus mem0's Codex
+  integrations and a "State of AI Agent Memory 2026" report. Recall is now a
+  crowded commodity — the July thesis held and strengthened.
+- **AI code review is converging on memory→enforcement from the PR side**:
+  CodeRabbit's Rules Miner learns review patterns from historical PRs and
+  applies them automatically, with enforcement metrics/analytics on top;
+  Qodo positions on "full codebase enforcement." Distribution-rich vendors are
+  building the correction→rule loop without the provenance layer.
+- **"Guardrails" as a term is captured by model/runtime safety** (NeMo
+  Guardrails, Lakera, GA Guard) — not architecture. Architecture-drift
+  content recommends deterministic "architecture tests," which is Hunch's
+  conformance ground. Avoid "guardrails" in positioning.
+- **"Context engineering" won the umbrella-category war** (Sourcegraph, mem0,
+  Supermemory, multiple papers); "agent memory" is its persistence
+  subcategory. Speak "context engineering" for reach; keep "engineering
+  memory" + deterministic receipts as the owned differentiator.
+
+### Threat ranking (for Hunch's differentiators)
+
+1. **Roam** — signed, fail-closed, SARIF-emitting change evidence at high
+   release velocity. Hunch's edge remains curated rationale (decisions with
+   rejected alternatives, bug lineage) and human-gated authority; Roam's
+   evidence is structure-derived.
+2. **Memco Spark** — funded, team-shaped shared memory for coding agents;
+   threatens the Matrix/team story. Hunch's edge: git-native, self-hosted,
+   no SaaS dependency, enforcement included.
+3. **CodeRabbit Rules Miner** — the correction→rule loop with massive PR-side
+   distribution, minus provenance/receipts.
+4. **GitMem** — Never-Twice-shaped lessons loop, now productized.
+5. **Copilot Memory** — commoditizes recall at platform scale; validates the
+   governance thesis rather than attacking it (for now).
+
+### Actions
+
+- Verify the MCP server against the 2026-07-28 stateless revision.
+- Consider SARIF output for `hunch check`/`conform` (enterprise-integration
+  currency Roam already has) and evaluate extending the existing Sigstore
+  release verification into signed change receipts.
+- Fix `tooling/competitive-watch.mjs` to fall back to unauthenticated requests
+  when the ambient token is rejected.
+- Adopt "context engineering" vocabulary in outward positioning; do not adopt
+  "guardrails."
+- Strategic response to this snapshot: own the category's measuring stick —
+  see [strategy-driftbench.md](./strategy-driftbench.md) (2026-08-09).
 
 This document tracks public product direction around persistent memory, code intelligence, and
 governance for AI coding agents. It is not a feature-scorecard or a legal conclusion. The sources

@@ -28,9 +28,10 @@ import {
 } from "../src/constitution/g2BehaviorCandidates.js";
 import { PolicySpecSchema } from "../src/constitution/schema.js";
 import { shortHash } from "../src/core/ids.js";
+import { SYMLINK_SKIP } from "./helpers.js";
 
 test("dependency materialization preserves internal relative symlinks but rejects escaping links", {
-  skip: process.platform === "win32" ? "creating test symlinks may require Windows developer mode" : false,
+  skip: SYMLINK_SKIP, // probe-based: runs on Windows when Developer Mode grants symlink creation
 }, () => {
   const root = mkdtempSync(join(tmpdir(), "hunch-dependency-symlink-"));
   try {
@@ -43,7 +44,8 @@ test("dependency materialization preserves internal relative symlinks but reject
     const treeHash = dependencySnapshotTreeHash(source);
 
     assert.equal(materializeDependencyTree(source, destination), treeHash);
-    assert.equal(readlinkSync(join(destination, ".bin", "tool")), "../pkg/tool.js");
+    // Windows readlink reports the target with backslashes; the link is the same.
+    assert.equal(readlinkSync(join(destination, ".bin", "tool")).replace(/\\/g, "/"), "../pkg/tool.js");
     writeFileSync(join(destination, ".bin", "tool"), "changed only in the run\n");
     assert.equal(readFileSync(join(source, "pkg", "tool.js"), "utf8"), "original\n");
 
