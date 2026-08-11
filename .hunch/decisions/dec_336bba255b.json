@@ -17,10 +17,7 @@
   ],
   "rejected_tripwires": [],
   "related_components": [],
-  "related_files": [
-    "packages/core/test/markers-scan.test.ts",
-    "packages/cli/test/explain-markers.test.ts"
-  ],
+  "related_files": [],
   "supersedes": null,
   "superseded_by": null,
   "caused_by_bug": null,

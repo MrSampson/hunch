@@ -1,7 +1,7 @@
 {
   "id": "fnd_d78bb24c20",
   "title": "Windows host: sync/team test cluster fails on a stock setup",
-  "observation": "12 tests across 7 files fail on a stock Windows host (PowerShell, Git-for-Windows, core.symlinks=false) while Linux CI is green: two-way sync retry paths, read-side slow-remote timeout/lock release, force-staged shared publication, the real post-commit hook publish, team route contract (60s timeouts), private attach info-attributes rejection, revert-move safety, static-baseline replacement refs, and the production dependency audit. Test-environment classes (mktemp, symlink EPERM, locale, separator literals) were fixed separately the same day — this residue looks like real win32 behavior differences in git transport/hook execution, not test-env noise.",
+  "observation": "12 tests across 7 files fail on a stock Windows host (PowerShell, Git-for-Windows, core.symlinks=false) while Linux CI is green: two-way sync retry paths, read-side slow-remote timeout/lock release, force-staged shared publication, the real post-commit hook publish, team route contract (60s timeouts), private attach info-attributes rejection, revert-move safety, static-baseline replacement refs, and the production dependency audit. Test-environment classes (mktemp, symlink EPERM, locale, separator literals) were fixed separately the same day — this residue looks like real win32 behavior differences in git transport/hook execution, not test-env noise.\n\nREOPENED 2026-08-11: still failing. A clean-clone run of `npm test` (--test-concurrency=2) on Windows shows 13 failures in this cluster, and they reproduce in the working repo too, so it is a host issue rather than a clone artifact. NOT yet established that CI is red: ci.yml pins the Windows leg to --test-concurrency=1 while npm test uses 2, con_7217ab24ab already guards a Windows-under-parallelism flake, and the one file reproduced standalone (test/team-route-contract.test.ts) is not in the CI leg. Confirm with `npx tsx --test --test-concurrency=1 test/team-matrix-e2e.test.ts` before claiming the CI leg fails.",
   "evidence": [
     "npm test 2026-08-04 run 1: 936 tests, 109 fail (env classes included)",
     "npm test 2026-08-04 run 2 (after portability fixes e621292): 936 tests, 915 pass, 14 fail, 6 skip",
@@ -12,7 +12,7 @@
   ],
   "method": null,
   "severity": "medium",
-  "triage": "resolved",
+  "triage": "open",
   "affected_files": [
     "test/sync.test.ts",
     "test/team-route-contract.test.ts",
@@ -26,7 +26,7 @@
   "violates_constraint": null,
   "spawned_decision": null,
   "observed_at": "2026-08-04T07:26:53.804Z",
-  "resolved_commit": "ed71361",
+  "resolved_commit": null,
   "provenance": {
     "source": "human_confirmed",
     "confidence": 0.95,
