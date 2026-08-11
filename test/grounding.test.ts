@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { tempStore } from "./helpers.js";
 import { renderHunchSection } from "../src/integrations/claudemd.js";
+import type { Constraint } from "../src/core/types.js";
 
 // The grounding documents each MCP tool's call signature. If a documented param name
 // drifts from the tool's actual inputSchema key, an agent copies the wrong key and the
@@ -27,4 +28,43 @@ test("grounding tool signatures match the real MCP param names (no agent-mislead
   // the old, wrong signatures must not reappear
   assert.doesNotMatch(md, /hunch_query\(question\)/);
   assert.doesNotMatch(md, /hunch_bug_lineage\(symptom\)/);
+});
+
+// A retired constraint has an explicitly closed valid-time window — the invariant it
+// describes is no longer true. Rendering it into "Top invariants (do not break)" tells
+// every future agent to enforce a rule that's already been withdrawn.
+test("renderHunchSection excludes retired constraints from Top invariants", (t) => {
+  const { store, cleanup } = tempStore();
+  t.after(cleanup);
+
+  const retired: Constraint = {
+    id: "con_retired0001",
+    type: "correctness",
+    statement: "RETIRED_INVARIANT_MUST_NOT_APPEAR",
+    scope: [],
+    severity: "blocking",
+    enforcement: "advisory_v1",
+    match: null,
+    forbids: null,
+    rationale: "no longer true",
+    source_decision: null,
+    violations: [],
+    status: "retired",
+    valid_from: "2026-01-01T00:00:00.000Z",
+    valid_to: "2026-06-01T00:00:00.000Z",
+    provenance: { source: "human_confirmed", confidence: 1, evidence: [] },
+  };
+  const active: Constraint = {
+    ...retired,
+    id: "con_active0001",
+    statement: "ACTIVE_INVARIANT_MUST_APPEAR",
+    status: "active",
+    valid_to: null,
+  };
+  store.json.put("constraints", retired);
+  store.json.put("constraints", active);
+
+  const md = renderHunchSection(store);
+  assert.doesNotMatch(md, /RETIRED_INVARIANT_MUST_NOT_APPEAR/);
+  assert.match(md, /ACTIVE_INVARIANT_MUST_APPEAR/);
 });
