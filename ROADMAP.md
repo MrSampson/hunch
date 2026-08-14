@@ -7,6 +7,36 @@ other integrations are derived delivery surfaces.
 
 This file is the public execution view. `hunch now` remains the detailed live decision ledger.
 
+## Ecosystem boundary
+
+Hunch remains independent of any one orchestrator or agent. In the ORC ecosystem the ownership is:
+
+```text
+Hunch
+  durable engineering semantics + graph + validated delivery + conformance
+        │
+        ▼
+Hunch Memory
+  optional operational service: store isolation, HTTP/MCP transport,
+  concurrency and recoverable Git-backed deployment
+        │
+        ▼
+ORC HunchContextProvider / MemoryAdapter
+        │
+        ▼
+ORC ContextAssembler
+  combines Hunch with Git, SimplyLog and future context providers
+        │
+        ▼
+AgentPolicy-selected Claude / Codex / future agent
+```
+
+Hunch does **not** become ORC's agent router, workflow engine, global context compiler, tenant control plane or organizational knowledge gateway. ORC does **not** become a second durable Hunch graph or ranking engine.
+
+The integration contract must preserve Hunch's validated-delivery evidence — record IDs, rank/reason, provenance/currentness, blocking state and budget cost where available — so an orchestrator can build a generic context manifest without reconstructing facts from prose. Hunch Memory should transport that evidence additively; ORC owns final cross-provider budget/dedupe and execution evidence.
+
+This boundary is intentionally vendor-neutral: the same Hunch knowledge must remain usable whether the worker is Claude, Codex, another MCP-capable agent or a future orchestrator.
+
 ## Current baseline — v1.13.0
 
 - Architectural Conformance and decision-grounding are deterministic release gates.
@@ -23,6 +53,8 @@ This file is the public execution view. `hunch now` remains the detailed live de
 4. Extend receipts from “served” to usefulness signals: heeded, near miss, prevented, and unused.
 5. Add builder, reviewer, and architect delivery profiles. Profiles may change ranking and
    presentation, never the universal enforcement graph.
+6. Keep the delivery envelope transportable through Hunch Memory/other service shells without
+   losing receipt/currentness metadata or creating an orchestrator-specific source of truth.
 
 Done means every injected item has a record ID, delivery reason, rank, provenance/currentness
 result, and token cost—and the benchmark shows the effect on missed constraints and context size.
@@ -40,7 +72,8 @@ reason, provenance/currentness result, and estimated token cost; older local led
 additively without becoming a new source of truth.
 
 Still open: fused task-relevance ranking (FTS/vector/graph), patch/change IDs for squash merges,
-usefulness signals beyond served/refreshed, delivery profiles, and the benchmark named above.
+usefulness signals beyond served/refreshed, delivery profiles, transport preservation of the full
+delivery envelope through service integrations such as Hunch Memory, and the benchmark named above.
 
 ## Then — compile into native agent surfaces
 
@@ -63,6 +96,8 @@ The Hunch graph remains authoritative. Generated files never become a second sou
 - Add co-change edges for likely-omission detection.
 - Build hindsight replay and graph-generated evaluation suites.
 - Track constraint recall, false positives, near misses, prevention receipts, and token overhead.
+- Expose enough receipt identity for orchestrators such as ORC to associate downstream verified
+  outcomes with the exact Hunch delivery without requiring transcript access.
 
 ## Demand-triggered, not scheduled
 
@@ -76,3 +111,5 @@ contributors need it. Dart remains deferred.
 - A hosted team ACL/control plane.
 - A separate wiki or codegraph authority beside the Hunch graph.
 - Per-agent enforcement rules that can disagree about the same invariant.
+- Cross-provider organizational context assembly; systems such as SimplyLog remain outside Hunch.
+- Agent selection/routing or workflow orchestration; those belong to orchestrators such as ORC.
