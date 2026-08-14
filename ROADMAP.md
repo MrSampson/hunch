@@ -37,10 +37,11 @@ The integration contract must preserve Hunch's validated-delivery evidence — r
 
 This boundary is intentionally vendor-neutral: the same Hunch knowledge must remain usable whether the worker is Claude, Codex, another MCP-capable agent or a future orchestrator.
 
-## Current baseline — v1.13.0
+## Current baseline — v1.13.1
 
 - Architectural Conformance and decision-grounding are deterministic release gates.
 - CLI, MCP, and edit hooks share one currentness-checked, hard-budgeted delivery envelope.
+- MCP advertises and returns that envelope as structured output while preserving legacy text.
 - Delivery receipts record exact IDs, rank, reason, provenance status, and estimated token cost.
 - Grounding survives helper-agent delegation and context compaction.
 - Public checks exclude private overlays, and generated artifacts are drift-checked.
