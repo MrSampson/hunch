@@ -37,14 +37,31 @@ The integration contract must preserve Hunch's validated-delivery evidence — r
 
 This boundary is intentionally vendor-neutral: the same Hunch knowledge must remain usable whether the worker is Claude, Codex, another MCP-capable agent or a future orchestrator.
 
-## Current baseline — v1.13.1
+## Current baseline — v1.17.0
 
 - Architectural Conformance and decision-grounding are deterministic release gates.
 - CLI, MCP, and edit hooks share one currentness-checked, hard-budgeted delivery envelope.
 - MCP advertises and returns that envelope as structured output while preserving legacy text.
 - Delivery receipts record exact IDs, rank, reason, provenance status, and estimated token cost.
 - Grounding survives helper-agent delegation and context compaction.
-- Public checks exclude private overlays, and generated artifacts are drift-checked.
+- Public checks exclude private overlays, and generated artifacts are drift-checked — including
+  the exported MADR corpus, which reports its own rot (`madr-stale` / `madr-edited` /
+  `madr-orphan`), refreshes automatically on the post-commit sync, and protects human edits by
+  content rather than file name.
+- The MADR bridge is bidirectional and shipped: `import-adr` populates the graph from an existing
+  corpus deterministically; `export-adr` projects it back as standard MADR (Backstage-readable).
+- Go joins TypeScript, JavaScript, and Python in the symbol/dependency graph (v1.15).
+- Retrieval ranks recorded intent above vocabulary-sharing code symbols — a bounded prior, never
+  an exclusion (curated benchmark Recall@10 70% → 90%, MRR 0.402 → 0.575).
+- Public positioning leads with the guarantee — agents never re-make a decided decision, never
+  re-introduce a fixed bug — across the site (five languages) and README.
+
+### Near-term, carried as recorded proposals
+
+- Retrieval-quality floors in the release gate, so the benchmark win cannot silently erode.
+- Freshness/staleness scoring for decisions feeding context ranking only — never authority.
+- Fix the process-global `vocabularyCache` in the MCP publication scanner (real, verified in
+  1.17.0 source); keep `HUNCH_PRIVATE_DIR` precedence but make the override loud.
 
 ## Next — complete validated delivery
 
@@ -88,7 +105,8 @@ The Hunch graph remains authoritative. Generated files never become a second sou
 ## Adoption
 
 - Import assistant auto-memory as reviewable candidates, never immediate authority.
-- Import existing MADR/ADR corpora while preserving provenance; support deterministic export.
+- ~~Import existing MADR/ADR corpora while preserving provenance; support deterministic export.~~
+  Shipped in v1.16–1.17, including drift-tracked, self-refreshing exports.
 - Let brownfield repositories freeze known violations so strict mode blocks only new debt.
 - Validate the workflow in at least three external repositories before broadening scope.
 
@@ -102,8 +120,8 @@ The Hunch graph remains authoritative. Generated files never become a second sou
 
 ## Demand-triggered, not scheduled
 
-Go is the next prepared language registry entry, but it starts only when real Go repositories or
-contributors need it. Dart remains deferred.
+Go shipped in v1.15 through exactly this policy — one registry entry, no engine changes, when a
+real repository needed it. Dart remains deferred until the same signal arrives.
 
 ## Deliberately out of scope
 
