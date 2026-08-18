@@ -1,0 +1,52 @@
+{
+  "id": "dec_a794de7b73",
+  "title": "feat(extractors): Go support via the LanguageSpec registry",
+  "topic": null,
+  "status": "accepted",
+  "context": "One registry entry + tree-sitter-go (0.23 line, prebuilds for\nwin32/linux/darwin, rides the per-process temp-copy loader). Structs\nclassify as class, interfaces as interface, type specs and aliases as\ntype; package-qualified stdlib calls are filtered by a builtin\nallowlist. Module-prefixed imports resolve through go.mod's module\npath to exact package directories — no suffix guessing.\n\nImplements roadmap dec_c3c9d0e191.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n What changed: added ",
+  "decision": "Introduced src/extractors, test/indexer.test.ts, test/languages.test.ts, test/parse.test.ts: added readGoModulePath, firstGoFileInDir, resolveGoImport, goFixtureRepo, UserID, kindOf, sb; new dep(s): node:fs.",
+  "consequences": [
+    "Adds dependency: node:fs."
+  ],
+  "alternatives_rejected": [],
+  "rejected_tripwires": [],
+  "related_components": [
+    "cmp_a94a8fe5cc",
+    "cmp_e0ccfe26fe"
+  ],
+  "related_files": [
+    "src/extractors/indexer.ts",
+    "src/extractors/languages.ts",
+    "src/extractors/nativeTreeSitter.ts",
+    "test/indexer.test.ts",
+    "test/languages.test.ts",
+    "test/parse.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "14242c1",
+  "valid_from": "2026-08-18T14:44:34+03:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "inferred",
+    "confidence": 0.45,
+    "evidence": [
+      "commit:14242c1",
+      "synth:provider=deterministic",
+      "branch:main",
+      "src/extractors/indexer.ts",
+      "src/extractors/languages.ts",
+      "src/extractors/nativeTreeSitter.ts",
+      "test/indexer.test.ts",
+      "test/languages.test.ts",
+      "test/parse.test.ts"
+    ],
+    "last_verified": "2026-08-18T11:45:11.715Z"
+  },
+  "date": "2026-08-18T14:44:34+03:00"
+}
