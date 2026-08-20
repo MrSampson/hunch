@@ -37,6 +37,35 @@ The integration contract must preserve Hunch's validated-delivery evidence — r
 
 This boundary is intentionally vendor-neutral: the same Hunch knowledge must remain usable whether the worker is Claude, Codex, another MCP-capable agent or a future orchestrator.
 
+The next shared Hunch/ORC contract is the [Engineering Landscape Graph](docs/engineering-landscape.md).
+Hunch publishes durable, repository-evidenced landscape fragments; ORC's reciprocal
+[`ENGINEERING-LANDSCAPE.md`](https://github.com/davesheffer/orc/blob/main/docs/ENGINEERING-LANDSCAPE.md)
+owns authorized cross-repository traversal, live discovery and task-scoped assembly.
+
+## Engineering Landscape Graph — planned
+
+The repository is one implementation node, not the root of a developer's world. Hunch will extend
+its existing graph so a bounded query can connect product → capability → system → repository →
+service/interface/data/delivery resources and the decisions, constraints, incidents and lifecycle
+facts that govern them.
+
+1. **HLG-1 — versioned resource and relationship contract.** Add stable resource IDs, extensible
+   kinds, typed directional relationships, lifecycle, credential-free locators, provenance and
+   currentness without creating another graph authority.
+2. **HLG-2 — deterministic repository fragment discovery.** Derive reviewable candidate topology
+   from package/MCP/deployment/CI/API/event/schema/Git/ownership sources; distinguish declarations,
+   derived evidence and human-vouched facts.
+3. **HLG-3 — bounded landscape delivery.** Return task-relevant resources, relationships and linked
+   Hunch reasoning through the existing ranking, budget, currentness and native receipt envelope;
+   add an explicit CLI/MCP view only as a projection over that machinery.
+4. **HLG-4 — cross-repository references and drift intake.** Preserve stable external repository and
+   contract references. Accept ORC-observed mismatches only as evidenced findings/proposals; live
+   observation never silently rewrites declared architecture.
+
+Done means a repository can publish a revision-current, receipted landscape fragment that remains
+useful to any Hunch client, while ORC can assemble multiple authorized fragments without duplicating
+Hunch's graph or making Hunch a runtime/control plane.
+
 ## Current baseline — v1.17.0
 
 - Architectural Conformance and decision-grounding are deterministic release gates.
@@ -56,12 +85,17 @@ This boundary is intentionally vendor-neutral: the same Hunch knowledge must rem
 - Public positioning leads with the guarantee — agents never re-make a decided decision, never
   re-introduce a fixed bug — across the site (five languages) and README.
 
-### Near-term, carried as recorded proposals
+### Post-v1.17 work landed
 
-- Retrieval-quality floors in the release gate, so the benchmark win cannot silently erode.
-- Freshness/staleness scoring for decisions feeding context ranking only — never authority.
-- Fix the process-global `vocabularyCache` in the MCP publication scanner (real, verified in
-  1.17.0 source); keep `HUNCH_PRIVATE_DIR` precedence but make the override loud.
+- Retrieval-quality floors now gate the curated benchmark against a disposable fresh graph, so
+  the ranking win cannot silently erode as the graph grows and clean CI clones cannot skip it.
+- The MCP publication scanner's `vocabularyCache` is keyed by store instead of process-global.
+- `HUNCH_PRIVATE_DIR` keeps its compatibility-sensitive precedence, but a real redirection away
+  from repo-local configuration is queryable and warned on CLI/MCP stderr; bypassing an advertised
+  team store is also explicit.
+
+Still near-term: freshness/staleness scoring for decisions feeding context ranking only — never
+authority.
 
 ## Next — complete validated delivery
 

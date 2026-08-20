@@ -205,6 +205,8 @@ hunch private               # point a clone at the overlay
 ```
 
 **Observe:** `hunch_*` tools see the union; the public repo carries only what you curate.
+`HUNCH_PRIVATE_DIR` has process-level precedence over `.hunch/local.json`; a different target is
+therefore reported explicitly on CLI/MCP stderr, and `hunch doctor` shows `source: environment`.
 
 ## 12. The self-running memory loop (v1.8.0+)
 
