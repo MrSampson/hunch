@@ -42,16 +42,17 @@ Hunch publishes durable, repository-evidenced landscape fragments; ORC's recipro
 [`ENGINEERING-LANDSCAPE.md`](https://github.com/davesheffer/orc/blob/main/docs/ENGINEERING-LANDSCAPE.md)
 owns authorized cross-repository traversal, live discovery and task-scoped assembly.
 
-## Engineering Landscape Graph — planned
+## Engineering Landscape Graph — in progress
 
 The repository is one implementation node, not the root of a developer's world. Hunch will extend
 its existing graph so a bounded query can connect product → capability → system → repository →
 service/interface/data/delivery resources and the decisions, constraints, incidents and lifecycle
 facts that govern them.
 
-1. **HLG-1 — versioned resource and relationship contract.** Add stable resource IDs, extensible
-   kinds, typed directional relationships, lifecycle, credential-free locators, provenance and
-   currentness without creating another graph authority.
+1. **HLG-1 — versioned resource and relationship contract. DONE (2026-08-21).** Stable
+   kind-qualified resource IDs and directional relationship IDs now extend the existing JSON graph;
+   lifecycle, credential-free locators, provenance/currentness, forward migration and rebuildable
+   SQLite projections are covered by the focused landscape fixture.
 2. **HLG-2 — deterministic repository fragment discovery.** Derive reviewable candidate topology
    from package/MCP/deployment/CI/API/event/schema/Git/ownership sources; distinguish declarations,
    derived evidence and human-vouched facts.
@@ -66,10 +67,9 @@ Done means a repository can publish a revision-current, receipted landscape frag
 useful to any Hunch client, while ORC can assemble multiple authorized fragments without duplicating
 Hunch's graph or making Hunch a runtime/control plane.
 
-### Immediate implementation handoff — HLG-1
+### HLG-1 implementation status
 
-Start from `main@8481edc`. The architecture and Hunch/ORC ownership boundary are frozen; the next
-change is the smallest executable contract slice, not discovery or orchestration:
+The first executable contract slice is implemented without adding discovery or orchestration:
 
 1. Add one extensible, versioned resource record in `src/core/types.ts` with stable kind-qualified
    identity, lifecycle, credential-free locator, provenance and currentness.
@@ -82,10 +82,17 @@ change is the smallest executable contract slice, not discovery or orchestration
 5. Prove legacy graph migration, deterministic round trips, malformed-record rejection, derived
    index rebuild and public/private-store behavior with focused tests.
 
-HLG-1 is complete when existing repositories migrate without loss and Hunch can store, index and
-query one repository-local resource fragment with stable identities and provenance. It does not yet
-claim manifest discovery, live runtime health, cross-repository traversal or a new CLI/MCP surface;
-those remain HLG-2 and HLG-3. The live roadmap anchor is
+`hunch.resource/1` records and `hunch.resource-relationship/1` edges preserve the JSON source of
+truth, schema generation 3 forward-migrates legacy edges before validation, and derived
+`resources` / `resource_relationships` tables rebuild from public plus authorized private homes.
+The acceptance fixture proves deterministic identity and direction, secret/runtime-claim rejection,
+legacy migration, exact write/read/reindex/restart behavior and overlay isolation.
+
+The immediate next handoff is **HLG-2**: add deterministic, reviewable candidate discovery from one
+bounded repository source at a time, starting with package/workspace and Git-remote declarations.
+Every derived resource or relationship must retain exact file/field/revision evidence and remain a
+candidate until the normal authority model accepts it. HLG-1 still does not claim live runtime
+health, cross-repository traversal or a new CLI/MCP surface. The live roadmap anchor is
 `roadmap.engineering-landscape-hlg-1`.
 
 ## Current baseline — v1.17.0

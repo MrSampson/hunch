@@ -1,6 +1,6 @@
 # Engineering Landscape Graph
 
-Updated 2026-08-20. This document defines Hunch's durable side of the product-to-code landscape.
+Updated 2026-08-21. This document defines Hunch's durable side of the product-to-code landscape.
 The graph remains the authority for engineering semantics inside a repository; it does not make
 Hunch a runtime discovery service or cross-provider orchestrator.
 
@@ -189,9 +189,9 @@ ORC may report that a declared service, CLI, MCP server or contract differs from
 stores that mismatch only as evidenced finding/proposed knowledge until the normal authority model
 accepts it. Runtime observation cannot silently rewrite architecture.
 
-## Implementation handoff
+## Implementation status and handoff
 
-The first code slice is HLG-1. It deliberately stops before discovery and ORC consumption:
+HLG-1 landed as the deliberately bounded contract slice before discovery and ORC consumption:
 
 - introduce the versioned resource contract in `src/core/types.ts` and extend the existing edge
   contract for resource relationships;
@@ -202,12 +202,20 @@ The first code slice is HLG-1. It deliberately stops before discovery and ORC co
 - cover migration, validation, deterministic identity, public/private overlays and derived-index
   reconstruction in the focused store/migration tests.
 
-The acceptance fixture should describe one product/capability/repository/service/interface chain,
-plus one external repository reference. A write-read-reindex cycle must produce the same fragment,
-IDs and provenance. The test must also prove that the fragment remains useful without ORC and that
-no runtime reachability or health claim is inferred from a durable declaration.
+The implementation uses `hunch.resource/1` records and `hunch.resource-relationship/1` edges in
+the existing JSON graph. Schema generation 3 migrates legacy edges before validation; resource IDs
+remain readable and deterministic in `resources/index.json`; SQLite `resources` and
+`resource_relationships` are rebuilt projections. The acceptance fixture covers a
+product/capability/repository/service/API/database chain plus an external repository and verifies
+exact identity, provenance and currentness across write, read, reindex and restart. It also rejects
+runtime-health fields and credential material anywhere in the durable resource/relationship record.
 
-Only after that contract is stable does HLG-2 add deterministic manifest discovery. HLG-3 then
+The same fixture proves that the fragment remains useful without ORC and that no runtime
+reachability or health claim is inferred from a durable declaration.
+
+The next slice is HLG-2 deterministic manifest discovery, beginning with bounded package/workspace
+and Git-remote declarations whose exact source file, field and revision remain reviewable evidence.
+HLG-3 then
 projects bounded fragments through the existing delivery envelope; HLG-4 adds external-reference
 drift intake. This order keeps the graph authority and migration boundary stable before adding
 observation or orchestration behavior.
