@@ -65,6 +65,16 @@ const STR_QUOTES = /^['"`]|['"`]$/g;
 export function parseSource(file: string, source: string): ParsedFile | null {
   const spec = languageFor(file);
   if (!spec) return null;
+  // Templated text (Helm chart / Jinja CI config) isn't {spec.id} yet — a real
+  // grammar correctly reports ERROR nodes for the delimiters. Still run the
+  // parse below (a well-formed anchor elsewhere in the file still contributes
+  // a real symbol, same as any other YAML file) — just don't let those
+  // expected errors fail-close the whole-repo scan on content that was never
+  // meant to stand alone (#33). Heavy top-level templating can break error
+  // recovery badly enough that even the whole-file root node never forms
+  // (root.type becomes "ERROR", not "stream") — the fallback-symbol synthesis
+  // below covers that case so the file doesn't vanish from the component graph.
+  const templated = spec.templatingMarkers?.some((marker) => source.includes(marker)) ?? false;
   const { parser, query } = bundleFor(spec);
   // The native binding caps its scratch buffer at 32 KB unless bufferSize is
   // given — without this, any source >= 32768 bytes throws "Invalid argument"
@@ -122,7 +132,21 @@ export function parseSource(file: string, source: string): ParsedFile | null {
     });
   }
   symbols.sort((a, b) => a.startByte - b.startByte);
-  return { symbols, imports, calls, parseable: isParseable(tree.rootNode, spec) };
+  // Every other successfully-parsed YAML file gets at least a file-root symbol
+  // (fallbackDefName). If templating broke error recovery badly enough that
+  // the doc.def capture never fired, synthesize the same fallback here rather
+  // than let the file silently drop out of the component graph.
+  if (templated && spec.fallbackDefName && !symbols.some((s) => s.kind === "file")) {
+    symbols.push({
+      name: spec.fallbackDefName(file),
+      kind: "file",
+      startByte: 0,
+      endByte: source.length,
+      loc: source.split("\n").length,
+      bodyText: source.slice(0, 4000),
+    });
+  }
+  return { symbols, imports, calls, parseable: templated || isParseable(tree.rootNode, spec) };
 }
 
 /** True when every ERROR/MISSING node in the tree sits in an ancestor shape this

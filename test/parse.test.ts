@@ -362,3 +362,65 @@ test("a plain anchor-free YAML file (GitHub Actions-style) parses cleanly to jus
   assert.equal(p.symbols[0]!.kind, "file");
   assert.equal(p.calls.length, 0, "no aliases means no reference calls");
 });
+
+const HELM_TEMPLATE_SRC = `
+data:
+{{- range $k, $v := .Values.data }}
+  {{ $k }}: {{ $v | quote }}
+{{- end }}
+`;
+
+test("a Helm-style Go-templated \"YAML\" file (invalid on its own) is parseable and keeps a file-root symbol, not a scan failure", () => {
+  const p = parseSource("charts/app/templates/configmap.yaml", HELM_TEMPLATE_SRC)!;
+  assert.ok(p, "templated yaml did not parse");
+  assert.equal(p.parseable, true, "templating markers must not fail-close the whole-repo scan (issue #33)");
+  assert.deepEqual(p.symbols.map((s) => [s.name, s.kind]), [["configmap.yaml", "file"]],
+    "still gets the same file-root symbol a normal YAML file gets, so the component graph doesn't lose the file");
+  assert.equal(p.calls.length, 0);
+});
+
+const JINJA_TEMPLATE_SRC = `
+name: {{ app_name }}
+{% for item in items %}
+- {{ item }}
+{% endfor %}
+`;
+
+test("a Jinja-templated \"YAML\" file (both {{ }} and {% %}) is also treated as parseable", () => {
+  const p = parseSource("ci/pipeline.yaml", JINJA_TEMPLATE_SRC)!;
+  assert.ok(p, "jinja-templated yaml did not parse");
+  assert.equal(p.parseable, true);
+});
+
+const JINJA_TAG_ONLY_SRC = `
+{% if enabled %}
+key: value
+{% endif %}
+`;
+
+test("templating detection also triggers on {% %} alone, with no {{ }} interpolation present", () => {
+  const p = parseSource("ci/tag-only.yaml", JINJA_TAG_ONLY_SRC)!;
+  assert.ok(p, "tag-only templated yaml did not parse");
+  assert.equal(p.parseable, true, "{% %} alone must trigger the same tolerance as {{ }}");
+});
+
+const GENUINELY_BROKEN_YAML_SRC = `
+foo: [1, 2
+bar: "unterminated
+`;
+
+test("templating tolerance does not blanket-forgive genuinely invalid, non-templated YAML", () => {
+  const p = parseSource("config/broken.yml", GENUINELY_BROKEN_YAML_SRC)!;
+  assert.ok(p, "broken yaml did not parse");
+  assert.equal(p.parseable, false, "real syntax errors with no templating markers must still fail closed");
+});
+
+const FALSE_POSITIVE_SNIFF_SRC = `
+message: "hello {{ not a template, just a literal string }}"
+`;
+
+test("known trade-off: a plain YAML file whose STRING VALUE merely contains \"{{\" is still treated as templated (real anchors there would be silently skipped)", () => {
+  const p = parseSource("config/literal-braces.yml", FALSE_POSITIVE_SNIFF_SRC)!;
+  assert.ok(p, "did not parse");
+  assert.equal(p.parseable, true, "still parseable — the sniff errs toward permissive, never re-triggers the fail-closed bug");
+});

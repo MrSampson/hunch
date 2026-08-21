@@ -47,6 +47,13 @@ export interface LanguageSpec {
    *  the pair is what keeps the tolerance narrow. Omit for a language with no known
    *  grammar false positives; that spec then stays strictly fail-closed. */
   toleratedErrorScopes?: ReadonlyArray<{ readonly node: string; readonly parentIs: string }>;
+  /** Substrings whose presence anywhere in the source means "this isn't actually
+   *  {id} text yet — it's a template that renders to {id} later" (Go/Jinja/Helm
+   *  delimiters in a .yaml file, e.g.). parse.ts skips parsing entirely and reports
+   *  parseable:true with zero symbols rather than attempting a parse a real grammar
+   *  correctly rejects — the file's contribution to the graph is additive, not the
+   *  fail-closed completeness guarantee toleratedErrorScopes protects (issue #33). */
+  templatingMarkers?: readonly string[];
 }
 
 const TS_QUERY = `
@@ -202,6 +209,9 @@ const YAML: LanguageSpec = {
   // (a sibling key, not a nested value) — without a whole-file fallback symbol,
   // attributeCalls's containment check would silently drop them. See Task 4.
   fallbackDefName: (file) => basename(file),
+  // Helm charts / templated CI configs are common .yaml content that only
+  // becomes valid YAML after a render step (issue #33).
+  templatingMarkers: ["{{", "{%"],
 };
 
 export const LANGUAGES: LanguageSpec[] = [TYPESCRIPT, TSX, PYTHON, YAML];
