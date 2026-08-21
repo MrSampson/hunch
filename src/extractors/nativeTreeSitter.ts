@@ -6,7 +6,7 @@ import type TreeSitterParser from "tree-sitter";
 
 const runtimeRequire = createRequire(import.meta.url);
 const COPY_PREFIX = "hunch-tree-sitter-";
-const NATIVE_PACKAGES = ["tree-sitter", "tree-sitter-typescript", "tree-sitter-python"] as const;
+const NATIVE_PACKAGES = ["tree-sitter", "tree-sitter-typescript", "tree-sitter-python", "@tree-sitter-grammars/tree-sitter-yaml"] as const;
 
 type NodeGypBuild = ((root: string) => unknown) & { path(root: string): string };
 
@@ -15,6 +15,7 @@ export interface NativeTreeSitterRuntime {
   typescript: unknown;
   tsx: unknown;
   python: unknown;
+  yaml: unknown;
 }
 
 let runtime: NativeTreeSitterRuntime | null = null;
@@ -74,13 +75,15 @@ function copyNativeBinding(packageName: string, copyRoot: string, nodeGypBuild: 
  * or falling back to a stale binary. */
 export function loadNativeTreeSitter(): NativeTreeSitterRuntime {
   if (runtime) return runtime;
-  // Both binding spellings: prebuilds ship as tree-sitter[-typescript|-python].node,
-  // while from-source builds are named after the binding.gyp target with
-  // underscores (tree_sitter_runtime_binding.node, tree_sitter_python_binding.node,
-  // …). Missing the underscore names let an already-loaded source-built addon slip
-  // past this guard and defeat the file-lock isolation entirely (issue #52).
+  // Three binding spellings: prebuilds ship as tree-sitter[-typescript|-python].node
+  // or, for a scoped package like @tree-sitter-grammars/tree-sitter-yaml, as
+  // @scope+name.node; from-source builds are named after the binding.gyp target
+  // with underscores (tree_sitter_runtime_binding.node, tree_sitter_python_binding.node,
+  // tree_sitter_yaml_binding.node, …). Missing the underscore names let an
+  // already-loaded source-built addon slip past this guard and defeat the
+  // file-lock isolation entirely (issue #52).
   const preloaded = Object.keys(runtimeRequire.cache).filter((path) =>
-    /(?:tree-sitter(?:-typescript|-python)?|tree_sitter(?:_[a-z]+)*_binding)\.node$/.test(path)
+    /(?:tree-sitter(?:-typescript|-python|-yaml)?|tree_sitter(?:_[a-z]+)*_binding)\.node$/.test(path)
     && !new RegExp(`(?:^|[\\\\/])${COPY_PREFIX}\\d+-`).test(path));
   if (preloaded.length) {
     throw new Error(`tree-sitter native addon was loaded before Hunch could isolate it: ${preloaded.join(", ")}`);
@@ -99,7 +102,8 @@ export function loadNativeTreeSitter(): NativeTreeSitterRuntime {
     const Parser = runtimeRequire("tree-sitter") as typeof TreeSitterParser;
     const languages = runtimeRequire("tree-sitter-typescript") as { typescript: unknown; tsx: unknown };
     const python = runtimeRequire("tree-sitter-python") as unknown;
-    runtime = { Parser, typescript: languages.typescript, tsx: languages.tsx, python };
+    const yaml = runtimeRequire("@tree-sitter-grammars/tree-sitter-yaml") as unknown;
+    runtime = { Parser, typescript: languages.typescript, tsx: languages.tsx, python, yaml };
   } catch (error) {
     try { rmSync(copyRoot, { recursive: true, force: true }); } catch { /* best effort */ }
     throw error;

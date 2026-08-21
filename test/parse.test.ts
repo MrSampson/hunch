@@ -33,9 +33,9 @@ test("parseSource extracts symbols, imports, calls", () => {
 test("native tree-sitter addons load only from per-process temp copies", () => {
   const require = createRequire(import.meta.url);
   const bindings = Object.keys(require.cache)
-    .filter((path) => /tree-sitter(?:-typescript)?\.node$/.test(path))
+    .filter((path) => /(?:tree-sitter(?:-typescript|-python|-yaml)?)\.node$/.test(path))
     .sort();
-  assert.equal(bindings.length, 2, `expected core and TypeScript native bindings, got: ${bindings.join(", ")}`);
+  assert.equal(bindings.length, 4, `expected core, TypeScript, Python, and YAML native bindings, got: ${bindings.join(", ")}`);
   const processCopyPrefix = join(realpathSync(tmpdir()), `hunch-tree-sitter-${process.pid}-`);
   for (const binding of bindings) {
     assert.ok(realpathSync(binding).startsWith(processCopyPrefix), `installed native binding remains loaded: ${binding}`);
