@@ -5,6 +5,7 @@
  * here (+ a new tree-sitter-* dependency), not edits scattered across those
  * four files.
  */
+import { basename } from "node:path";
 import { loadNativeTreeSitter } from "./nativeTreeSitter.js";
 import type { Edge } from "../core/types.js";
 
@@ -175,7 +176,35 @@ const PYTHON: LanguageSpec = {
   builtinMethods: PY_BUILTIN_METHODS,
 };
 
-export const LANGUAGES: LanguageSpec[] = [TYPESCRIPT, TSX, PYTHON];
+const YAML_QUERY = `
+  (block_node (anchor (anchor_name) @anchor.name)) @anchor.def
+  (flow_node (anchor (anchor_name) @anchor.name)) @anchor.def
+  (alias (alias_name) @call.id)
+  (stream) @doc.def
+`;
+
+const YAML: LanguageSpec = {
+  id: "yaml",
+  extensions: [".yml", ".yaml"],
+  grammarKey: "yaml",
+  loadGrammar: () => loadNativeTreeSitter().yaml,
+  query: YAML_QUERY,
+  // Both block-style (`key: &x\n  ...`) and flow-style (`key: &x {...}`) anchors
+  // wrap only the sigil+name; ascendToDef climbs from anchor_name -> anchor ->
+  // this enclosing node to find the def whose byte range covers the full value.
+  defNodeTypes: new Set(["block_node", "flow_node"]),
+  defKindOf: { "anchor.def": "variable", "doc.def": "file" },
+  nameToDef: { "anchor.name": "anchor.def" },
+  builtinMethods: new Set(),
+  // Alias references aren't calls; label the edge accordingly (Task 5).
+  referenceEdgeType: "references",
+  // Most aliases reference an anchor from OUTSIDE that anchor's own byte range
+  // (a sibling key, not a nested value) — without a whole-file fallback symbol,
+  // attributeCalls's containment check would silently drop them. See Task 4.
+  fallbackDefName: (file) => basename(file),
+};
+
+export const LANGUAGES: LanguageSpec[] = [TYPESCRIPT, TSX, PYTHON, YAML];
 
 export const CODE_EXTENSIONS: string[] = [...new Set(LANGUAGES.flatMap((l) => l.extensions))];
 
