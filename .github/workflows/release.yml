@@ -44,7 +44,7 @@ jobs:
           package-manager-cache: false
 
       - name: Install (locked; no publication authority)
-        run: npm ci --legacy-peer-deps
+        run: npm ci
 
       - name: Run the full tagged release gate
         run: npm run gate:release -- --tag "${GITHUB_REF_NAME}" --output release-gate.json
@@ -255,7 +255,7 @@ jobs:
           cache: npm
 
       - name: Install (locked; no publication authority)
-        run: npm ci --legacy-peer-deps
+        run: npm ci
 
       - name: Native bindings, atomic writes, and the team Matrix stay safe
         id: matrix-safety
