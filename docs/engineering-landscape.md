@@ -189,6 +189,29 @@ ORC may report that a declared service, CLI, MCP server or contract differs from
 stores that mismatch only as evidenced finding/proposed knowledge until the normal authority model
 accepts it. Runtime observation cannot silently rewrite architecture.
 
+## Implementation handoff
+
+The first code slice is HLG-1. It deliberately stops before discovery and ORC consumption:
+
+- introduce the versioned resource contract in `src/core/types.ts` and extend the existing edge
+  contract for resource relationships;
+- preserve the JSON source of truth through `src/core/migrate.ts` and `src/store/jsonStore.ts`;
+- rebuild resource projections through `src/store/schema.ts` and `src/store/hunchStore.ts`;
+- keep resource IDs and relationship IDs stable across reindex, ordering and clean clones;
+- reject credentials and unrestricted secret material before persistence or delivery; and
+- cover migration, validation, deterministic identity, public/private overlays and derived-index
+  reconstruction in the focused store/migration tests.
+
+The acceptance fixture should describe one product/capability/repository/service/interface chain,
+plus one external repository reference. A write-read-reindex cycle must produce the same fragment,
+IDs and provenance. The test must also prove that the fragment remains useful without ORC and that
+no runtime reachability or health claim is inferred from a durable declaration.
+
+Only after that contract is stable does HLG-2 add deterministic manifest discovery. HLG-3 then
+projects bounded fragments through the existing delivery envelope; HLG-4 adds external-reference
+drift intake. This order keeps the graph authority and migration boundary stable before adding
+observation or orchestration behavior.
+
 ## Non-goals
 
 - live service health, MCP handshakes, installed CLI versions or authenticated sessions;
