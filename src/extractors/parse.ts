@@ -77,7 +77,10 @@ export function parseSource(file: string, source: string): ParsedFile | null {
   // recovery badly enough that even the whole-file root node never forms
   // (root.type becomes "ERROR", not "stream") — the fallback-symbol synthesis
   // below covers that case so the file doesn't vanish from the component graph.
-  const templated = spec.templatingMarkers?.some((marker) => marker.test(source)) ?? false;
+  // String.prototype.search ignores lastIndex (unlike RegExp.test with a /g or
+  // /y flag), so a future templatingMarkers entry can't introduce cross-call
+  // statefulness here even if it forgets to keep its pattern flag-free.
+  const templated = spec.templatingMarkers?.some((marker) => source.search(marker) !== -1) ?? false;
   const { parser, query } = bundleFor(spec);
   // The native binding caps its scratch buffer at 32 KB unless bufferSize is
   // given — without this, any source >= 32768 bytes throws "Invalid argument"
