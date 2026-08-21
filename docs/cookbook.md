@@ -2,7 +2,7 @@
 
 Practical recipes for running Hunch day to day. Each recipe is copy-paste-able and states what you should observe when it works.
 
-> **Languages:** deep code-structure parsing covers TypeScript, JavaScript, and Python
+> **Languages:** deep code-structure parsing covers TypeScript, JavaScript, Python, and YAML
 > (one `LanguageSpec` registry entry per language). The "why" layer — decisions, bugs,
 > rules — works for any language, since it reads your commits and diffs.
 
