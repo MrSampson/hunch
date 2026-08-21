@@ -6,8 +6,9 @@
  * four files.
  */
 import { loadNativeTreeSitter } from "./nativeTreeSitter.js";
+import type { Edge } from "../core/types.js";
 
-export type ParsedSymbolKind = "function" | "method" | "class" | "interface" | "type";
+export type ParsedSymbolKind = "function" | "method" | "class" | "interface" | "type" | "variable" | "file";
 
 export interface LanguageSpec {
   /** Stable id, also used as the grammar-bundle cache key by parse.ts. */
@@ -30,6 +31,15 @@ export interface LanguageSpec {
    *  must NOT create call edges to unrelated repo symbols that happen to share the
    *  name (DESIGN: keep the graph clean). */
   builtinMethods: Set<string>;
+  /** Edge type emitted for this language's calls-list entries (e.g. YAML's
+   *  alias->anchor references aren't function calls). Defaults to "calls"
+   *  when omitted — every language before YAML. */
+  referenceEdgeType?: Edge["type"];
+  /** Fallback name for a ".def" capture with no paired ".name" capture (e.g.
+   *  a whole-file root symbol with no natural identifier of its own). Omit
+   *  for a language where every ".def" always has a name capture — parse.ts
+   *  then keeps dropping unnamed defs, the current behavior for TS/Python. */
+  fallbackDefName?: (file: string) => string;
   /** Ancestor shapes in which an ERROR node is a known limitation of THIS grammar
    *  rather than a real syntax error. parse.ts forgives an error only when some
    *  ancestor has type `node` AND that ancestor's own parent has type `parentIs` —
