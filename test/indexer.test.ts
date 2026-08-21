@@ -661,7 +661,7 @@ test("root-level indexed files get exact-match component paths, not a match-ever
   store.reindex();
 
   const comps = store.json.loadAll("components");
-  const rootComp = comps.find((c) => c.name === ".")!;
+  const rootComp = comps.find((c) => c.name === ".");
   assert.ok(rootComp, "root-level files get a '.' component");
   assert.deepEqual(
     rootComp.paths,

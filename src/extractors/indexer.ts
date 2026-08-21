@@ -429,7 +429,13 @@ function deriveComponents(symbols: Symbol[]): ComponentDraft[] {
     const name = dir.split("/").filter(Boolean).pop() ?? dir;
     // root-level files (dir === ".") have no directory to glob under — list them
     // exactly rather than emitting "./**", which normalizes to a match-everything
-    // glob (issue #34).
+    // glob (issue #34). A single "*" glob was rejected too: it matches root files
+    // correctly under pathMatchesGlob, but globPrefix("*") is "" and owns() skips
+    // empty prefixes, so the wiki would again own nothing for this component —
+    // the exact failure mode this fix closes. Don't "simplify" this back to a
+    // glob without re-checking both matchers agree. As a consequence, this
+    // component only covers root files present (and symbol-bearing) at the last
+    // index — unlike directory components, a new root file isn't owned until reindex.
     const paths = dir === "." ? [...fileSet].sort() : [dir.endsWith("/") ? dir + "**" : dir + "/**"];
     out.push({
       id: componentId(dir),

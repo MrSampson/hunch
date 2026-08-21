@@ -13,6 +13,7 @@ import { adoptedSlug } from "../src/wiki/adopt.js";
 import { scanRepoDocs } from "../src/core/docscan.js";
 import { hunchPaths } from "../src/core/paths.js";
 import { HunchStore } from "../src/store/hunchStore.js";
+import { indexRepo } from "../src/extractors/indexer.js";
 
 const NOW = "2026-07-02T00:00:00Z";
 
@@ -103,18 +104,34 @@ test("assemblePack: ownership by path prefix pulls symbols, decisions, scoped co
   assert.deepEqual(pack.bugs.map((b) => b.id), ["bug_trunc"]);
 });
 
-test("assemblePack: an exact-path root component owns only those files, not the whole repo (issue #34)", (t) => {
-  const { store, cleanup } = tempStore();
-  t.after(cleanup);
-  store.json.put("symbols", SYM({ id: "sym_root", file: "socket.yml", name: "socket" }) as never);
-  store.json.put("symbols", SYM({ id: "sym_root2", file: "config.ts", name: "config" }) as never);
-  store.json.put("symbols", SYM({ id: "sym_other", file: "src/cli/index.ts", name: "main" }) as never);
+test("assemblePack: an indexer-derived root component owns only those files, not the whole repo (issue #34)", (t) => {
+  // Ties the fix to its real producer: deriveComponents must emit paths that
+  // owns() (assemblePack's ownership check) actually agrees with. A hand-written
+  // component fixture here would pass even if deriveComponents regressed back
+  // to a "./**" glob — this exercises the real indexer -> wiki path.
+  const root = mkdtempSync(join(tmpdir(), "hunch-wiki-root-"));
+  mkdirSync(join(root, "src/cli"), { recursive: true });
+  writeFileSync(join(root, "config.ts"), `export function loadConfig(){ return {}; }\n`);
+  writeFileSync(join(root, "settings.ts"), `export function loadSettings(){ return {}; }\n`);
+  writeFileSync(join(root, "src/cli/index.ts"), `export function main(){ return 0; }\n`);
 
-  const pack = assemblePack(store, CMP({ id: "cmp_root", name: ".", paths: ["config.ts", "socket.yml"] }) as never);
+  const store = new HunchStore(hunchPaths(root));
+  store.json.ensureDirs();
+  indexRepo(store, root, { churn: false });
+  store.reindex();
+  t.after(() => {
+    store.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const rootComp = store.json.loadAll("components").find((c) => c.name === ".")!;
+  assert.deepEqual(rootComp.paths, ["config.ts", "settings.ts"]);
+
+  const pack = assemblePack(store, rootComp);
   assert.deepEqual(
-    pack.files.sort(),
-    ["config.ts", "socket.yml"],
-    "owns() must match every exact root file and nothing else",
+    pack.files,
+    rootComp.paths,
+    "owns() must match every exact root file the indexer recorded, and nothing else",
   );
 });
 
