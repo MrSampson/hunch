@@ -47,7 +47,7 @@ to the same graph. It merges into existing configuration instead of replacing it
 - **Change receipts** — review a working tree, commit, or branch against recorded intent and get a
   cited PASS / WARN / BLOCK result.
 - **Bug lineage** — understand which old incident a line fixed before accidentally undoing it.
-- **Code awareness** — TypeScript, JavaScript, and Python structure feed dependency, blast-radius,
+- **Code awareness** — TypeScript, JavaScript, Python, and YAML structure feed dependency, blast-radius,
   and redundancy checks. The reasoning layer works with any language.
 
 The source of truth is readable JSON in `.hunch/`. A local SQLite index makes retrieval fast but

@@ -43,6 +43,7 @@ export const EdgeType = z.enum([
   "implements",
   "supersedes",
   "related_to",
+  "references",
 ]);
 
 /** Typed relationship between components or symbols. */
