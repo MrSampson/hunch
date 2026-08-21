@@ -213,12 +213,19 @@ runtime-health fields and credential material anywhere in the durable resource/r
 The same fixture proves that the fragment remains useful without ORC and that no runtime
 reachability or health claim is inferred from a durable declaration.
 
-The next slice is HLG-2 deterministic manifest discovery, beginning with bounded package/workspace
-and Git-remote declarations whose exact source file, field and revision remain reviewable evidence.
-HLG-3 then
-projects bounded fragments through the existing delivery envelope; HLG-4 adds external-reference
-drift intake. This order keeps the graph authority and migration boundary stable before adding
-observation or orchestration behavior.
+The first HLG-2 discovery slice has landed. `discoverRepositoryLandscape` reads a caller-selected
+exact commit, bounds and parses root/workspace package manifests, canonicalizes configured and
+manifest-declared repository identity without retaining credentials or host paths, and returns
+content-addressed `hunch.landscape-candidate/1` resources/relationships. Evidence names the exact
+file/field/revision/content hash. Working-tree bytes cannot alter an exact-revision result;
+repository-identity conflicts remain explicit and leave packages unbound. The extractor is pure and
+never writes `.hunch` graph authority.
+
+HLG-2 next adds one source family at a time, beginning with MCP declarations, under the same
+candidate/issue envelope. HLG-3 then projects only reviewed graph records through the existing
+delivery envelope; HLG-4 adds external-reference drift intake. ORC's aligned execution snapshot
+explicitly rejects `hunch.landscape-candidate/1` and requires an accepted, current fragment plus its
+native receipt before execution authority can be frozen.
 
 ## Non-goals
 

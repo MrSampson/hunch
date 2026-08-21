@@ -53,9 +53,12 @@ facts that govern them.
    kind-qualified resource IDs and directional relationship IDs now extend the existing JSON graph;
    lifecycle, credential-free locators, provenance/currentness, forward migration and rebuildable
    SQLite projections are covered by the focused landscape fixture.
-2. **HLG-2 — deterministic repository fragment discovery.** Derive reviewable candidate topology
-   from package/MCP/deployment/CI/API/event/schema/Git/ownership sources; distinguish declarations,
-   derived evidence and human-vouched facts.
+2. **HLG-2 — deterministic repository fragment discovery. IN PROGRESS (first exact-source slice
+   landed 2026-08-21).** `discoverRepositoryLandscape` now reads one exact Git revision, discovers
+   bounded root/workspace `package.json` declarations plus canonical credential-free Git remotes,
+   emits content-addressed candidate resources/relationships with file/field/revision evidence,
+   surfaces identity conflicts without choosing, and never writes graph authority. MCP, deployment,
+   CI, API/event/schema and ownership sources remain.
 3. **HLG-3 — bounded landscape delivery.** Return task-relevant resources, relationships and linked
    Hunch reasoning through the existing ranking, budget, currentness and native receipt envelope;
    add an explicit CLI/MCP view only as a projection over that machinery.
@@ -88,11 +91,17 @@ truth, schema generation 3 forward-migrates legacy edges before validation, and 
 The acceptance fixture proves deterministic identity and direction, secret/runtime-claim rejection,
 legacy migration, exact write/read/reindex/restart behavior and overlay isolation.
 
-The immediate next handoff is **HLG-2**: add deterministic, reviewable candidate discovery from one
-bounded repository source at a time, starting with package/workspace and Git-remote declarations.
-Every derived resource or relationship must retain exact file/field/revision evidence and remain a
-candidate until the normal authority model accepts it. HLG-1 still does not claim live runtime
-health, cross-repository traversal or a new CLI/MCP surface. The live roadmap anchor is
+The first **HLG-2** source slice is implemented by `src/extractors/landscapeDiscovery.ts`. It scans
+only an exact commit, bounds manifests, ignores non-workspace packages, canonicalizes Git/provider
+identity without retaining credentials or local paths, and returns explicit
+`hunch.landscape-candidate/1` wrappers. Conflicting repository declarations leave package candidates
+unbound; neither discovery nor ORC may treat them as accepted graph authority.
+
+The immediate next HLG-2 handoff is one additional deterministic source family—MCP declarations
+before deployment/CI/API/schema breadth—using the same bounded issue/evidence/candidate envelope.
+HLG-3 begins only after candidate review/adoption preserves identity and provenance through the
+existing delivery receipt. Hunch still does not claim live runtime health, cross-repository
+traversal or a new CLI/MCP surface. The live roadmap anchor is
 `roadmap.engineering-landscape-hlg-1`.
 
 ## Current baseline — v1.17.0
