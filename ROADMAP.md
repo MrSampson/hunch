@@ -66,6 +66,28 @@ Done means a repository can publish a revision-current, receipted landscape frag
 useful to any Hunch client, while ORC can assemble multiple authorized fragments without duplicating
 Hunch's graph or making Hunch a runtime/control plane.
 
+### Immediate implementation handoff — HLG-1
+
+Start from `main@8481edc`. The architecture and Hunch/ORC ownership boundary are frozen; the next
+change is the smallest executable contract slice, not discovery or orchestration:
+
+1. Add one extensible, versioned resource record in `src/core/types.ts` with stable kind-qualified
+   identity, lifecycle, credential-free locator, provenance and currentness.
+2. Extend the existing edge graph for typed resource relationships. Do not create a second graph,
+   a second source of truth or an ORC-specific store.
+3. Bump the JSON schema generation and forward-migrate before Zod validation. JSON remains
+   authoritative; SQLite remains a rebuildable derived index.
+4. Make resource and relationship identity deterministic and reject secret-bearing locators or
+   metadata at the write boundary.
+5. Prove legacy graph migration, deterministic round trips, malformed-record rejection, derived
+   index rebuild and public/private-store behavior with focused tests.
+
+HLG-1 is complete when existing repositories migrate without loss and Hunch can store, index and
+query one repository-local resource fragment with stable identities and provenance. It does not yet
+claim manifest discovery, live runtime health, cross-repository traversal or a new CLI/MCP surface;
+those remain HLG-2 and HLG-3. The live roadmap anchor is
+`roadmap.engineering-landscape-hlg-1`.
+
 ## Current baseline — v1.17.0
 
 - Architectural Conformance and decision-grounding are deterministic release gates.
