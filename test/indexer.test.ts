@@ -8,7 +8,7 @@ import { hunchPaths } from "../src/core/paths.js";
 import { HunchStore } from "../src/store/hunchStore.js";
 import { indexRepo } from "../src/extractors/indexer.js";
 import { pathMatchesGlob } from "../src/core/glob.js";
-import { SYMLINK_SKIP } from "./helpers.js";
+import { SYMLINK_SKIP, indexedFixtureStore, seedRootLevelFileFixture } from "./helpers.js";
 
 function fixtureRepo(): string {
   const root = mkdtempSync(join(tmpdir(), "hunch-idx-"));
@@ -644,21 +644,9 @@ for (const dirtyKind of ["staged", "unstaged", "untracked"] as const) {
   });
 }
 
-function rootLevelFileFixtureRepo(): string {
-  const root = mkdtempSync(join(tmpdir(), "hunch-idx-root-"));
-  mkdirSync(join(root, "src/auth"), { recursive: true });
-  writeFileSync(join(root, "config.ts"), `export function loadConfig(){ return {}; }\n`);
-  writeFileSync(join(root, "settings.ts"), `export function loadSettings(){ return {}; }\n`);
-  writeFileSync(join(root, "src/auth/session.ts"), `export function verifySession(t){ return t; }\n`);
-  return root;
-}
-
-test("root-level indexed files get exact-match component paths, not a match-everything glob (issue #34)", () => {
-  const root = rootLevelFileFixtureRepo();
-  const store = new HunchStore(hunchPaths(root));
-  store.json.ensureDirs();
-  indexRepo(store, root, { churn: false });
-  store.reindex();
+test("root-level indexed files get exact-match component paths, not a match-everything glob (issue #34)", (t) => {
+  const { store, cleanup } = indexedFixtureStore(seedRootLevelFileFixture);
+  t.after(cleanup);
 
   const comps = store.json.loadAll("components");
   const rootComp = comps.find((c) => c.name === ".");
@@ -675,7 +663,4 @@ test("root-level indexed files get exact-match component paths, not a match-ever
     assert.ok(pathMatchesGlob("settings.ts", p) === (p === "settings.ts"));
     assert.ok(!pathMatchesGlob("src/auth/session.ts", p));
   }
-
-  store.close();
-  rmSync(root, { recursive: true, force: true });
 });

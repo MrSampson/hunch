@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { tempStore, prov } from "./helpers.js";
+import { tempStore, prov, indexedFixtureStore, seedRootLevelFileFixture } from "./helpers.js";
 import {
   assemblePack, packHash, renderPage, slugFor, readWikiManifestAt, writeWikiManifestAt,
   publicHome, privateHome, wikiStatus, generateWiki, computeWikiDrift, wikiSummary,
@@ -13,7 +13,6 @@ import { adoptedSlug } from "../src/wiki/adopt.js";
 import { scanRepoDocs } from "../src/core/docscan.js";
 import { hunchPaths } from "../src/core/paths.js";
 import { HunchStore } from "../src/store/hunchStore.js";
-import { indexRepo } from "../src/extractors/indexer.js";
 
 const NOW = "2026-07-02T00:00:00Z";
 
@@ -109,23 +108,16 @@ test("assemblePack: an indexer-derived root component owns only those files, not
   // owns() (assemblePack's ownership check) actually agrees with. A hand-written
   // component fixture here would pass even if deriveComponents regressed back
   // to a "./**" glob — this exercises the real indexer -> wiki path.
-  const root = mkdtempSync(join(tmpdir(), "hunch-wiki-root-"));
-  mkdirSync(join(root, "src/cli"), { recursive: true });
-  writeFileSync(join(root, "config.ts"), `export function loadConfig(){ return {}; }\n`);
-  writeFileSync(join(root, "settings.ts"), `export function loadSettings(){ return {}; }\n`);
-  writeFileSync(join(root, "src/cli/index.ts"), `export function main(){ return 0; }\n`);
+  const { store, cleanup } = indexedFixtureStore(seedRootLevelFileFixture);
+  t.after(cleanup);
 
-  const store = new HunchStore(hunchPaths(root));
-  store.json.ensureDirs();
-  indexRepo(store, root, { churn: false });
-  store.reindex();
-  t.after(() => {
-    store.close();
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  const rootComp = store.json.loadAll("components").find((c) => c.name === ".")!;
-  assert.deepEqual(rootComp.paths, ["config.ts", "settings.ts"]);
+  const rootComp = store.json.loadAll("components").find((c) => c.name === ".");
+  assert.ok(rootComp, "indexer derives a '.' component for root-level files");
+  assert.deepEqual(
+    rootComp.paths,
+    ["config.ts", "settings.ts"],
+    "root component paths are exact files, not a './**' glob",
+  );
 
   const pack = assemblePack(store, rootComp);
   assert.deepEqual(
