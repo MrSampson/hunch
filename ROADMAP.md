@@ -1,6 +1,6 @@
 # Hunch roadmap
 
-Updated 2026-08-21.
+Updated 2026-08-22.
 
 Hunch is building the validated delivery layer for engineering intent: record why the code is the
 way it is, deliver the right evidence at the moment an agent needs it, and deterministically check
@@ -38,6 +38,12 @@ Hunch does **not** become ORC's agent router, workflow engine, global context co
 The integration contract must preserve Hunch's validated-delivery evidence — record IDs, rank/reason, provenance/currentness, blocking state and budget cost where available — so an orchestrator can build a generic context manifest without reconstructing facts from prose. Hunch Memory should transport that evidence additively; ORC owns final cross-provider budget/dedupe and execution evidence.
 
 This boundary is intentionally vendor-neutral: the same Hunch knowledge must remain usable whether the worker is Claude, Codex, another MCP-capable agent or a future orchestrator.
+
+### Reciprocal adaptive-evolution boundary
+
+ORC's adaptive-evolution work remains an ORC evaluation/control-plane concern. Its `CurriculumCandidate`, `ExecutionScaffoldCandidate`, `StrategyOutcome`, scaffold populations, replay tournaments, transfer measurements and promotion/retirement decisions do **not** become Hunch graph authority. See ORC's [`ROADMAP-ADAPTIVE-EVOLUTION.md`](https://github.com/davesheffer/orc/blob/main/docs/ROADMAP-ADAPTIVE-EVOLUTION.md) and [`EVAL-AND-LEARNING-LOOP.md`](https://github.com/davesheffer/orc/blob/main/docs/EVAL-AND-LEARNING-LOOP.md).
+
+Hunch may receive a procedural finding from that loop only as a reviewable evidence-bearing candidate after ORC has independently verified it and shown reproducible applicability/transfer. Promotion into durable Hunch knowledge still requires Hunch's normal provenance, contradiction/currentness and review rules. Raw generated challenges, speculative scaffold variants, reward/score history and a single winning Run remain outside Hunch. Conversely, Hunch may supply revision-current decisions, constraints, failure lineage and structural features to ORC as evidence/context, but it never selects the winning scaffold or grants execution authority.
 
 The next shared Hunch/ORC contract is the [Engineering Landscape Graph](docs/engineering-landscape.md).
 Hunch publishes durable, repository-evidenced landscape fragments; ORC's reciprocal
@@ -196,6 +202,9 @@ The Hunch graph remains authoritative. Generated files never become a second sou
 - Track constraint recall, false positives, near misses, prevention receipts, and token overhead.
 - Expose enough receipt identity for orchestrators such as ORC to associate downstream verified
   outcomes with the exact Hunch delivery without requiring transcript access.
+- Accept adaptive-loop procedural discoveries only as reviewable candidates with source outcome,
+  verification, applicability/currentness and contradiction evidence; never ingest a raw ORC
+  scaffold population, synthetic-task reward or single-run winner as durable Hunch truth.
 
 ## Demand-triggered, not scheduled
 
@@ -211,3 +220,5 @@ real repository needed it. Dart remains deferred until the same signal arrives.
 - Per-agent enforcement rules that can disagree about the same invariant.
 - Cross-provider organizational context assembly; systems such as SimplyLog remain outside Hunch.
 - Agent selection/routing or workflow orchestration; those belong to orchestrators such as ORC.
+- ORC curriculum generation, scaffold populations, reward/score storage or strategy promotion;
+  Hunch stores only reviewed durable engineering knowledge that survives those external gates.
