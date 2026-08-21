@@ -32,7 +32,7 @@ jobs:
       # npm ci installs the EXACT, integrity-hashed lockfile tree (no drift,
       # no silent minor bumps) — the deterministic counterpart to `npm install`.
       - name: Install (locked)
-        run: npm ci
+        run: npm ci --legacy-peer-deps
 
       # One cross-platform gate is shared by normal CI and the publish workflow:
       # typecheck, full tests, core + VS Code builds, fresh index + conformance, clean tarball
@@ -94,7 +94,7 @@ jobs:
           cache: npm
 
       - name: Install (locked)
-        run: npm ci
+        run: npm ci --legacy-peer-deps
 
       # Exercise the platform-specific native lock regression plus the real
       # multi-clone Matrix and atomic persistence paths on Windows. The complete
