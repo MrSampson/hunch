@@ -103,6 +103,21 @@ test("assemblePack: ownership by path prefix pulls symbols, decisions, scoped co
   assert.deepEqual(pack.bugs.map((b) => b.id), ["bug_trunc"]);
 });
 
+test("assemblePack: an exact-path root component owns only those files, not the whole repo (issue #34)", (t) => {
+  const { store, cleanup } = tempStore();
+  t.after(cleanup);
+  store.json.put("symbols", SYM({ id: "sym_root", file: "socket.yml", name: "socket" }) as never);
+  store.json.put("symbols", SYM({ id: "sym_root2", file: "config.ts", name: "config" }) as never);
+  store.json.put("symbols", SYM({ id: "sym_other", file: "src/cli/index.ts", name: "main" }) as never);
+
+  const pack = assemblePack(store, CMP({ id: "cmp_root", name: ".", paths: ["config.ts", "socket.yml"] }) as never);
+  assert.deepEqual(
+    pack.files.sort(),
+    ["config.ts", "socket.yml"],
+    "owns() must match every exact root file and nothing else",
+  );
+});
+
 test("assemblePack: superseded decisions are history, not page content", (t) => {
   const { store, cleanup } = tempStore();
   t.after(cleanup);

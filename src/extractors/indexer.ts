@@ -427,12 +427,16 @@ function deriveComponents(symbols: Symbol[]): ComponentDraft[] {
   const out: ComponentDraft[] = [];
   for (const [dir, fileSet] of groups) {
     const name = dir.split("/").filter(Boolean).pop() ?? dir;
+    // root-level files (dir === ".") have no directory to glob under — list them
+    // exactly rather than emitting "./**", which normalizes to a match-everything
+    // glob (issue #34).
+    const paths = dir === "." ? [...fileSet].sort() : [dir.endsWith("/") ? dir + "**" : dir + "/**"];
     out.push({
       id: componentId(dir),
       kind: "module",
       name: capitalize(name),
       responsibility: "",
-      paths: [dir.endsWith("/") ? dir + "**" : dir + "/**"],
+      paths,
       status: "active",
       owners: [],
       fragility: 0,
