@@ -61,6 +61,9 @@ function bundleFor(spec: LanguageSpec): LangBundle {
 }
 
 const STR_QUOTES = /^['"`]|['"`]$/g;
+/** Cap on a stored symbol's bodyText — large enough for review context, small
+ *  enough that a huge function/file doesn't bloat every JSON symbol record. */
+const MAX_BODY_TEXT_CHARS = 4000;
 
 export function parseSource(file: string, source: string): ParsedFile | null {
   const spec = languageFor(file);
@@ -74,7 +77,7 @@ export function parseSource(file: string, source: string): ParsedFile | null {
   // recovery badly enough that even the whole-file root node never forms
   // (root.type becomes "ERROR", not "stream") — the fallback-symbol synthesis
   // below covers that case so the file doesn't vanish from the component graph.
-  const templated = spec.templatingMarkers?.some((marker) => source.includes(marker)) ?? false;
+  const templated = spec.templatingMarkers?.some((marker) => marker.test(source)) ?? false;
   const { parser, query } = bundleFor(spec);
   // The native binding caps its scratch buffer at 32 KB unless bufferSize is
   // given — without this, any source >= 32768 bytes throws "Invalid argument"
@@ -128,14 +131,15 @@ export function parseSource(file: string, source: string): ParsedFile | null {
     symbols.push({
       name: resolvedName, kind,
       startByte: def.startIndex, endByte: def.endIndex, loc,
-      bodyText: def.text.slice(0, 4000),
+      bodyText: def.text.slice(0, MAX_BODY_TEXT_CHARS),
     });
   }
-  symbols.sort((a, b) => a.startByte - b.startByte);
   // Every other successfully-parsed YAML file gets at least a file-root symbol
   // (fallbackDefName). If templating broke error recovery badly enough that
   // the doc.def capture never fired, synthesize the same fallback here rather
-  // than let the file silently drop out of the component graph.
+  // than let the file silently drop out of the component graph. Push it before
+  // the sort below — parse()'s callers (indexer.ts) rely on symbols staying in
+  // start-byte order.
   if (templated && spec.fallbackDefName && !symbols.some((s) => s.kind === "file")) {
     symbols.push({
       name: spec.fallbackDefName(file),
@@ -143,9 +147,10 @@ export function parseSource(file: string, source: string): ParsedFile | null {
       startByte: 0,
       endByte: source.length,
       loc: source.split("\n").length,
-      bodyText: source.slice(0, 4000),
+      bodyText: source.slice(0, MAX_BODY_TEXT_CHARS),
     });
   }
+  symbols.sort((a, b) => a.startByte - b.startByte);
   return { symbols, imports, calls, parseable: templated || isParseable(tree.rootNode, spec) };
 }
 

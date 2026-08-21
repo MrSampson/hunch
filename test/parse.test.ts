@@ -415,12 +415,72 @@ test("templating tolerance does not blanket-forgive genuinely invalid, non-templ
   assert.equal(p.parseable, false, "real syntax errors with no templating markers must still fail closed");
 });
 
-const FALSE_POSITIVE_SNIFF_SRC = `
-message: "hello {{ not a template, just a literal string }}"
+const GH_ACTIONS_BROKEN_SRC = `
+on: push
+jobs:
+  build:
+    runs-on: [ubuntu-latest
+    steps:
+      - run: echo "\${{ github.sha }}"
 `;
 
-test("known trade-off: a plain YAML file whose STRING VALUE merely contains \"{{\" is still treated as templated (real anchors there would be silently skipped)", () => {
+test("GitHub Actions \${{ }} expression syntax must NOT be mistaken for Helm/Jinja templating — a genuinely broken workflow still fails closed", () => {
+  const p = parseSource(".github/workflows/broken.yml", GH_ACTIONS_BROKEN_SRC)!;
+  assert.ok(p, "did not parse");
+  assert.equal(p.parseable, false,
+    "\${{ }} is ordinary, always-valid GitHub Actions YAML syntax, not a templating marker — " +
+    "a real syntax error elsewhere in the same file must still fail-close the scan");
+});
+
+const GH_ACTIONS_VALID_SRC = `
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "\${{ github.sha }}"
+`;
+
+test("a valid GitHub Actions workflow using \${{ }} parses normally, unaffected by the templating sniff", () => {
+  const p = parseSource(".github/workflows/ci.yml", GH_ACTIONS_VALID_SRC)!;
+  assert.ok(p, "did not parse");
+  assert.equal(p.parseable, true);
+  assert.equal(p.symbols.length, 1, "only the file-root symbol, same as any other valid anchor-free YAML file");
+});
+
+const TEMPLATED_WITH_REAL_ANCHOR_SRC = `
+defaults: &defaults
+  adapter: postgres
+data:
+{{- range $k, $v := .Values.data }}
+  {{ $k }}: {{ $v | quote }}
+{{- end }}
+`;
+
+test("a templated file with a genuine YAML anchor still extracts that anchor as a symbol", () => {
+  const p = parseSource("charts/app/templates/config.yaml", TEMPLATED_WITH_REAL_ANCHOR_SRC)!;
+  assert.ok(p, "did not parse");
+  assert.equal(p.parseable, true);
+  const names = p.symbols.map((s) => s.name).sort();
+  assert.deepEqual(names, ["config.yaml", "defaults"].sort(),
+    "the real anchor survives error recovery alongside the synthesized file-root symbol");
+  for (let i = 1; i < p.symbols.length; i++) {
+    assert.ok(p.symbols[i]!.startByte >= p.symbols[i - 1]!.startByte,
+      "symbols must stay sorted by startByte even when a synthesized fallback symbol is added (indexer.ts relies on this ordinal stability)");
+  }
+});
+
+const FALSE_POSITIVE_SNIFF_SRC = `
+message: "hello {{ not a template, just a literal string }}"
+tag: &base value
+ref: *base
+`;
+
+test("known trade-off: a plain YAML file whose STRING VALUE merely contains \"{{\" is treated as templated, but real anchors alongside it are still extracted", () => {
   const p = parseSource("config/literal-braces.yml", FALSE_POSITIVE_SNIFF_SRC)!;
   assert.ok(p, "did not parse");
   assert.equal(p.parseable, true, "still parseable — the sniff errs toward permissive, never re-triggers the fail-closed bug");
+  const names = p.symbols.map((s) => s.name).sort();
+  assert.deepEqual(names, ["base", "literal-braces.yml"].sort(),
+    "the real anchor is NOT silently dropped — the templating tolerance runs the real parse, it doesn't skip it");
 });
