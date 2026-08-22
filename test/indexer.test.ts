@@ -711,6 +711,74 @@ note: |
   rmSync(root, { recursive: true, force: true });
 });
 
+test("a chart-wide Helm define does not fabricate a cross-language edge into a same-named TS symbol (finding #1)", () => {
+  const root = mkdtempSync(join(tmpdir(), "hunch-idx-helm-nofab-"));
+  mkdirSync(join(root, "templates"), { recursive: true });
+  mkdirSync(join(root, "src"), { recursive: true });
+  writeFileSync(join(root, "Chart.yaml"), `apiVersion: v2\nname: mychart\nversion: 0.1.0\n`);
+  writeFileSync(join(root, "templates/_helpers.tpl"), `
+{{- define "labels" -}}
+app: x
+{{- end -}}
+`);
+  writeFileSync(join(root, "src/app.ts"), `export function run() { return labels(); }\n`);
+
+  const store = new HunchStore(hunchPaths(root));
+  store.json.ensureDirs();
+  indexRepo(store, root, { churn: false });
+  store.reindex();
+
+  const syms = store.json.loadAll("symbols");
+  const helmLabels = syms.find((s) => s.name === "labels" && s.file === "templates/_helpers.tpl" && s.kind === "variable");
+  const run = syms.find((s) => s.name === "run" && s.file === "src/app.ts");
+  assert.ok(helmLabels, "Helm labels define indexed as a symbol");
+  assert.ok(run, "TS run function indexed as a symbol");
+
+  const edges = store.json.loadAll("edges");
+  assert.ok(
+    !edges.some((e) => e.from === run!.id && e.to === helmLabels!.id),
+    "a TS function calling an unrelated same-named identifier must not get an edge into an unrelated chart-wide Helm define",
+  );
+
+  store.close();
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("chart-wide widening for YAML files must not silently drop a genuine cross-file TS import edge (finding #1)", () => {
+  const root = mkdtempSync(join(tmpdir(), "hunch-idx-helm-noloss-"));
+  mkdirSync(join(root, "src"), { recursive: true });
+  writeFileSync(join(root, "Chart.yaml"), `apiVersion: v2\nname: mychart\nversion: 0.1.0\n`);
+  writeFileSync(join(root, "src/helper.ts"), `export function labels() { return "x"; }\n`);
+  writeFileSync(join(root, "src/app.ts"), `import { labels } from "./helper.js";\nexport function run() { return labels(); }\n`);
+  // An unrelated chart-scoped YAML anchor sharing the same name as the real
+  // imported TS symbol — the spurious candidate that, pre-fix, made resolveName's
+  // "more than one candidate in scope -> null, don't guess" rule fire on a
+  // resolution scope it was never supposed to see.
+  writeFileSync(join(root, "values.yaml"), `commonLabels: &labels\n  app: x\n`);
+
+  const store = new HunchStore(hunchPaths(root));
+  store.json.ensureDirs();
+  indexRepo(store, root, { churn: false });
+  store.reindex();
+
+  const syms = store.json.loadAll("symbols");
+  const run = syms.find((s) => s.name === "run" && s.file === "src/app.ts");
+  const helperLabels = syms.find((s) => s.name === "labels" && s.file === "src/helper.ts");
+  assert.ok(run && helperLabels, "both TS symbols indexed");
+
+  const edges = store.json.loadAll("edges");
+  const edge = edges.find((e) => e.from === run!.id && e.type === "calls");
+  assert.ok(edge, "run -> labels call edge must exist");
+  assert.equal(
+    edge!.to,
+    helperLabels!.id,
+    "the genuine cross-file TS import-based call edge must resolve to helper.ts's labels(), not be lost to a spurious chart-wide candidate",
+  );
+
+  store.close();
+  rmSync(root, { recursive: true, force: true });
+});
+
 for (const dirtyKind of ["staged", "unstaged", "untracked"] as const) {
   test(`requireClean rejects ${dirtyKind} indexed-code changes before graph JSON writes`, () => {
     const root = fixtureRepo();

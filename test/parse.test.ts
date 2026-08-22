@@ -476,6 +476,23 @@ tag: &base value
 ref: *base
 `;
 
+const NON_GO_TEMPLATE_TPL_SRC = `<%= not_yaml_or_go_template %>
+  bad: [unterminated
+`;
+
+test("a .tpl file with no Go/Jinja templating markers is still treated as always-templated (finding #2)", () => {
+  // .tpl is a YAML-dialect extension solely for Helm's `_helpers.tpl` convention,
+  // but the extension alone doesn't prove Go-template content: an ERB/Velocity/
+  // plain-text file merely named `.tpl` has no `{{`/`{%` anywhere and, absent this
+  // fix, would be scanned as genuinely-broken YAML (it IS invalid YAML on its own)
+  // and fail-close the whole-repo scan (assertCompleteRepoScan) the same way #33/#36
+  // fixed for content-sniffed templating — except extension-based .tpl inclusion
+  // isn't content-sniffed at all, so those fixes didn't cover it.
+  const p = parseSource("foo.tpl", NON_GO_TEMPLATE_TPL_SRC)!;
+  assert.ok(p, "did not parse");
+  assert.equal(p.parseable, true, "every .tpl file must be treated as inherently templated, regardless of content");
+});
+
 test("known trade-off: a plain YAML file whose STRING VALUE merely contains \"{{\" is treated as templated, but real anchors alongside it are still extracted", () => {
   const p = parseSource("config/literal-braces.yml", FALSE_POSITIVE_SNIFF_SRC)!;
   assert.ok(p, "did not parse");

@@ -15,16 +15,20 @@
  * Both are bounded failure modes (a stray reference to a real symbol name, or a
  * slightly-long symbol range) — the same class of accepted limitation
  * `toleratedErrorScopes` documents for the tree-sitter grammars, not a silent gap.
+ * The chart-wide `importedFiles` widening this module's output flows through
+ * (indexer.ts) also lets a YAML alias resolve to an anchor in a sibling chart
+ * file, even though YAML anchors are properly document-scoped; this only fires
+ * when the alias has no matching anchor in its own file (i.e. only on input
+ * that's already invalid YAML on its own terms), so it's bounded, but it's a
+ * real, disclosed side effect of the chart-scoping mechanism, not something to
+ * silently rely on.
  */
-import type { ParsedSymbol, ParsedCall } from "./parse.js";
+import { MAX_BODY_TEXT_CHARS, type ParsedSymbol, type ParsedCall } from "./parse.js";
 
 export interface HelmExtraction {
   symbols: ParsedSymbol[];
   calls: ParsedCall[];
 }
-
-// Mirrors parse.ts's MAX_BODY_TEXT_CHARS cap on a stored symbol's bodyText.
-const MAX_BODY_TEXT_CHARS = 4000;
 
 // Matches one `{{ ... }}` action, including the `{{-`/`-}}` whitespace-trim
 // markers. Non-greedy so a multi-action line matches each action separately.

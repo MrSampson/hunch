@@ -110,9 +110,9 @@ export function scanRepo(store: HunchStore, root: string, opts: ScanRepoOptions 
   const chartFiles = new Map<string, string[]>();
   for (const path of rels) {
     if (languageFor(path)?.id !== "yaml") continue;
-    const root = chartRootFor(path);
-    if (root === null) continue;
-    (chartFiles.get(root) ?? chartFiles.set(root, []).get(root)!).push(path);
+    const chartRoot = chartRootFor(path);
+    if (chartRoot === null) continue;
+    (chartFiles.get(chartRoot) ?? chartFiles.set(chartRoot, []).get(chartRoot)!).push(path);
   }
   const gitMeta = useGit ? fileGitMetrics(root, rels, opts.churn === false ? 0 : 90) : null;
   let skipped = 0;
@@ -196,11 +196,11 @@ export function scanRepo(store: HunchStore, root: string, opts: ScanRepoOptions 
   }
 
   const byId = new Map(symbols.map((s) => [s.id, s]));
-  // Language-aware import resolution, shared by the call-resolution "was this
-  // name actually imported?" gate (below) and the depends_on edge derivation
-  // (pass 3): a Python cross-file call/import must resolve through the same
-  // relative/absolute Python rules as everything else, not silently fail the
-  // JS/TS resolver and look unimported.
+  // Language-aware import resolution (resolveImportTarget), used by both the
+  // call-resolution gate below (via importedFiles) and the depends_on edge
+  // derivation in pass 3 directly: a Python cross-file call/import must
+  // resolve through the same relative/absolute Python rules as everything
+  // else, not silently fail the JS/TS resolver and look unimported.
   const hasSrcLayout = [...fileSymbols.keys()].some((f) => f.startsWith("src/"));
   const pyRoots = hasSrcLayout ? ["", "src"] : [""];
   const resolveImportTarget = (file: string, spec: string): string | null =>
@@ -211,7 +211,7 @@ export function scanRepo(store: HunchStore, root: string, opts: ScanRepoOptions 
     const targets = new Set(
       imports.map((specifier) => resolveImportTarget(file, specifier)).filter((target): target is string => !!target),
     );
-    const chartRoot = chartRootFor(file);
+    const chartRoot = languageFor(file)?.id === "yaml" ? chartRootFor(file) : null;
     // Explicit null check, not truthiness — see the matching comment above on
     // the per-file Helm merge step: a repo-root chart's scope is "", not null.
     if (chartRoot !== null) for (const sibling of chartFiles.get(chartRoot) ?? []) if (sibling !== file) targets.add(sibling);
@@ -362,9 +362,13 @@ export function indexRepo(store: HunchStore, root: string, opts: IndexRepoOption
 /** Nearest-ancestor Chart.yaml lookup, memoized per directory: walks a file's
  *  own directory upward through the tracked-file set until it finds
  *  `<dir>/Chart.yaml`, or returns null if the file isn't under any chart.
- *  Nested subcharts (their own Chart.yaml under charts/<name>/) correctly
- *  resolve to their OWN chart root, not the parent's — the walk stops at the
- *  nearest match. */
+ *  Nested subcharts (their own Chart.yaml under charts/<name>/) resolve to
+ *  their OWN chart root, not the parent's. This is a conservative
+ *  approximation, not full Helm semantics: Helm's template namespace is
+ *  actually release-global, so a parent chart can legitimately include a
+ *  subchart's define — nearest-ancestor scoping will miss that edge rather
+ *  than fabricate a wrong one. No test currently covers the nested
+ *  charts/<sub>/Chart.yaml case. */
 function nearestChartRoot(rels: string[]): (file: string) => string | null {
   const tracked = new Set(rels);
   const cache = new Map<string, string | null>();

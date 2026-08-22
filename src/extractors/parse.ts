@@ -63,7 +63,7 @@ function bundleFor(spec: LanguageSpec): LangBundle {
 const STR_QUOTES = /^['"`]|['"`]$/g;
 /** Cap on a stored symbol's bodyText — large enough for review context, small
  *  enough that a huge function/file doesn't bloat every JSON symbol record. */
-const MAX_BODY_TEXT_CHARS = 4000;
+export const MAX_BODY_TEXT_CHARS = 4000;
 
 export function parseSource(file: string, source: string): ParsedFile | null {
   const spec = languageFor(file);
@@ -80,7 +80,8 @@ export function parseSource(file: string, source: string): ParsedFile | null {
   // String.prototype.search ignores lastIndex (unlike RegExp.test with a /g or
   // /y flag), so a future templatingMarkers entry can't introduce cross-call
   // statefulness here even if it forgets to keep its pattern flag-free.
-  const templated = spec.templatingMarkers?.some((marker) => source.search(marker) !== -1) ?? false;
+  const templated = (spec.alwaysTemplatedExtensions?.some((ext) => file.endsWith(ext)) ?? false)
+    || (spec.templatingMarkers?.some((marker) => source.search(marker) !== -1) ?? false);
   const { parser, query } = bundleFor(spec);
   // The native binding caps its scratch buffer at 32 KB unless bufferSize is
   // given — without this, any source >= 32768 bytes throws "Invalid argument"
