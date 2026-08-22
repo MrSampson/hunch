@@ -207,23 +207,34 @@ function ascendToDef(node: SyntaxNode, defNodeTypes: Set<string>): SyntaxNode | 
 }
 
 /** Map each call site to the innermost symbol whose byte-range contains it.
- *  Keyed by the symbol's `startByte` (a stable per-symbol identity within the
- *  file) rather than its name, so two same-named symbols in one file don't merge
- *  their call sets. The value maps callee name -> `memberOnly` (true iff every
- *  occurrence was a `x.foo()` member call, never a direct `foo()`), so the
- *  indexer can resolve member calls conservatively. */
+ *  Keyed by the symbol's position (index) in `parsed.symbols` — NOT its
+ *  startByte, which is not a reliable per-symbol identity: a language whose
+ *  extractor merges a synthetic whole-file symbol with independently-derived
+ *  symbols (e.g. YAML's fallback-root synthetic symbol alongside Helm's
+ *  regex-derived `define` blocks) can produce two distinct symbols that both
+ *  start at byte 0. Indexing by array position is unique by construction,
+ *  regardless of byte overlap — the caller must consume the exact same
+ *  `parsed.symbols` array (or an equivalently-ordered copy) to look up a
+ *  symbol by the index this function returns. The value maps callee name ->
+ *  `memberOnly` (true iff every occurrence was a `x.foo()` member call, never
+ *  a direct `foo()`), so the indexer can resolve member calls conservatively. */
 export function attributeCalls(parsed: ParsedFile): Map<number, Map<string, boolean>> {
   const out = new Map<number, Map<string, boolean>>();
   for (const call of parsed.calls) {
     let best: ParsedSymbol | null = null;
-    for (const s of parsed.symbols) {
+    let bestIndex = -1;
+    for (let i = 0; i < parsed.symbols.length; i++) {
+      const s = parsed.symbols[i]!;
       if (call.atByte >= s.startByte && call.atByte < s.endByte) {
-        if (!best || s.endByte - s.startByte < best.endByte - best.startByte) best = s;
+        if (!best || s.endByte - s.startByte < best.endByte - best.startByte) {
+          best = s;
+          bestIndex = i;
+        }
       }
     }
     if (best && best.name !== call.callee) {
-      if (!out.has(best.startByte)) out.set(best.startByte, new Map());
-      const m = out.get(best.startByte)!;
+      if (!out.has(bestIndex)) out.set(bestIndex, new Map());
+      const m = out.get(bestIndex)!;
       const prev = m.get(call.callee);
       m.set(call.callee, prev === undefined ? call.member : prev && call.member);
     }

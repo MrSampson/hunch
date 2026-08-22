@@ -100,7 +100,7 @@ export function scanRepo(store: HunchStore, root: string, opts: ScanRepoOptions 
   const symbols: Symbol[] = [];
   const nameIndex = new Map<string, string[]>(); // symbol name -> [symbol ids]
   const fileSymbols = new Map<string, string[]>(); // file -> symbol ids (in-file resolution)
-  const fileStartByteId = new Map<string, Map<number, string>>(); // file -> (symbol startByte -> id)
+  const fileSymbolIndexId = new Map<string, Map<number, string>>(); // file -> (symbol index in parsed.symbols -> id)
   const perFileCalls: Array<{ file: string; bySym: Map<number, Map<string, boolean>> }> = [];
   const perFileImports: Array<{ file: string; imports: string[] }> = [];
   // Batched per-file git metrics (churn + last commit) in TWO `git log` spawns
@@ -170,16 +170,16 @@ export function scanRepo(store: HunchStore, root: string, opts: ScanRepoOptions 
     const last = m?.lastCommit ?? "";
 
     const idsInFile: string[] = [];
-    const startByteId = new Map<number, string>();
+    const symbolIndexId = new Map<number, string>();
     const idCounts = new Map<string, number>(); // disambiguate same (file,name,kind)
-    for (const ps of parsed.symbols) {
+    for (const [index, ps] of parsed.symbols.entries()) {
       const base = symbolId(rel, ps.name, ps.kind);
       const n = idCounts.get(base) ?? 0;
       idCounts.set(base, n + 1);
       // parse() returns symbols sorted by start byte, so the ordinal is stable
       const id = n === 0 ? base : `${base}_${n}`;
       idsInFile.push(id);
-      startByteId.set(ps.startByte, id);
+      symbolIndexId.set(index, id);
       (nameIndex.get(ps.name) ?? nameIndex.set(ps.name, []).get(ps.name)!).push(id);
       symbols.push({
         id, file: rel, name: ps.name, kind: ps.kind,
@@ -190,7 +190,7 @@ export function scanRepo(store: HunchStore, root: string, opts: ScanRepoOptions 
       });
     }
     fileSymbols.set(rel, idsInFile);
-    fileStartByteId.set(rel, startByteId);
+    fileSymbolIndexId.set(rel, symbolIndexId);
     perFileCalls.push({ file: rel, bySym: attributeCalls(parsed) });
     perFileImports.push({ file: rel, imports: parsed.imports });
   }
@@ -231,10 +231,11 @@ export function scanRepo(store: HunchStore, root: string, opts: ScanRepoOptions 
     // Most languages leave this unset and get "calls" — YAML's alias->anchor
     // references aren't function calls, so its LanguageSpec declares "references".
     const edgeType = languageFor(file)?.referenceEdgeType ?? "calls";
-    const sbToId = fileStartByteId.get(file) ?? new Map<number, string>();
-    for (const [callerStartByte, callees] of bySym) {
-      // resolve caller by its stable byte-offset identity (not name)
-      const callerId = sbToId.get(callerStartByte);
+    const indexToId = fileSymbolIndexId.get(file) ?? new Map<number, string>();
+    for (const [callerIndex, callees] of bySym) {
+      // resolve caller by its stable position in parsed.symbols (not startByte —
+      // startByte is not unique across symbols; see attributeCalls's doc comment)
+      const callerId = indexToId.get(callerIndex);
       if (!callerId) continue;
       const callerName = byId.get(callerId)?.name ?? "?";
       for (const [calleeName, memberOnly] of callees) {
@@ -368,7 +369,7 @@ export function indexRepo(store: HunchStore, root: string, opts: IndexRepoOption
  *  actually release-global, so a parent chart can legitimately include a
  *  subchart's define — nearest-ancestor scoping will miss that edge rather
  *  than fabricate a wrong one. No test currently covers the nested
- *  charts/<sub>/Chart.yaml case. */
+ *  charts/<sub>/Chart.yaml case — tracked as issue #42. */
 function nearestChartRoot(rels: string[]): (file: string) => string | null {
   const tracked = new Set(rels);
   const cache = new Map<string, string | null>();

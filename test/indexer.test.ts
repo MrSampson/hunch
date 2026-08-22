@@ -779,6 +779,42 @@ test("chart-wide widening for YAML files must not silently drop a genuine cross-
   rmSync(root, { recursive: true, force: true });
 });
 
+test("a Helm define at byte 0 (no leading newline) does not collide with the YAML whole-file fallback symbol, and a top-level include outside the define still resolves (regression: startByte-keyed attribution)", () => {
+  const root = mkdtempSync(join(tmpdir(), "hunch-idx-helm-byte0-"));
+  mkdirSync(join(root, "templates"), { recursive: true });
+  writeFileSync(join(root, "Chart.yaml"), `apiVersion: v2\nname: mychart\nversion: 0.1.0\n`);
+  // No leading newline: the define block is the literal first bytes of the
+  // file, so both it and YAML's synthetic whole-file fallback symbol start at
+  // byte 0. The trailing include sits OUTSIDE the define, at the top level.
+  writeFileSync(
+    join(root, "templates/_helpers.tpl"),
+    `{{- define "c.name" -}}\nfoo\n{{- end -}}\n{{ include "c.name" . }}\n`,
+  );
+  const store = new HunchStore(hunchPaths(root));
+  store.json.ensureDirs();
+  indexRepo(store, root, { churn: false });
+  store.reindex();
+
+  const syms = store.json.loadAll("symbols").filter((s) => s.file === "templates/_helpers.tpl");
+  const fileSym = syms.find((s) => s.kind === "file");
+  const defineSym = syms.find((s) => s.kind === "variable" && s.name === "c.name");
+  assert.ok(fileSym, "the whole-file fallback symbol still exists distinctly");
+  assert.ok(defineSym, "the c.name define block still exists as its own distinct symbol");
+  assert.notEqual(fileSym!.id, defineSym!.id, "the two byte-0 symbols must not collapse into one");
+
+  const edges = store.json.loadAll("edges");
+  const edge = edges.find((e) => e.to === defineSym!.id && e.type === "references");
+  assert.ok(edge, "the top-level include (outside the define) must produce a references edge into c.name");
+  assert.equal(
+    edge!.from,
+    fileSym!.id,
+    "the include is outside the define block, so its caller must be the whole-file fallback symbol, not the define itself",
+  );
+
+  store.close();
+  rmSync(root, { recursive: true, force: true });
+});
+
 for (const dirtyKind of ["staged", "unstaged", "untracked"] as const) {
   test(`requireClean rejects ${dirtyKind} indexed-code changes before graph JSON writes`, () => {
     const root = fixtureRepo();
