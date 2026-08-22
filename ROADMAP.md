@@ -114,8 +114,8 @@ The immediate next HLG-2 handoff is one additional deterministic source family�
 before deployment/CI/API/schema breadth—using the same bounded issue/evidence/candidate envelope.
 HLG-3 begins only after candidate review/adoption preserves identity and provenance through the
 existing delivery receipt. Hunch still does not claim live runtime health, cross-repository
-traversal or a new CLI/MCP surface. The live roadmap anchor is
-`roadmap.engineering-landscape-hlg-1`.
+traversal or a new CLI/MCP surface. HLG-1 is closed by accepted decision `dec_a6d088f409`; the live
+roadmap anchor is `roadmap.engineering-landscape-hlg-2` (`dec_9130451387`).
 
 ## Current baseline — v1.17.0
 
@@ -205,6 +205,9 @@ The Hunch graph remains authoritative. Generated files never become a second sou
 - Accept adaptive-loop procedural discoveries only as reviewable candidates with source outcome,
   verification, applicability/currentness and contradiction evidence; never ingest a raw ORC
   scaffold population, synthetic-task reward or single-run winner as durable Hunch truth.
+
+The versioned authority, evidence, usefulness and promotion boundary for that loop is frozen in
+[the ORC outcome/experience protocol](docs/outcome-experience-protocol.md).
 
 ## Demand-triggered, not scheduled
 
