@@ -2,7 +2,7 @@
   "id": "dec_8b0f588b93",
   "title": "MADR import ships deterministic: file-path ids, honest bi-temporal windows, fail-safe topic anchoring",
   "topic": "madr-import",
-  "status": "accepted",
+  "status": "superseded",
   "context": "Import half of the private MADR-bridge roadmap (dec_ce410d9a6d). ADR-practicing repos previously got zero day-1 value — backfill only mines commits. Shipped in commit aa06ecc as src/extractors/adrImport.ts + `hunch import-adr`.",
   "decision": "Parse MADR 3.x/4 frontmatter style AND Nygard heading style with one pure section-based parser (no markdown dependency, no LLM). Mapping: accepted→live; superseded/deprecated→status superseded with valid_to closed at the successor's date; rejected→rejected; Considered Options minus the chosen option→alternatives_rejected; NNNN-slug.md slug→topic `adr.<slug>` (namespaced). Ids derive from the repo-relative file path (decisionId(\"madr:<relPath>\")) so re-import is an idempotent per-record update. Cross-links resolve by ADR number within the imported corpus only; a one-sided \"Superseded by\" derives the successor's supersedes pointer. Provenance source \"imported:madr\", confidence 0.75, the ADR file as evidence.",
   "consequences": [
@@ -29,11 +29,11 @@
     "test/adrimport.test.ts"
   ],
   "supersedes": null,
-  "superseded_by": null,
+  "superseded_by": "dec_115faf389b",
   "caused_by_bug": null,
   "commit": "aa06ecc",
   "valid_from": "2026-08-18T12:46:04.319Z",
-  "valid_to": null,
+  "valid_to": "2026-08-22T19:27:22.534Z",
   "retired": {
     "symbols": [],
     "deps": []
