@@ -196,7 +196,7 @@ const YAML_QUERY = `
 
 const YAML: LanguageSpec = {
   id: "yaml",
-  extensions: [".yml", ".yaml"],
+  extensions: [".yml", ".yaml", ".tpl"],
   grammarKey: "yaml",
   loadGrammar: () => loadNativeTreeSitter().yaml,
   query: YAML_QUERY,

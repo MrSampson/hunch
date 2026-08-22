@@ -10,7 +10,7 @@ test("LANGUAGES has typescript entries covering both grammars (plain + tsx)", ()
 test("CODE_EXTENSIONS matches the existing TS/JS/Python/YAML extension list", () => {
   assert.deepEqual(
     [...CODE_EXTENSIONS].sort(),
-    [".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx", ".py", ".pyi", ".yml", ".yaml"].sort(),
+    [".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx", ".py", ".pyi", ".yml", ".yaml", ".tpl"].sort(),
   );
 });
 
@@ -39,6 +39,12 @@ test("languageFor resolves .yml and .yaml to the yaml LanguageSpec", () => {
     assert.ok(lang, `no LanguageSpec for ${ext}`);
     assert.equal(lang!.id, "yaml");
   }
+});
+
+test("languageFor resolves .tpl (Helm helper templates) to the yaml LanguageSpec", () => {
+  const lang = languageFor("templates/_helpers.tpl");
+  assert.ok(lang, "no LanguageSpec for .tpl");
+  assert.equal(lang!.id, "yaml");
 });
 
 test("the yaml LanguageSpec declares its alias->anchor edges as \"references\", not \"calls\"", () => {
