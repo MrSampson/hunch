@@ -2,7 +2,7 @@
   "id": "dec_a6d088f409",
   "title": "Implement HLG-1 as an additive versioned view over the existing graph",
   "topic": "roadmap.engineering-landscape-hlg-1",
-  "status": "proposed",
+  "status": "accepted",
   "context": "The Engineering Landscape and reciprocal ORC boundary are documented, but Hunch cannot yet persist or deliver versioned resource fragments. The next step must establish the durable schema without pulling runtime discovery or orchestration into Hunch.",
   "decision": "Implement HLG-1 first: add a versioned resource record and typed resource relationships as an additive view over the existing JSON-authoritative graph, with deterministic identities, lifecycle, credential-free locators, provenance, currentness, forward migration and rebuildable SQLite projections. Stop before deterministic discovery, cross-repository traversal or a new delivery surface.",
   "consequences": [
@@ -35,7 +35,7 @@
   "supersedes": null,
   "superseded_by": null,
   "caused_by_bug": null,
-  "commit": null,
+  "commit": "66877aa",
   "valid_from": "2026-08-21T00:12:55.629Z",
   "valid_to": null,
   "retired": {
@@ -51,6 +51,7 @@
   "provenance": {
     "source": "human_confirmed",
     "confidence": 0.95,
+    "last_verified": "2026-08-22T17:33:20.000Z",
     "evidence": [
       "ROADMAP.md",
       "docs/engineering-landscape.md",

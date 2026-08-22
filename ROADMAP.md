@@ -114,10 +114,10 @@ The immediate next HLG-2 handoff is one additional deterministic source family�
 before deployment/CI/API/schema breadth—using the same bounded issue/evidence/candidate envelope.
 HLG-3 begins only after candidate review/adoption preserves identity and provenance through the
 existing delivery receipt. Hunch still does not claim live runtime health, cross-repository
-traversal or a new CLI/MCP surface. The live roadmap anchor is
-`roadmap.engineering-landscape-hlg-1`.
+traversal or a new CLI/MCP surface. HLG-1 is closed by accepted decision `dec_a6d088f409`; the live
+roadmap anchor is `roadmap.engineering-landscape-hlg-2` (`dec_9130451387`).
 
-## Current baseline — v1.17.0
+## Current baseline — v1.18.0
 
 - Architectural Conformance and decision-grounding are deterministic release gates.
 - CLI, MCP, and edit hooks share one currentness-checked, hard-budgeted delivery envelope.
@@ -130,13 +130,14 @@ traversal or a new CLI/MCP surface. The live roadmap anchor is
   content rather than file name.
 - The MADR bridge is bidirectional and shipped: `import-adr` populates the graph from an existing
   corpus deterministically; `export-adr` projects it back as standard MADR (Backstage-readable).
-- Go joins TypeScript, JavaScript, and Python in the symbol/dependency graph (v1.15).
+- Go joins TypeScript, JavaScript, and Python in the symbol/dependency graph (v1.15); YAML anchors,
+  aliases, and chart-scoped Helm helper references join it in v1.18.
 - Retrieval ranks recorded intent above vocabulary-sharing code symbols — a bounded prior, never
   an exclusion (curated benchmark Recall@10 70% → 90%, MRR 0.402 → 0.575).
 - Public positioning leads with the guarantee — agents never re-make a decided decision, never
   re-introduce a fixed bug — across the site (five languages) and README.
 
-### Post-v1.17 work landed
+### Included in v1.18
 
 - Retrieval-quality floors now gate the curated benchmark against a disposable fresh graph, so
   the ranking win cannot silently erode as the graph grows and clean CI clones cannot skip it.
@@ -144,6 +145,10 @@ traversal or a new CLI/MCP surface. The live roadmap anchor is
 - `HUNCH_PRIVATE_DIR` keeps its compatibility-sensitive precedence, but a real redirection away
   from repo-local configuration is queryable and warned on CLI/MCP stderr; bypassing an advertised
   team store is also explicit.
+- HLG-1's versioned resource/relationship contract and the first exact-revision HLG-2 discovery
+  slice are implemented under the ownership boundary above; candidate discovery still grants no
+  graph authority.
+- Root-level indexed files use exact component paths rather than a match-everything glob.
 
 Still near-term: freshness/staleness scoring for decisions feeding context ranking only — never
 authority.
@@ -205,6 +210,9 @@ The Hunch graph remains authoritative. Generated files never become a second sou
 - Accept adaptive-loop procedural discoveries only as reviewable candidates with source outcome,
   verification, applicability/currentness and contradiction evidence; never ingest a raw ORC
   scaffold population, synthetic-task reward or single-run winner as durable Hunch truth.
+
+The versioned authority, evidence, usefulness and promotion boundary for that loop is frozen in
+[the ORC outcome/experience protocol](docs/outcome-experience-protocol.md).
 
 ## Demand-triggered, not scheduled
 
