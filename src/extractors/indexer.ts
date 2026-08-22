@@ -11,6 +11,7 @@
 import { dirname, posix } from "node:path";
 import type { HunchStore } from "../store/hunchStore.js";
 import { parseSource, attributeCalls } from "./parse.js";
+import { extractHelmDirectives } from "./helm.js";
 import { symbolId, componentId, edgeId, sha1 } from "../core/ids.js";
 import { externalImportNodeId, externalPackage } from "../core/externalImports.js";
 import { resolveRelativeImport } from "../core/relativeImports.js";
@@ -105,6 +106,14 @@ export function scanRepo(store: HunchStore, root: string, opts: ScanRepoOptions 
   // Batched per-file git metrics (churn + last commit) in TWO `git log` spawns
   // total, instead of two per file — the dominant cost of indexing a large repo.
   const rels = files.map((file) => file.path);
+  const chartRootFor = nearestChartRoot(rels);
+  const chartFiles = new Map<string, string[]>();
+  for (const path of rels) {
+    if (languageFor(path)?.id !== "yaml") continue;
+    const root = chartRootFor(path);
+    if (root === null) continue;
+    (chartFiles.get(root) ?? chartFiles.set(root, []).get(root)!).push(path);
+  }
   const gitMeta = useGit ? fileGitMetrics(root, rels, opts.churn === false ? 0 : 90) : null;
   let skipped = 0;
   const issues: RepoSourceIssue[] = [];
@@ -144,6 +153,16 @@ export function scanRepo(store: HunchStore, root: string, opts: ScanRepoOptions 
       skipped++;
       issues.push({ path: rel, code: "parse_failed", detail: `${rel} contains syntax errors and cannot prove a complete semantic graph` });
       continue;
+    }
+
+    const chartRoot = languageFor(rel)?.id === "yaml" ? chartRootFor(rel) : null;
+    // Explicit null check, not truthiness: a chart rooted at the repo root
+    // itself resolves to "" (empty string), which is a valid chart scope but
+    // JS-falsy — `if (chartRoot)` would silently skip every repo-root chart.
+    if (chartRoot !== null) {
+      const helm = extractHelmDirectives(src);
+      parsed.symbols = [...parsed.symbols, ...helm.symbols].sort((a, b) => a.startByte - b.startByte);
+      parsed.calls = [...parsed.calls, ...helm.calls];
     }
 
     const m = gitMeta?.get(rel);
@@ -188,10 +207,16 @@ export function scanRepo(store: HunchStore, root: string, opts: ScanRepoOptions 
     languageFor(file)?.id === "python"
       ? resolvePythonImport(file, spec, fileSymbols, pyRoots)
       : resolveImport(file, spec, fileSymbols);
-  const importedFiles = new Map(perFileImports.map(({ file, imports }) => [
-    file,
-    new Set(imports.map((specifier) => resolveImportTarget(file, specifier)).filter((target): target is string => !!target)),
-  ]));
+  const importedFiles = new Map(perFileImports.map(({ file, imports }) => {
+    const targets = new Set(
+      imports.map((specifier) => resolveImportTarget(file, specifier)).filter((target): target is string => !!target),
+    );
+    const chartRoot = chartRootFor(file);
+    // Explicit null check, not truthiness — see the matching comment above on
+    // the per-file Helm merge step: a repo-root chart's scope is "", not null.
+    if (chartRoot !== null) for (const sibling of chartFiles.get(chartRoot) ?? []) if (sibling !== file) targets.add(sibling);
+    return [file, targets] as const;
+  }));
 
   // ---- pass 2: resolve calls -> symbol-level edges -------------------------
   const edges: Edge[] = [];
@@ -333,6 +358,27 @@ export function indexRepo(store: HunchStore, root: string, opts: IndexRepoOption
 }
 
 // ---- helpers --------------------------------------------------------------
+
+/** Nearest-ancestor Chart.yaml lookup, memoized per directory: walks a file's
+ *  own directory upward through the tracked-file set until it finds
+ *  `<dir>/Chart.yaml`, or returns null if the file isn't under any chart.
+ *  Nested subcharts (their own Chart.yaml under charts/<name>/) correctly
+ *  resolve to their OWN chart root, not the parent's — the walk stops at the
+ *  nearest match. */
+function nearestChartRoot(rels: string[]): (file: string) => string | null {
+  const tracked = new Set(rels);
+  const cache = new Map<string, string | null>();
+  const resolveDir = (dir: string): string | null => {
+    if (cache.has(dir)) return cache.get(dir)!;
+    const chartYaml = dir ? `${dir}/Chart.yaml` : "Chart.yaml";
+    const result: string | null = tracked.has(chartYaml)
+      ? dir
+      : dir === "" ? null : resolveDir(dir.includes("/") ? dir.slice(0, dir.lastIndexOf("/")) : "");
+    cache.set(dir, result);
+    return result;
+  };
+  return (file: string): string | null => resolveDir(file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : "");
+}
 
 /** Resolve a callee name to a symbol id: prefer same-file, otherwise require a
  * unique symbol in a statically imported local file. A unique repository-wide

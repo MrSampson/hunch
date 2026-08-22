@@ -608,6 +608,109 @@ development:
   rmSync(root, { recursive: true, force: true });
 });
 
+test("Helm define/include produces a \"references\" edge, chart-scoped by nearest Chart.yaml", () => {
+  const root = mkdtempSync(join(tmpdir(), "hunch-idx-helm-"));
+  mkdirSync(join(root, "templates"), { recursive: true });
+  writeFileSync(join(root, "Chart.yaml"), `apiVersion: v2\nname: mychart\nversion: 0.1.0\n`);
+  writeFileSync(join(root, "templates/_helpers.tpl"), `
+{{- define "mychart.labels" -}}
+app: {{ .Chart.Name }}
+{{- end -}}
+`);
+  writeFileSync(join(root, "templates/deployment.yaml"), `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    {{- include "mychart.labels" . | nindent 4 }}
+`);
+  const store = new HunchStore(hunchPaths(root));
+  store.json.ensureDirs();
+  indexRepo(store, root, { churn: false });
+  store.reindex();
+
+  const syms = store.json.loadAll("symbols");
+  const define = syms.find((s) => s.name === "mychart.labels" && s.file === "templates/_helpers.tpl");
+  assert.ok(define, "define block indexed as a symbol");
+  assert.equal(define!.kind, "variable");
+
+  const edges = store.json.loadAll("edges");
+  const refEdge = edges.find((e) => e.to === define!.id && e.type === "references");
+  assert.ok(refEdge, "include -> define recorded as a \"references\" edge across files");
+  assert.ok(define!.metrics.fan_in >= 1, "the include counts toward the define's fan_in");
+
+  store.close();
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("two charts defining the same helper name never produce a cross-chart edge; each chart's own include still resolves within its own chart", () => {
+  const root = mkdtempSync(join(tmpdir(), "hunch-idx-helm-multi-"));
+  for (const chart of ["chartA", "chartB"]) {
+    mkdirSync(join(root, chart, "templates"), { recursive: true });
+    writeFileSync(join(root, chart, "Chart.yaml"), `apiVersion: v2\nname: ${chart}\nversion: 0.1.0\n`);
+    writeFileSync(join(root, chart, "templates/_helpers.tpl"), `
+{{- define "labels" -}}
+app: ${chart}
+{{- end -}}
+`);
+    writeFileSync(join(root, chart, "templates/deployment.yaml"), `
+metadata:
+  labels:
+    {{- include "labels" . | nindent 4 }}
+`);
+  }
+  const store = new HunchStore(hunchPaths(root));
+  store.json.ensureDirs();
+  indexRepo(store, root, { churn: false });
+  store.reindex();
+
+  const syms = store.json.loadAll("symbols");
+  // Each _helpers.tpl produces TWO symbols: the YAML fallback file-root symbol
+  // (kind "file", spanning the whole file) plus the Helm define block itself
+  // (kind "variable") — filter to the define, not whichever comes first.
+  const defineA = syms.find((s) => s.file === "chartA/templates/_helpers.tpl" && s.kind === "variable")!;
+  const defineB = syms.find((s) => s.file === "chartB/templates/_helpers.tpl" && s.kind === "variable")!;
+  assert.ok(defineA && defineB, "both charts' define blocks indexed");
+
+  const edges = store.json.loadAll("edges");
+  // each chart's include resolves to ITS OWN chart's define, not the other's
+  assert.ok(edges.some((e) => e.to === defineA.id && e.type === "references"), "chartA's include resolves within chartA");
+  assert.ok(edges.some((e) => e.to === defineB.id && e.type === "references"), "chartB's include resolves within chartB");
+  // no edge crosses from a chartB file to chartA's define, or vice versa. An
+  // edge's `from`/`to` are symbol ids, not file paths, so resolve `from` back
+  // to its file via the symbols list before checking the chart prefix.
+  const fileOf = new Map(syms.map((s) => [s.id, s.file] as const));
+  const crossChart = edges.filter((e) => e.type === "references" && (
+    (e.to === defineA.id && !(fileOf.get(e.from) ?? "").startsWith("chartA/")) ||
+    (e.to === defineB.id && !(fileOf.get(e.from) ?? "").startsWith("chartB/"))
+  ));
+  assert.equal(crossChart.length, 0, "no cross-chart edge for a same-named helper in two separate charts");
+
+  store.close();
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("a plain .yaml file with no ancestor Chart.yaml is unaffected by Helm-shaped text", () => {
+  const root = mkdtempSync(join(tmpdir(), "hunch-idx-helm-nochart-"));
+  mkdirSync(join(root, "config"), { recursive: true });
+  writeFileSync(join(root, "config/notachart.yaml"), `
+note: |
+  literal text that happens to look like {{ include "something" . }}
+`);
+  const store = new HunchStore(hunchPaths(root));
+  store.json.ensureDirs();
+  indexRepo(store, root, { churn: false });
+  store.reindex();
+
+  const syms = store.json.loadAll("symbols");
+  assert.ok(!syms.some((s) => s.name === "something"), "no Helm dialect extraction outside a chart");
+  const edges = store.json.loadAll("edges");
+  assert.ok(!edges.some((e) => e.type === "references"), "no references edge fabricated outside a chart");
+
+  store.close();
+  rmSync(root, { recursive: true, force: true });
+});
+
 for (const dirtyKind of ["staged", "unstaged", "untracked"] as const) {
   test(`requireClean rejects ${dirtyKind} indexed-code changes before graph JSON writes`, () => {
     const root = fixtureRepo();
