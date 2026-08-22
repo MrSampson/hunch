@@ -32,7 +32,7 @@
   "supersedes": null,
   "superseded_by": null,
   "caused_by_bug": null,
-  "commit": null,
+  "commit": "23cc356304051de60bc368b07939086123bba975",
   "valid_from": "2026-08-22T11:34:10.981Z",
   "valid_to": null,
   "retired": {
