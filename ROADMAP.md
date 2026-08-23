@@ -63,13 +63,15 @@ facts that govern them.
    kind-qualified resource IDs and directional relationship IDs now extend the existing JSON graph;
    lifecycle, credential-free locators, provenance/currentness, forward migration and rebuildable
    SQLite projections are covered by the focused landscape fixture.
-2. **HLG-2 — deterministic repository fragment discovery. IN PROGRESS (package/Git plus the first
-   MCP declaration slice landed through 2026-08-23).** `discoverRepositoryLandscape` now reads one
-   exact Git revision, discovers bounded root/workspace `package.json` declarations, canonical
-   credential-free Git remotes and supported project-local MCP JSON/JSONC configurations, emits
-   content-addressed candidate resources/relationships with file/field/revision evidence, surfaces
-   identity conflicts without choosing, and never writes graph authority. Remaining MCP declaration
-   formats, deployment, CI, API/event/schema and ownership sources remain.
+2. **HLG-2 — deterministic repository fragment discovery. IN PROGRESS (package/Git, committed MCP
+   and the first CI/container-delivery slice landed through 2026-08-23).**
+   `discoverRepositoryLandscape` now reads one exact Git revision and emits bounded,
+   content-addressed candidate resources/relationships for root/workspace packages, canonical
+   credential-free Git remotes, supported MCP declarations, major committed CI formats,
+   Dockerfile build artifacts and Docker Compose deployment targets. Evidence retains only safe
+   file/field/revision/content identity; declaration bodies, commands, environment values and
+   credentials never enter the fragment. Kubernetes/systemd deployment identity,
+   API/event/schema and ownership sources remain.
 3. **HLG-3 — bounded landscape delivery.** Return task-relevant resources, relationships and linked
    Hunch reasoning through the existing ranking, budget, currentness and native receipt envelope;
    add an explicit CLI/MCP view only as a projection over that machinery. Freeze the additive
@@ -119,8 +121,17 @@ leaves conflicts unresolved, ignores unrelated `server.json` files and never ret
 commands, arguments, environment values or credential-bearing URLs. Exact revision and content
 evidence remain visible without echoing the configuration body.
 
-The immediate next HLG-2 handoff is deployment and CI declarations, followed by API/schema families
-one at a time under the same bounded issue/evidence/candidate envelope.
+The first delivery declaration slice reads GitHub Actions, GitLab CI, CircleCI, Buildkite and root
+Jenkins pipelines plus Dockerfiles and canonical Docker Compose files. It emits path-derived
+`pipeline`, `artifact` and `deployment_target` candidates with repository `contains`, `builds` and
+`deploys` relationships. YAML must parse and expose the provider's required root field; Docker and
+Jenkins declarations require only their bounded structural marker because Hunch does not interpret
+commands. Symlinks, unsafe paths, malformed/oversized files and declarations beyond the fixed cap
+remain explicit issues. No image, command, argument, environment or service-body value is returned.
+
+The immediate next HLG-2 handoff is structured Kubernetes and systemd declaration identity,
+followed by API/schema families one at a time under the same bounded issue/evidence/candidate
+envelope.
 HLG-3 begins only after candidate review/adoption preserves identity and provenance through the
 existing delivery receipt. Hunch still does not claim live runtime health, cross-repository
 traversal or a new CLI/MCP surface. HLG-1 is closed by accepted decision `dec_a6d088f409`; the live

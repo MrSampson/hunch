@@ -222,7 +222,7 @@ runtime-health fields and credential material anywhere in the durable resource/r
 The same fixture proves that the fragment remains useful without ORC and that no runtime
 reachability or health claim is inferred from a durable declaration.
 
-The package/Git and committed MCP HLG-2 discovery slices have landed.
+The package/Git, committed MCP and first CI/container-delivery HLG-2 discovery slices have landed.
 `discoverRepositoryLandscape` reads a caller-selected exact commit, bounds and parses root/workspace
 package manifests, canonicalizes configured and manifest-declared repository identity without
 retaining credentials or host paths, and returns content-addressed `hunch.landscape-candidate/1`
@@ -236,11 +236,19 @@ ignored. Commands, arguments, environment values, package arguments and credenti
 never appear in the candidate fragment. The extractor is pure and never writes `.hunch` graph
 authority.
 
-HLG-2 next adds deployment and CI declarations, then API/schema families one at a time under the
-same candidate/issue envelope. HLG-3 then projects only reviewed graph records through the existing
-delivery envelope; HLG-4 adds external-reference drift intake. ORC's aligned execution snapshot
-explicitly rejects `hunch.landscape-candidate/1` and requires an accepted, current fragment plus its
-native receipt before execution authority can be frozen.
+Committed GitHub Actions, GitLab CI, CircleCI, Buildkite and root Jenkins declarations now produce
+path-derived `pipeline` candidates. Dockerfiles produce path-derived container `artifact`
+candidates, and canonical Compose files produce `deployment_target` candidates. Repository edges
+remain explicit (`contains`, `builds`, `deploys`); candidates never claim that a pipeline ran, an
+image exists or a deployment is healthy. Discovery validates bounded structure and UTF-8, rejects
+symlinks and unsafe paths, and retains only declaration path/field/revision/content hashes—not
+workflow commands, images, build arguments, environment values or service bodies.
+
+HLG-2 next adds structured Kubernetes and systemd declaration identity, then API/schema families
+one at a time under the same candidate/issue envelope. HLG-3 then projects only reviewed graph
+records through the existing delivery envelope; HLG-4 adds external-reference drift intake. ORC's
+aligned execution snapshot explicitly rejects `hunch.landscape-candidate/1` and requires an
+accepted, current fragment plus its native receipt before execution authority can be frozen.
 
 ## Non-goals
 
