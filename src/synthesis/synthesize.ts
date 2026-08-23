@@ -22,12 +22,7 @@ import { isSubstantive } from "../extractors/languages.js";
 // "chore(deps):" is anchored separately (not via \b) because \b requires a
 // word/non-word transition, and the character after the closing ")" is ":" or a
 // space — both non-word — so no boundary ever fires there.
-// "hunch" catches flushCapture's own auto-commits ("hunch: capture <id>"), which
-// since #12 would otherwise become synthesis-eligible: flushCapture regenerates
-// AGENTS.md/CLAUDE.md/copilot-instructions.md alongside .hunch/**, and markdown is
-// now substantive input. Re-synthesizing Hunch's own bookkeeping commit is exactly
-// the circular-noise case commitDiff's DIFF_NOISE already excludes .hunch/** for.
-const SKIP_SUBJECT = /^(merge|revert|bump|format|lint|wip|hunch)\b|^chore\(deps\):/i;
+const SKIP_SUBJECT = /^(merge|revert|bump|format|lint|wip)\b|^chore\(deps\):/i;
 
 export interface SyncResult {
   status: "written" | "skipped";
@@ -81,6 +76,21 @@ export async function syncCommit(
   if (!meta) return { status: "skipped", reason: "commit not found" };
 
   if (isTrivialSubject(meta)) return { status: "skipped", reason: `trivial subject: ${meta.subject}` };
+  // .hunch/** is Hunch's OWN store — commitDiff already excludes it from the diff
+  // CONTENT via DIFF_NOISE ("circular noise": re-synthesizing a commit that wrote
+  // it would draft a decision about Hunch's own bookkeeping). That guard never
+  // covered this file-LIST gate, and before #12 it didn't need to: languageFor()
+  // already returned null for .hunch/**'s JSON and for the .md grounding docs
+  // flushCapture regenerates alongside it (AGENTS.md/CLAUDE.md/copilot-instructions.md),
+  // so such a commit failed "no code files changed" by coincidence. Once markdown
+  // became substantive input those grounding docs alone made the commit eligible.
+  // Checked by PATH, not commit-message convention (flushCapture's exact subject
+  // wording lives as separate literals in mcp/server.ts/cli/index.ts and could
+  // drift independently of any subject regex here) — a human editing AGENTS.md on
+  // its own, with no .hunch/** change alongside it, stays fully synthesis-eligible.
+  if (meta.files.some((f) => pathMatchesGlob(f, "**/.hunch/**"))) {
+    return { status: "skipped", reason: "touches Hunch's own store (.hunch/**) — circular, never synthesis input" };
+  }
   // Substantive, not just parseable: markdown carries the *why* in a docs/ADR repo
   // just as legitimately as a .ts diff does, even though it has no symbol graph
   // (issue #12). languageFor() stays the parseability question for the symbol/dep
