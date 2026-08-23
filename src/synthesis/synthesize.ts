@@ -22,7 +22,12 @@ import { isSubstantive } from "../extractors/languages.js";
 // "chore(deps):" is anchored separately (not via \b) because \b requires a
 // word/non-word transition, and the character after the closing ")" is ":" or a
 // space — both non-word — so no boundary ever fires there.
-const SKIP_SUBJECT = /^(merge|revert|bump|format|lint|wip)\b|^chore\(deps\):/i;
+// "hunch" catches flushCapture's own auto-commits ("hunch: capture <id>"), which
+// since #12 would otherwise become synthesis-eligible: flushCapture regenerates
+// AGENTS.md/CLAUDE.md/copilot-instructions.md alongside .hunch/**, and markdown is
+// now substantive input. Re-synthesizing Hunch's own bookkeeping commit is exactly
+// the circular-noise case commitDiff's DIFF_NOISE already excludes .hunch/** for.
+const SKIP_SUBJECT = /^(merge|revert|bump|format|lint|wip|hunch)\b|^chore\(deps\):/i;
 
 export interface SyncResult {
   status: "written" | "skipped";

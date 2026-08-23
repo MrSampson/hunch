@@ -75,12 +75,30 @@ test("isTrivialSubject: chore(deps) subjects are recognized as SKIP_SUBJECT (reg
   assert.equal(isTrivialSubject({ subject: "wip", body: "" }), true);
 });
 
+test("isTrivialSubject: Hunch's own auto-commits (\"hunch: capture ...\") are SKIP_SUBJECT (issue #12 regression)", () => {
+  // flushCapture's commit subject is always "hunch: capture <id>" / "hunch: capture
+  // runbook <id>", no body. Since #12 widened the eligibility gate to include markdown,
+  // and flushCapture regenerates AGENTS.md/CLAUDE.md/copilot-instructions.md alongside
+  // .hunch/**, without this the self-authored commit would become synthesis-eligible —
+  // re-drafting a "decision" about Hunch's own bookkeeping and paying for an LLM call.
+  assert.equal(isTrivialSubject({ subject: "hunch: capture dec_115faf389b", body: "" }), true);
+  assert.equal(isTrivialSubject({ subject: "hunch: capture runbook run_abc123", body: "" }), true);
+  // substantive body still overrides, same as every other SKIP_SUBJECT alternative
+  assert.equal(isTrivialSubject({ subject: "hunch: capture dec_115faf389b", body: "x".repeat(40) }), false);
+});
+
 test("deterministic provider is always available and drafts a low-confidence decision", async () => {
   const p = await selectProvider();
   assert.equal(p.name, "deterministic");
   const d = await p.draftDecision({ subject: "feat: add X", body: "", files: ["src/x.ts"], diff: "" });
   assert.ok(d.title.length > 0);
   assert.ok(d.confidence <= 0.4, "auto-captured = advisory/low-confidence");
+});
+
+test("deterministic provider's empty-subject title fallback doesn't claim \"Code\" for a markdown-only commit (issue #12)", async () => {
+  const p = await selectProvider();
+  const d = await p.draftDecision({ subject: "", body: "", files: ["docs/adr/0001-x.md"], diff: "" });
+  assert.doesNotMatch(d.title, /\bcode\b/i, `must not claim "code": ${d.title}`);
 });
 
 test("recordFailure ranks suspects, writes a bug, and promotes a constraint on recurrence", async () => {

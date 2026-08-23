@@ -820,7 +820,7 @@ export class DeterministicProvider implements SynthProvider {
     const informative = !!(a && (a.addedSymbols.length || a.removedSymbols.length || a.changedSymbols.length || a.addedDeps.length || a.removedDeps.length));
 
     return {
-      title: input.subject || "Code change",
+      title: input.subject || `${cap(noun)} change`,
       context: [input.body, summary && `What changed: ${summary}.`].filter(Boolean).join(" ").slice(0, 500)
         || `Touched ${input.files.length} file(s) across ${dirs.join(", ") || "the repo"}.`,
       decision: summary

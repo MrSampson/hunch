@@ -59,6 +59,32 @@ test("analyzeDiff tracks a modified (not just new) markdown file in filesModifie
   assert.equal(a.addedLines, 2);
 });
 
+test("analyzeDiff records a pure markdown rename (issue #12: rename tracking widened to isSubstantive)", () => {
+  const diff = [
+    "diff --git a/docs/old.md b/docs/new.md",
+    "similarity index 100%",
+    "rename from docs/old.md",
+    "rename to docs/new.md",
+  ].join("\n");
+  const a = analyzeDiff(diff);
+  assert.deepEqual(a.filesRenamed, [{ from: "docs/old.md", to: "docs/new.md" }]);
+});
+
+test("analyzeDiff tracks a deleted markdown file (issue #12: delete tracking widened to isSubstantive)", () => {
+  const diff = [
+    "diff --git a/docs/gone.md b/docs/gone.md",
+    "deleted file mode 100644",
+    "--- a/docs/gone.md",
+    "+++ /dev/null",
+    "@@ -1,2 +0,0 @@",
+    "-# Old ADR",
+    "-No longer relevant.",
+  ].join("\n");
+  const a = analyzeDiff(diff);
+  assert.deepEqual(a.filesDeleted, ["docs/gone.md"]);
+  assert.equal(a.removedLines, 2);
+});
+
 test("analyzeDiff still ignores a non-code, non-prose file entirely (e.g. an SVG)", () => {
   const diff = diffAddingFile("assets/logo.svg", "<svg></svg>");
   const a = analyzeDiff(diff);
