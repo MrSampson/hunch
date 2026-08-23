@@ -376,7 +376,7 @@ function run(command, args, options = {}) {
 // extraction by one column — ".hunch/evidence/x.json" reads as
 // "hunch/evidence/x.json", silently fails isMemoryChurnPath's `.hunch/` prefix
 // check, and a routine derived-memory write misreports as a real source
-// mutation (root cause of the intermittent repository-index CI flake, #31).
+// mutation (root cause of an intermittent repository-index CI flake).
 export function git(args, cwd = projectRoot) {
   const child = spawnSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   if (child.status !== 0) throw new Error(child.stderr.trim() || `git ${args.join(" ")} failed`);

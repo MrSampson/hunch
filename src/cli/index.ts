@@ -14,7 +14,7 @@
  *   doctor    environment diagnostics
  */
 import "./preflight.js"; // MUST stay the first import — Node-version gate before node:sqlite loads
-import { chmodSync, existsSync, lstatSync, readFileSync, readlinkSync, writeFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, rmdirSync, symlinkSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, readFileSync, readdirSync, readlinkSync, writeFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, rmdirSync, symlinkSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { join, relative, dirname, basename, resolve, isAbsolute } from "node:path";
 import { tmpdir } from "node:os";
@@ -85,13 +85,16 @@ import {
 import { draftDuplicateOf, isAcceptedDuplicateAnchor } from "../core/dupdetect.js";
 import { planAutoReview, planMutations, type AutoReviewPlan, type AutoReviewEntry } from "../core/autoreview.js";
 import type { RelevanceVerdict, ExistingDecisionRef } from "../synthesis/provider.js";
-import { loadGoldenSet, evaluateGraphLift } from "../eval/harness.js";
+import { loadGoldenSet, evaluateRetrieval, evaluateTraversalLift } from "../eval/harness.js";
 import { loadGuardCases, evalGuards, generateGuardCases } from "../eval/guards.js";
 import { computeDrift } from "../core/drift.js";
 import { renderCompilerScorecard, scoreCompilerCaseBank } from "../constitution/scorecard.js";
 import { generateWiki, wikiStatus, wikiPrompt, publicHome, privateHome, readWikiManifestAt, nowData, type WikiPack } from "../wiki/wiki.js";
 import { adoptProsePrompt } from "../wiki/adopt.js";
-import { topicCollisions, isInForce } from "../core/topics.js";
+import { topicCollisions, isInForce, liveForTopic } from "../core/topics.js";
+import { ADR_DIR_CANDIDATES, ADR_FILE_RE, mapAdrCorpus } from "../extractors/adrImport.js";
+import { exportMadrCorpus, isRegenerableMadr } from "../integrations/madrExport.js";
+import { buildMadrManifest, writeMadrManifest, refreshMadrCorpus } from "../integrations/madrManifest.js";
 import { pendingEscalations, policyEscalations } from "../core/escalations.js";
 import { premiseEscalations } from "../core/premises.js";
 import { parseDocAnchors, renderDocGrounding } from "../core/docanchors.js";
@@ -144,6 +147,8 @@ function openTeamStore(root: string, opts: TeamStoreOptions = {}): {
   const teamWired = ensureTeamOverlay(root);
   const store = new HunchStore(hunchPaths(root));
   openStore = store;
+  const overlayWarning = store.overlayResolutionWarning(explicitOverlay && existsSync(teamFile));
+  if (overlayWarning) console.error(`[hunch] ⚠ ${overlayWarning}`);
   if (teamAdvertised && (store.mode !== "shared"
     || !store.privateDir
     || !existsSync(store.privateDir)
@@ -524,6 +529,19 @@ program
       if (!opts.quiet) console.log(`✓ captured decision ${r.decision?.id} via ${r.provider}: "${r.decision?.title}"`);
     } else if (!opts.quiet) {
       console.log(`· skipped: ${r.reason}`);
+    }
+    // The MADR projection tracks the graph automatically once adopted, the way the
+    // SQLite index does — a user who ran `hunch export-adr` once never runs it again.
+    // Best-effort and last-write-wins-free: a hand-edited file is skipped, not
+    // clobbered, and any failure here must never affect the capture that preceded it.
+    try {
+      const refreshed = refreshMadrCorpus(store.json.loadAll("decisions"), root, new Date().toISOString());
+      if (refreshed && !opts.quiet && (refreshed.written || refreshed.removed || refreshed.skippedEdited.length)) {
+        const skipped = refreshed.skippedEdited.length ? `, ${refreshed.skippedEdited.length} hand-edited file(s) left alone` : "";
+        console.log(`  ↳ ADR corpus refreshed: ${refreshed.written} written, ${refreshed.removed} removed${skipped} (${refreshed.dir}/)`);
+      }
+    } catch (e) {
+      if (!opts.quiet) console.log(`  ↳ ADR corpus refresh skipped safely: ${(e as Error).message}`);
     }
     let graphRefreshed = false;
     let publicCorrectionQueued = false;
@@ -1354,16 +1372,20 @@ program
     // Default is deterministic (FTS + graph, no model). --semantic only adds the
     // semantic leg when embeddings actually exist; otherwise it's still FTS + graph.
     const embedder = opts.semantic ? await selectEmbedder() : undefined;
-    const lift = await evaluateGraphLift(store, cases, { k, embedder, kind: opts.kind });
+    const evalOpts = { k, embedder, kind: opts.kind };
+    const off = await evaluateRetrieval(store, cases, { ...evalOpts, graphWeight: 0 });
+    const traversal = await evaluateTraversalLift(store, cases, evalOpts);
     const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
     const dpt = (x: number) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}pt`;
     const dnum = (x: number) => `${x >= 0 ? "+" : ""}${x.toFixed(3)}`;
     console.log(`Eval over ${cases.length} case(s), k=${k}${opts.semantic ? " (semantic + graph + FTS)" : " (FTS + graph)"}\n`);
     console.log(`                Recall@${k}    MRR      hit-rate`);
-    console.log(`  graph OFF     ${pct(lift.off.recallAtK).padStart(7)}    ${lift.off.mrr.toFixed(3)}    ${pct(lift.off.hitRate)}`);
-    console.log(`  graph ON      ${pct(lift.on.recallAtK).padStart(7)}    ${lift.on.mrr.toFixed(3)}    ${pct(lift.on.hitRate)}`);
-    console.log(`  graph LIFT    ${dpt(lift.recallDelta).padStart(7)}    ${dnum(lift.mrrDelta)}`);
-    const misses = lift.on.perCase.filter((c) => c.found === 0);
+    console.log(`  graph OFF     ${pct(off.recallAtK).padStart(7)}    ${off.mrr.toFixed(3)}    ${pct(off.hitRate)}`);
+    console.log(`  graph 1-HOP   ${pct(traversal.oneHop.recallAtK).padStart(7)}    ${traversal.oneHop.mrr.toFixed(3)}    ${pct(traversal.oneHop.hitRate)}`);
+    console.log(`  graph BOUNDED ${pct(traversal.bounded.recallAtK).padStart(7)}    ${traversal.bounded.mrr.toFixed(3)}    ${pct(traversal.bounded.hitRate)}`);
+    console.log(`  graph LIFT    ${dpt(traversal.bounded.recallAtK - off.recallAtK).padStart(7)}    ${dnum(traversal.bounded.mrr - off.mrr)}`);
+    console.log(`  depth LIFT    ${dpt(traversal.recallDelta).padStart(7)}    ${dnum(traversal.mrrDelta)}`);
+    const misses = traversal.bounded.perCase.filter((c) => c.found === 0);
     if (misses.length) {
       console.log(`\n  ${misses.length} case(s) with no expected hit — curate or tune:`);
       for (const m of misses.slice(0, 10)) console.log(`    · "${m.query}"`);
@@ -2847,6 +2869,122 @@ program
     if (r.bug.lineage.recurrence_of) console.log(`  ↳ recurrence of ${r.bug.lineage.recurrence_of}`);
     if (r.constraint) console.log(`  ↳ promoted constraint ${r.constraint.id} [${r.constraint.severity}]: ${r.constraint.statement}`);
     store.close();
+  });
+
+// ---- import-adr (MADR/Nygard corpus import — the MADR bridge, import half) --
+program
+  .command("import-adr")
+  .description("Import an existing MADR/Nygard ADR corpus (docs/adr etc.) into the decision graph — deterministic, no LLM. Re-running updates the same records (ids derive from file paths).")
+  .argument("[dir]", "ADR directory (default: probe docs/adr, docs/decisions, doc/adr, adr, docs/architecture/decisions)")
+  .option("--dry-run", "parse and report what would be imported without writing")
+  .option("--private", "write imported decisions into the private overlay instead of the committed store")
+  .action((dirArg: string | undefined, opts: { dryRun?: boolean; private?: boolean }) => {
+    const { store, root } = storeFor();
+    try {
+      const dir = dirArg
+        ? toPosixTarget(dirArg)
+        : ADR_DIR_CANDIDATES.find((c) => existsSync(join(root, c)) && readdirSync(join(root, c)).some((f) => ADR_FILE_RE.test(f)));
+      if (!dir || !existsSync(join(root, dir))) {
+        return fail(dirArg ? `ADR directory not found: ${dirArg}` : `no ADR corpus found (probed: ${ADR_DIR_CANDIDATES.join(", ")})`);
+      }
+      const files = readdirSync(join(root, dir)).filter((f) => ADR_FILE_RE.test(f)).sort();
+      if (!files.length) return fail(`no NNNN-slug.md ADR files in ${dir}`);
+      const sources = files.map((f) => ({ relPath: `${dir}/${f}`, text: readFileSync(join(root, dir, f), "utf8") }));
+      const { decisions, warnings } = mapAdrCorpus(sources);
+      for (const w of warnings) console.log(`  ⚠ ${w}`);
+
+      // Fail-safe topic anchoring: an import must never create a SECOND live
+      // decision on a topic the graph already anchors — drop the anchor, keep
+      // the record (visible, just not drift-anchored), and say so.
+      const existing = store.recs("decisions").filter((d) => !decisions.some((n) => n.id === d.id));
+      for (const d of decisions) {
+        if (d.status !== "accepted" || !d.topic) continue;
+        if (liveForTopic(existing, d.topic).length) {
+          console.log(`  ⚠ topic ${d.topic} already has a live decision in the graph — importing ${d.id} un-anchored`);
+          d.topic = null;
+        }
+      }
+
+      if (opts.dryRun) {
+        for (const d of decisions) {
+          const window = d.valid_to ? `${d.valid_from ?? "?"} → ${d.valid_to}` : "in force";
+          console.log(`  ${d.id} [${d.status}] ${d.title} (${window})`);
+        }
+        console.log(`✓ dry run: ${decisions.length} ADR(s) parsed from ${dir}, nothing written`);
+        return;
+      }
+
+      store.json.ensureDirs();
+      let created = 0, updated = 0;
+      for (const d of decisions) {
+        if (store.getRec("decisions", d.id)) updated++;
+        else created++;
+        store.putCapture("decisions", d, opts.private);
+      }
+      store.reindex();
+      const home = store.captureHome(!!opts.private);
+      if (home === "public" && !store.autoCommit) refreshExistingGrounding(root, store);
+      const flush = flushCapture(store, hunchPaths(root).hunch, !!opts.private, `hunch: import ${decisions.length} ADR(s) from ${dir}`);
+      const live = decisions.filter((d) => d.status === "accepted").length;
+      console.log(`✓ imported ${decisions.length} ADR(s) from ${dir} (${created} new, ${updated} updated; ${live} live, ${decisions.length - live} historical)${opts.private ? " [private overlay]" : ""}`);
+      if (flush === "pushed") console.log("  ↳ private memory committed + pushed");
+    } finally {
+      store.close();
+    }
+  });
+
+// ---- export-adr (MADR projection — the MADR bridge, export half) -----------
+program
+  .command("export-adr")
+  .description("Project the PUBLIC decision graph as a regenerated MADR 3.x corpus (a disposable build artifact — the graph stays the source of truth). Only files carrying the hunch:generated marker are ever overwritten.")
+  .argument("[dir]", "output directory (repo-relative)", "docs/adr")
+  .option("--dry-run", "render and report without writing")
+  .action((dirArg: string, opts: { dryRun?: boolean }) => {
+    const { store, root } = storeFor();
+    try {
+      const dir = toPosixTarget(dirArg);
+      // PUBLIC store only — an exported artifact is committable, so overlay
+      // records must never reach it (one-way privacy boundary).
+      const decisions = store.json.loadAll("decisions");
+      if (!decisions.length) return fail("no public decisions to export");
+      const { files, backstageAnnotation } = exportMadrCorpus(decisions, dir);
+
+      const outDir = join(root, dir);
+      // The projection owns its directory outright: mixing generated output into
+      // a hand-written ADR corpus would duplicate numbering and corrupt every
+      // MADR reader of that dir. Any non-generated ADR-shaped file → refuse whole.
+      const existingGenerated = new Set<string>();
+      if (existsSync(outDir)) {
+        for (const f of readdirSync(outDir)) {
+          if (!f.endsWith(".md")) continue;
+          const text = readFileSync(join(outDir, f), "utf8");
+          if (isRegenerableMadr(text)) existingGenerated.add(f);
+          else if (ADR_FILE_RE.test(f)) {
+            return fail(`${dir} holds a hand-written ADR corpus (${f} has no hunch:generated marker) — export to a different directory (e.g. \`hunch export-adr docs/adr-generated\`), or import it first with \`hunch import-adr ${dir}\``);
+          }
+        }
+      }
+      const stale = [...existingGenerated].filter((f) => !files.some((n) => n.name === f));
+
+      if (opts.dryRun) {
+        console.log(`✓ dry run: would write ${files.length} ADR(s) to ${dir}${stale.length ? `, remove ${stale.length} stale generated file(s)` : ""}`);
+        return;
+      }
+
+      mkdirSync(outDir, { recursive: true });
+      for (const f of files) writeFileSync(join(outDir, f.name), f.text);
+      // A regeneration renumbers; previously generated files not in the new set
+      // are OURS (marker-verified) and stale — remove so the corpus stays coherent.
+      for (const f of stale) rmSync(join(outDir, f));
+      // Adopt the corpus: the manifest is what makes `hunch drift` able to notice
+      // this projection going stale, being hand-edited, or outliving its decision.
+      // Written after the files land, so a failed write never claims freshness.
+      writeMadrManifest(root, buildMadrManifest(dir, files, new Date().toISOString()));
+      console.log(`✓ exported ${files.length} ADR(s) to ${dir}${stale.length ? `; removed ${stale.length} stale generated file(s)` : ""}`);
+      console.log(`  ↳ Backstage: add to catalog-info.yaml metadata.annotations →  ${backstageAnnotation}`);
+    } finally {
+      store.close();
+    }
   });
 
 // ---- record-constraint (human-authored invariant) -------------------------
@@ -4812,6 +4950,27 @@ program
         for (const f of wikiStale) console.log(`· ${f.id} — ${f.detail}`);
         console.log(`\nHeal: run \`hunch wiki --heal\` — regenerates only the stale pages (the wiki is a derived view; never edit it by hand).\n`);
       }
+      // The MADR projection: three kinds, three different human actions — which is
+      // why they are separate sections rather than one "run export-adr" line.
+      const madrStale = kind("madr-stale");
+      if (madrStale.length) {
+        console.log(`${madrStale.length} exported ADR(s) drifted from the graph:\n`);
+        for (const f of madrStale) console.log(`· ${f.id} — ${f.detail}`);
+        console.log(`\nHeal: run \`hunch export-adr\` — the corpus is a disposable projection (the graph stays the source of truth). Normally this never appears: the projection refreshes automatically on every capture.\n`);
+      }
+      const madrEdited = kind("madr-edited");
+      if (madrEdited.length) {
+        console.log(`${madrEdited.length} generated ADR(s) were hand-edited — the next export would overwrite them:\n`);
+        for (const f of madrEdited) console.log(`· ${f.id} — ${f.detail}`);
+        console.log(`\nHeal A (the DECISION is what changed): move the edit into the decision via /capture, then let the projection regenerate — the edit survives because it now lives in the graph.`);
+        console.log(`Heal B (you want to own this file): delete the hunch:generated marker. The export refuses it from then on and it becomes a hand-written ADR.\n`);
+      }
+      const madrOrphan = kind("madr-orphan");
+      if (madrOrphan.length) {
+        console.log(`${madrOrphan.length} generated ADR(s) have no decision behind them any more:\n`);
+        for (const f of madrOrphan) console.log(`· ${f.id} — ${f.detail}`);
+        console.log(`\nHeal: delete the file, or run \`hunch export-adr\` to regenerate the corpus without it. If the decision moved to the private overlay, the file is a PUBLIC artifact of a now-private record — delete it.\n`);
+      }
       // Every drift kind heals here — see bug_drift_heal_asymmetry above. premise-stale
       // shipped in the drift report without a section here, so a repo whose ONLY drift
       // was a dead premise got "N findings" from `hunch drift` and a bare closing line
@@ -4969,8 +5128,8 @@ program
       console.log(`            fix: re-run \`hunch ${store.mode === "shared" ? "shared" : "private"} --repo <url>\` (or restore the directory); the pointer lives in .hunch/local.json / the git common dir`);
     } else if (store.privateDir) {
       console.log(store.mode === "shared"
-        ? `shared:     on → ${store.privateDir} (UNIFIED — every capture routes here; one source of truth across branches, worktrees, teammates, agents)`
-        : `private:    on → ${store.privateDir} (local overlay — unioned into queries; never committed or posted publicly)`);
+        ? `shared:     on → ${store.privateDir} (UNIFIED — every capture routes here; one source of truth across branches, worktrees, teammates, agents; source: ${store.overlaySource})`
+        : `private:    on → ${store.privateDir} (local overlay — unioned into queries; never committed or posted publicly; source: ${store.overlaySource})`);
     } else {
       const team = readTeamConfig(root);
       console.log(team

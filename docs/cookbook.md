@@ -2,8 +2,8 @@
 
 Practical recipes for running Hunch day to day. Each recipe is copy-paste-able and states what you should observe when it works.
 
-> **Languages:** deep code-structure parsing covers TypeScript, JavaScript, Python, and YAML
-> (one `LanguageSpec` registry entry per language). The "why" layer — decisions, bugs,
+> **Languages:** deep code-structure parsing covers TypeScript, JavaScript, Python, Go, YAML, and
+> chart-scoped Helm templates (one `LanguageSpec` registry entry per language). The "why" layer — decisions, bugs,
 > rules — works for any language, since it reads your commits and diffs.
 
 ---
@@ -161,7 +161,7 @@ remote, and the URL committed into the code repository must not contain credenti
 On one maintainer machine:
 
 ```bash
-npm i -g @davesheffer/hunch@1.13.1
+npm i -g @davesheffer/hunch@1.18.1
 hunch shared --repo git@github.com:acme/project-hunch-memory.git
 git add .gitignore .hunch/team.json
 git commit -m "chore: connect shared Hunch memory"
@@ -173,7 +173,7 @@ into the dedicated store. Review the reported untrack/ignore changes and follow 
 Hunch prints. On every teammate machine:
 
 ```bash
-npm i -g @davesheffer/hunch@1.13.1
+npm i -g @davesheffer/hunch@1.18.1
 git pull
 hunch init
 hunch doctor
@@ -189,7 +189,7 @@ For a coordinated pause or rollback that preserves every memory record:
 ```bash
 hunch firmness off
 hunch shared --repo git@github.com:acme/project-hunch-memory.git --no-auto-commit
-npm i -g @davesheffer/hunch@1.12.1
+npm i -g @davesheffer/hunch@1.16.0
 ```
 
 Revert the `.hunch/team.json` setup commit only if new clones must stop discovering the Matrix. Do
@@ -205,6 +205,8 @@ hunch private               # point a clone at the overlay
 ```
 
 **Observe:** `hunch_*` tools see the union; the public repo carries only what you curate.
+`HUNCH_PRIVATE_DIR` has process-level precedence over `.hunch/local.json`; a different target is
+therefore reported explicitly on CLI/MCP stderr, and `hunch doctor` shows `source: environment`.
 
 ## 12. The self-running memory loop (v1.8.0+)
 
@@ -270,10 +272,10 @@ Matrix memory home as the CLI; it never writes Hunch JSON directly.
 For a release audit, start with the exact tags and public registry metadata:
 
 ```bash
-npm view @davesheffer/hunch@1.13.1 version dist.integrity dist.attestations --json
-git tag --list v1.13.1 vscode-v0.17.3
+npm view @davesheffer/hunch@1.18.1 version dist.integrity dist.attestations --json
+git tag --list v1.18.1 vscode-v0.17.3
 ```
 
-**Observe:** npm reports `1.13.1`, an integrity digest, and provenance metadata. Open VSX reports
+**Observe:** npm reports `1.18.1`, an integrity digest, and provenance metadata. Open VSX reports
 `0.17.3`. The GitHub Actions run for each tag shows a credential-free validation job followed by
 publication and public byte verification of the same content-addressed artifact.

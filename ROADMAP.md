@@ -1,5 +1,7 @@
 # Hunch roadmap
 
+Updated 2026-08-22.
+
 Hunch is building the validated delivery layer for engineering intent: record why the code is the
 way it is, deliver the right evidence at the moment an agent needs it, and deterministically check
 the resulting change. The graph is the source of truth; assistant rules, prompts, receipts, and
@@ -37,19 +39,151 @@ The integration contract must preserve Hunch's validated-delivery evidence — r
 
 This boundary is intentionally vendor-neutral: the same Hunch knowledge must remain usable whether the worker is Claude, Codex, another MCP-capable agent or a future orchestrator.
 
-## Current baseline — v1.13.1
+### Reciprocal adaptive-evolution boundary
+
+ORC's adaptive-evolution work remains an ORC evaluation/control-plane concern. Its `CurriculumCandidate`, `ExecutionScaffoldCandidate`, `StrategyOutcome`, scaffold populations, replay tournaments, transfer measurements and promotion/retirement decisions do **not** become Hunch graph authority. See ORC's [`ROADMAP-ADAPTIVE-EVOLUTION.md`](https://github.com/davesheffer/orc/blob/main/docs/ROADMAP-ADAPTIVE-EVOLUTION.md) and [`EVAL-AND-LEARNING-LOOP.md`](https://github.com/davesheffer/orc/blob/main/docs/EVAL-AND-LEARNING-LOOP.md).
+
+Hunch may receive a procedural finding from that loop only as a reviewable evidence-bearing candidate after ORC has independently verified it and shown reproducible applicability/transfer. Promotion into durable Hunch knowledge still requires Hunch's normal provenance, contradiction/currentness and review rules. Raw generated challenges, speculative scaffold variants, reward/score history and a single winning Run remain outside Hunch. Conversely, Hunch may supply revision-current decisions, constraints, failure lineage and structural features to ORC as evidence/context, but it never selects the winning scaffold or grants execution authority.
+
+The next shared Hunch/ORC contract is the [Engineering Landscape Graph](docs/engineering-landscape.md).
+Hunch publishes durable, repository-evidenced landscape fragments; ORC's reciprocal
+[`ENGINEERING-LANDSCAPE.md`](https://github.com/davesheffer/orc/blob/main/docs/ENGINEERING-LANDSCAPE.md)
+owns authorized cross-repository traversal, live discovery and task-scoped assembly. Hunch Memory's
+reciprocal [transport contract](https://github.com/davesheffer/hunch-memory/blob/main/docs/ENGINEERING-LANDSCAPE-TRANSPORT.md)
+preserves the fragment and native receipt without owning ranking, traversal or ORC caching.
+
+## Engineering Landscape Graph — in progress
+
+The repository is one implementation node, not the root of a developer's world. Hunch will extend
+its existing graph so a bounded query can connect product → capability → system → repository →
+service/interface/data/delivery resources and the decisions, constraints, incidents and lifecycle
+facts that govern them.
+
+1. **HLG-1 — versioned resource and relationship contract. DONE (2026-08-21).** Stable
+   kind-qualified resource IDs and directional relationship IDs now extend the existing JSON graph;
+   lifecycle, credential-free locators, provenance/currentness, forward migration and rebuildable
+   SQLite projections are covered by the focused landscape fixture.
+2. **HLG-2 — deterministic repository fragment discovery. IN PROGRESS (package/Git, committed MCP
+   and CI/deployment declaration slices landed through 2026-08-23).**
+   `discoverRepositoryLandscape` now reads one exact Git revision and emits bounded,
+   content-addressed candidate resources/relationships for root/workspace packages, canonical
+   credential-free Git remotes, supported MCP declarations, major committed CI formats,
+   Dockerfile build artifacts, Docker Compose targets, structured Kubernetes workloads and systemd
+   service units. Evidence retains only safe file/field/revision/content identity; declaration
+   bodies, commands, images, environment values and credentials never enter the fragment.
+   API/event/schema and ownership sources remain.
+3. **HLG-3 — bounded landscape delivery.** Return task-relevant resources, relationships and linked
+   Hunch reasoning through the existing ranking, budget, currentness and native receipt envelope;
+   add an explicit CLI/MCP view only as a projection over that machinery. Freeze the additive
+   envelope before Hunch Memory implements transport; the service must preserve IDs, source/graph
+   evidence, omissions and the native receipt byte-for-byte or by canonical hash.
+4. **HLG-4 — cross-repository references and drift intake.** Preserve stable external repository and
+   contract references. Accept ORC-observed mismatches only as evidenced findings/proposals; live
+   observation never silently rewrites declared architecture.
+
+Done means a repository can publish a revision-current, receipted landscape fragment that remains
+useful to any Hunch client, while ORC can assemble multiple authorized fragments without duplicating
+Hunch's graph or making Hunch a runtime/control plane.
+
+### HLG-1 implementation status
+
+The first executable contract slice is implemented without adding orchestration. It preserves the
+frozen Hunch/ORC ownership boundary and all later documentation and ledger history from `main`:
+
+1. Add one extensible, versioned resource record in `src/core/types.ts` with stable kind-qualified
+   identity, lifecycle, credential-free locator, provenance and currentness.
+2. Extend the existing edge graph for typed resource relationships. Do not create a second graph,
+   a second source of truth or an ORC-specific store.
+3. Bump the JSON schema generation and forward-migrate before Zod validation. JSON remains
+   authoritative; SQLite remains a rebuildable derived index.
+4. Make resource and relationship identity deterministic and reject secret-bearing locators or
+   metadata at the write boundary.
+5. Prove legacy graph migration, deterministic round trips, malformed-record rejection, derived
+   index rebuild and public/private-store behavior with focused tests.
+
+`hunch.resource/1` records and `hunch.resource-relationship/1` edges preserve the JSON source of
+truth, schema generation 3 forward-migrates legacy edges before validation, and derived
+`resources` / `resource_relationships` tables rebuild from public plus authorized private homes.
+The acceptance fixture proves deterministic identity and direction, secret/runtime-claim rejection,
+legacy migration, exact write/read/reindex/restart behavior and overlay isolation.
+
+The first **HLG-2** source slice is implemented by `src/extractors/landscapeDiscovery.ts`. It scans
+only an exact commit, bounds manifests, ignores non-workspace packages, canonicalizes Git/provider
+identity without retaining credentials or local paths, and returns explicit
+`hunch.landscape-candidate/1` wrappers. Conflicting repository declarations leave package candidates
+unbound; neither discovery nor ORC may treat them as accepted graph authority.
+
+The committed MCP declaration slice now reads `.mcp.json`, Cursor, VS Code JSONC, Windsurf,
+Antigravity, plugin and canonical Codex TOML configurations plus official registry `server.json`
+manifests. Project-client declarations emit repository `depends_on` relationships; registry
+manifests emit repository `provides` relationships. Discovery merges identical declarations,
+leaves conflicts unresolved, ignores unrelated `server.json` files and never returns stdio
+commands, arguments, environment values or credential-bearing URLs. Exact revision and content
+evidence remain visible without echoing the configuration body.
+
+The first delivery declaration slice reads GitHub Actions, GitLab CI, CircleCI, Buildkite and root
+Jenkins pipelines plus Dockerfiles and canonical Docker Compose files. It emits path-derived
+`pipeline`, `artifact` and `deployment_target` candidates with repository `contains`, `builds` and
+`deploys` relationships. YAML must parse and expose the provider's required root field; Docker and
+Jenkins declarations require only their bounded structural marker because Hunch does not interpret
+commands. Symlinks, unsafe paths, malformed/oversized files and declarations beyond the fixed cap
+remain explicit issues. No image, command, argument, environment or service-body value is returned.
+
+The structured deployment slice recognizes workload documents in committed `k8s/`, `kubernetes/`,
+`manifests/` and `deploy/` YAML plus committed `.service` units. Kubernetes identity is
+path-scoped and derived only from a supported workload's `apiVersion`, `kind`, namespace and name;
+non-workload documents are ignored, unsafe/templated identities are issues, and duplicate workload
+identity remains unresolved. Systemd units require a real `[Service]` section and expose only their
+safe committed unit path. The 128-declaration cap applies after multi-document expansion, so one
+large manifest cannot manufacture an unbounded fragment.
+
+The immediate next HLG-2 handoff is API/schema families one at a time under the same bounded
+issue/evidence/candidate envelope, beginning with OpenAPI.
+HLG-3 begins only after candidate review/adoption preserves identity and provenance through the
+existing delivery receipt. Hunch still does not claim live runtime health, cross-repository
+traversal or a new CLI/MCP surface. HLG-1 is closed by accepted decision `dec_a6d088f409`; the live
+roadmap anchor is `roadmap.engineering-landscape-hlg-2` (`dec_9130451387`).
+
+## Current baseline — v1.18.0
 
 - Architectural Conformance and decision-grounding are deterministic release gates.
 - CLI, MCP, and edit hooks share one currentness-checked, hard-budgeted delivery envelope.
 - MCP advertises and returns that envelope as structured output while preserving legacy text.
 - Delivery receipts record exact IDs, rank, reason, provenance status, and estimated token cost.
 - Grounding survives helper-agent delegation and context compaction.
-- Public checks exclude private overlays, and generated artifacts are drift-checked.
+- Public checks exclude private overlays, and generated artifacts are drift-checked — including
+  the exported MADR corpus, which reports its own rot (`madr-stale` / `madr-edited` /
+  `madr-orphan`), refreshes automatically on the post-commit sync, and protects human edits by
+  content rather than file name.
+- The MADR bridge is bidirectional and shipped: `import-adr` populates the graph from an existing
+  corpus deterministically; `export-adr` projects it back as standard MADR (Backstage-readable).
+- Go joins TypeScript, JavaScript, and Python in the symbol/dependency graph (v1.15); YAML anchors,
+  aliases, and chart-scoped Helm helper references join it in v1.18.
+- Retrieval ranks recorded intent above vocabulary-sharing code symbols — a bounded prior, never
+  an exclusion (curated benchmark Recall@10 70% → 90%, MRR 0.402 → 0.575).
+- Public positioning leads with the guarantee — agents never re-make a decided decision, never
+  re-introduce a fixed bug — across the site (five languages) and README.
+
+### Included in v1.18
+
+- Retrieval-quality floors now gate the curated benchmark against a disposable fresh graph, so
+  the ranking win cannot silently erode as the graph grows and clean CI clones cannot skip it.
+- The MCP publication scanner's `vocabularyCache` is keyed by store instead of process-global.
+- `HUNCH_PRIVATE_DIR` keeps its compatibility-sensitive precedence, but a real redirection away
+  from repo-local configuration is queryable and warned on CLI/MCP stderr; bypassing an advertised
+  team store is also explicit.
+- HLG-1's versioned resource/relationship contract and the first exact-revision HLG-2 discovery
+  slice are implemented under the ownership boundary above; candidate discovery still grants no
+  graph authority.
+- Root-level indexed files use exact component paths rather than a match-everything glob.
+
+Still near-term: freshness/staleness scoring for decisions feeding context ranking only — never
+authority.
 
 ## Next — complete validated delivery
 
 1. Rank every delivered record by task relevance, recency, and trusted provenance.
-2. Enforce a hard context budget with a small headline tier and progressive disclosure.
+2. Enforce a hard context budget with a default 3–8 non-blocking headline target per role-specific delivery; pin mandatory blocking constraints outside that target, count duplicate IDs once, and require a recorded mandatory/ambiguity reason plus token accounting when more are delivered. Use progressive disclosure for deeper context.
 3. Validate citations and currentness at delivery time; stale evidence must be omitted or labeled.
 4. Extend receipts from “served” to usefulness signals: heeded, near miss, prevented, and unused.
 5. Add builder, reviewer, and architect delivery profiles. Profiles may change ranking and
@@ -88,7 +222,8 @@ The Hunch graph remains authoritative. Generated files never become a second sou
 ## Adoption
 
 - Import assistant auto-memory as reviewable candidates, never immediate authority.
-- Import existing MADR/ADR corpora while preserving provenance; support deterministic export.
+- ~~Import existing MADR/ADR corpora while preserving provenance; support deterministic export.~~
+  Shipped in v1.16–1.17, including drift-tracked, self-refreshing exports.
 - Let brownfield repositories freeze known violations so strict mode blocks only new debt.
 - Validate the workflow in at least three external repositories before broadening scope.
 
@@ -99,11 +234,17 @@ The Hunch graph remains authoritative. Generated files never become a second sou
 - Track constraint recall, false positives, near misses, prevention receipts, and token overhead.
 - Expose enough receipt identity for orchestrators such as ORC to associate downstream verified
   outcomes with the exact Hunch delivery without requiring transcript access.
+- Accept adaptive-loop procedural discoveries only as reviewable candidates with source outcome,
+  verification, applicability/currentness and contradiction evidence; never ingest a raw ORC
+  scaffold population, synthetic-task reward or single-run winner as durable Hunch truth.
+
+The versioned authority, evidence, usefulness and promotion boundary for that loop is frozen in
+[the ORC outcome/experience protocol](docs/outcome-experience-protocol.md).
 
 ## Demand-triggered, not scheduled
 
-Go is the next prepared language registry entry, but it starts only when real Go repositories or
-contributors need it. Dart remains deferred.
+Go shipped in v1.15 through exactly this policy — one registry entry, no engine changes, when a
+real repository needed it. Dart remains deferred until the same signal arrives.
 
 ## Deliberately out of scope
 
@@ -114,3 +255,5 @@ contributors need it. Dart remains deferred.
 - Per-agent enforcement rules that can disagree about the same invariant.
 - Cross-provider organizational context assembly; systems such as SimplyLog remain outside Hunch.
 - Agent selection/routing or workflow orchestration; those belong to orchestrators such as ORC.
+- ORC curriculum generation, scaffold populations, reward/score storage or strategy promotion;
+  Hunch stores only reviewed durable engineering knowledge that survives those external gates.

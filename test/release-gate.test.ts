@@ -362,7 +362,7 @@ test("memory churn never reads as source mutation: paths, status filtering, and 
   assert.equal(statusWithoutMemoryChurn(""), "", "clean stays clean");
 });
 
-test("git() preserves the leading space of an unstaged-only porcelain line (#31)", () => {
+test("git() preserves the leading space of an unstaged-only porcelain line", () => {
   // Root cause of the intermittent "the working tree changed" flake at the
   // repository-index stage: `git status --porcelain` marks an unstaged-only
   // change with a LEADING SPACE (" M path" — blank index column). A blanket

@@ -1,17 +1,28 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { LANGUAGES, CODE_EXTENSIONS, languageFor } from "../src/extractors/languages.js";
+
+const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+  dependencies: Record<string, string>;
+};
 
 test("LANGUAGES has typescript entries covering both grammars (plain + tsx)", () => {
   const ts = LANGUAGES.filter((l) => l.id === "typescript");
   assert.ok(ts.length >= 2, "expected a plain-TS entry and a TSX entry");
 });
 
-test("CODE_EXTENSIONS matches the existing TS/JS/Python/YAML extension list", () => {
+test("CODE_EXTENSIONS matches the existing TS/JS/Python/Go/YAML extension list", () => {
   assert.deepEqual(
     [...CODE_EXTENSIONS].sort(),
-    [".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx", ".py", ".pyi", ".yml", ".yaml", ".tpl"].sort(),
+    [".cjs", ".cts", ".go", ".js", ".jsx", ".mjs", ".mts", ".py", ".pyi", ".tpl", ".ts", ".tsx", ".yaml", ".yml"].sort(),
   );
+});
+
+test("languageFor resolves .go to the go LanguageSpec", () => {
+  const lang = languageFor("cmd/server/main.go");
+  assert.ok(lang, "no LanguageSpec for .go");
+  assert.equal(lang!.id, "go");
 });
 
 test("languageFor resolves every TS/JS extension to the typescript LanguageSpec", () => {
@@ -50,4 +61,12 @@ test("languageFor resolves .tpl (Helm helper templates) to the yaml LanguageSpec
 test("the yaml LanguageSpec declares its alias->anchor edges as \"references\", not \"calls\"", () => {
   const yaml = LANGUAGES.find((l) => l.id === "yaml")!;
   assert.equal(yaml.referenceEdgeType, "references");
+});
+
+test("native grammar versions stay on the tree-sitter 0.21 peer family", () => {
+  assert.equal(packageJson.dependencies["tree-sitter"], "0.21.1");
+  assert.equal(packageJson.dependencies["tree-sitter-python"], "0.23.4",
+    "0.23.5+ requires tree-sitter 0.22 and makes a clean npm install fail");
+  assert.equal(packageJson.dependencies["@tree-sitter-grammars/tree-sitter-yaml"], "^0.6.1",
+    "YAML 0.7+ requires tree-sitter 0.22 and must move only with the whole native parser matrix");
 });

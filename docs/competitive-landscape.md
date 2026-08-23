@@ -1,6 +1,45 @@
 # Competitive landscape
 
-**Evidence snapshot: 2026-07-16, updated 2026-08-09 (see "Update — 2026-08-09" below). Re-verify every third-party fact before quoting or publishing an update.**
+**Evidence snapshot: 2026-07-16, updated 2026-08-22 (see dated updates below). Re-verify every third-party fact before quoting or publishing an update.**
+
+## Update — 2026-08-22
+
+### ADRKit moves directly into the decision-memory lane
+
+ADRKit now describes itself as **“decision memory for human- and agent-authored plans,”** which is
+direct overlap with the phrase-level category Hunch has occupied. Its v0.8.0-era surface combines a
+typed ADR corpus and deterministic `lint` / `check` / `explain` workflows with four read-only MCP
+tools that expose governing, rejected, and superseded decisions. A portable agent plugin added a
+`decision-memory` skill, a read-only decision-checker agent, and context / check / draft / queue
+commands for GitHub Copilot CLI, Claude Code, opencode, and APM. The Spec Kit integration also moves
+decision lookup to plan time, before implementation begins.
+([repository and README](https://github.com/mbeacom/adrkit),
+[v0.8.0 release](https://github.com/mbeacom/adrkit/releases/tag/v0.8.0),
+[agent-plugin change](https://github.com/mbeacom/adrkit/pull/157))
+
+This is a real product-direction collision, not just adjacent ADR tooling. ADRKit’s sharp edge is a
+small, inspectable, offline governance ledger whose record format, CLI, CI Action, MCP server, and
+agent prompts all speak the same decision vocabulary. Its own evidence remains deliberately early:
+the main distribution document says external/community validation is still absent, while the new
+agent plugin is at rung 1 and explicitly lacks persistent reference-repository and external runs.
+([distribution status](https://github.com/mbeacom/adrkit/blob/main/docs/DISTRIBUTION.md),
+[agent-plugin evidence](https://github.com/mbeacom/adrkit/blob/main/docs/reference-verification-agent-plugin.md))
+
+The positioning response is to stop treating “decision memory” alone as defensible. Hunch should
+lead with the wider causal and authority system ADRKit does not currently claim: decisions plus bug
+lineage, corrections, constraints, findings, code-graph blast radius, provenance/currentness-aware
+delivery, human-bounded authority, and receipts for exactly what context reached an agent and what a
+change gate concluded. In short: ADRKit is becoming a strong typed ADR governance layer; Hunch’s
+claim must be the complete engineering-memory-to-authority-to-receipt loop.
+
+### Actions
+
+- Add ADRKit to the automated watch and treat its agent-plugin and Spec Kit surfaces as a direct
+  competitor branch, not an ADR-tool footnote.
+- Lead Hunch copy and demos with corrections, bug recurrence, scoped authority, delivery receipts,
+  and causal PASS / WARN / BLOCK output; avoid an undifferentiated “memory for coding agents” lead.
+- Keep MADR/ADRKit interoperability as an acquisition path, while testing lifecycle mismatches
+  explicitly so imported records never invent history or silently disappear.
 
 ## Update — 2026-08-09
 
@@ -109,6 +148,7 @@ Hunch should therefore lead with its evidence-and-receipt loop, not memory alone
 | GitHub Copilot Memory | Repository facts carry code citations, are validated before reuse, and travel across Copilot's cloud agent, code review, and CLI. | Basic repository recall will be bundled into a platform with enormous distribution. | [GitHub documentation](https://docs.github.com/en/copilot/concepts/agents/copilot-memory) |
 | Cursor and Windsurf | Automatic project memories coexist with explicit durable rules. Cursor also gives always-on automations a memory tool. | “My coding assistant remembers this repo” is no longer a differentiator by itself. | [Cursor Memories](https://docs.cursor.com/en/context/memories), [Cursor Automations](https://cursor.com/changelog/03-05-26), [Windsurf Memories](https://docs.windsurf.com/windsurf/cascade/memories) |
 | GitMem | Scars, wins, patterns, decisions, and session reflection; its paid direction adds team persistence, analytics, subagent briefing, and A/B measurement. | Strong capture/recall loop and clearer language around learned failures. | [GitMem repository](https://github.com/gitmem-dev/gitmem) |
+| ADRKit | Typed ADR governance across CLI/CI, four read-only MCP tools, Spec Kit plan-time checks, and a portable agent plugin explicitly positioned as decision memory. | Direct competitor for deterministic decision memory and pre-edit agent workflow; narrower than Hunch's multi-record causal graph and receipt/authority loop. | [ADRKit repository](https://github.com/mbeacom/adrkit), [agent plugin](https://github.com/mbeacom/adrkit/tree/main/packages/adapters/agent-plugin) |
 | Knowit and AICTX | Local, inspectable, cross-agent memory. Knowit adds external-source routing and describes hosted team plans; AICTX emphasizes handoffs, validation evidence, and explicit freshness signals. | Local-first, MCP-native, git-shared memory is a crowded baseline. | [Knowit](https://www.useknowit.dev/), [AICTX](https://github.com/oldskultxo/aictx) |
 | projectmem | Event-sourced project memory plus a deterministic pre-action judgment gate. Its workspace release adds cross-project dashboards, code structure, failure heat, and an intent file. | Closest conceptual peer to memory-backed governance. | [Research paper](https://arxiv.org/abs/2606.12329), [repository](https://github.com/riponcm/projectmem) |
 | Roam | Code graph, graph-ranked context, pre-change safety, post-edit verification, architecture gates, audit evidence, hosted review, and PR replay. | Strongest adjacent threat to Change Gate on static code intelligence and measured change safety. | [Roam repository](https://github.com/Cranot/roam-code) |

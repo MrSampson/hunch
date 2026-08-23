@@ -35,6 +35,23 @@ export interface SearchHit {
   score: number;
 }
 
+export interface HybridSearchOpts {
+  embedder?: Embedder | null;
+  graphWeight?: number;
+  graphDepth?: number;
+  graphNodeCap?: number;
+  graphTokenCap?: number;
+}
+
+export type OverlayResolutionSource = "environment" | "local-config" | null;
+
+export interface OverlayOverride {
+  /** Repo/worktree-local target that would have won without the environment override. */
+  configuredDir: string;
+  /** Process-global target selected by HUNCH_PRIVATE_DIR. */
+  environmentDir: string;
+}
+
 /** Git cannot resolve repository identity from a cwd that does not exist yet.
  * Probe the nearest real directory so a planned nested overlay cannot evade the
  * public-repository boundary merely by deferring mkdir until its first write. */
@@ -83,6 +100,13 @@ export class HunchStore {
   /** The resolved private-overlay hunch dir (from env or .hunch/local.json), or undefined
    *  when no overlay is configured. Surfaced so `hunch doctor` reflects the true state. */
   readonly privateDir?: string;
+  /** How privateDir was selected. Multi-store consumers can use this instead of
+   *  inferring process-global routing from process.env. */
+  readonly overlaySource: OverlayResolutionSource;
+  /** Present only when HUNCH_PRIVATE_DIR redirects this store away from the
+   *  repo/worktree-local pointer. Precedence is compatibility-sensitive and stays
+   *  env-first; making the redirection queryable removes the silent footgun. */
+  readonly overlayOverride?: OverlayOverride;
   /** Whether captures auto-commit the store they land in — ON by default in EVERY mode;
    *  `--no-auto-commit` (hunch init/private/shared) persists `autoCommit: false` in
    *  local.json to opt out. Read by the MCP write tools and `hunch sync`. */
@@ -112,7 +136,32 @@ export class HunchStore {
     // local config (.hunch/local.json) so `hunch private` enables it with NO env var, and
     // the MCP server / hook pick it up automatically. Relative paths resolve from root.
     const local = this.localConfig();
-    const priv = process.env.HUNCH_PRIVATE_DIR?.trim() || local.privateDir;
+    const environmentDir = process.env.HUNCH_PRIVATE_DIR?.trim();
+    const configuredDir = local.privateDir
+      ? resolve(this.paths.root, local.privateDir)
+      : undefined;
+    const resolvedEnvironmentDir = environmentDir
+      ? resolve(this.paths.root, environmentDir)
+      : undefined;
+    const priv = resolvedEnvironmentDir || configuredDir;
+    this.overlaySource = resolvedEnvironmentDir
+      ? "environment"
+      : configuredDir
+        ? "local-config"
+        : null;
+    if (resolvedEnvironmentDir && configuredDir) {
+      const canonical = (path: string): string => {
+        try { return realpathSync(path); } catch { return resolve(path); }
+      };
+      const comparable = (path: string): string =>
+        process.platform === "win32" ? canonical(path).toLowerCase() : canonical(path);
+      if (comparable(resolvedEnvironmentDir) !== comparable(configuredDir)) {
+        this.overlayOverride = {
+          configuredDir: canonical(configuredDir),
+          environmentDir: canonical(resolvedEnvironmentDir),
+        };
+      }
+    }
     if (priv) {
       const candidate = resolve(this.paths.root, priv);
       const canonical = (path: string): string => { try { return realpathSync(path); } catch { return resolve(path); } };
@@ -144,6 +193,22 @@ export class HunchStore {
     // only an explicit `hunch shared` opts a repo into unified routing.
     this.mode = priv ? (local.mode ?? "private") : "public";
     this.unified = this.mode === "shared" && !!this.privateJson;
+  }
+
+  /** Human-facing warning for the compatibility-preserving env-first resolution.
+   *  Callers decide where it is safe to emit (CLI/MCP stderr, doctor output); the
+   *  store constructor stays side-effect-free for hooks and embedded consumers. */
+  overlayResolutionWarning(teamConfigBypassed = false): string | null {
+    if (this.overlayOverride) {
+      const effect = this.mode === "shared"
+        ? "all memory reads and captures in this process use the environment path"
+        : "private-overlay reads and private captures in this process use the environment path; public captures remain in the repo";
+      return `HUNCH_PRIVATE_DIR redirects this repo from its configured ${this.mode} memory at ${this.overlayOverride.configuredDir} to ${this.overlayOverride.environmentDir}; ${effect} (routing mode remains ${this.mode}). Unset HUNCH_PRIVATE_DIR to use the configured store.`;
+    }
+    if (this.overlaySource === "environment" && teamConfigBypassed && this.privateDir) {
+      return `HUNCH_PRIVATE_DIR bypasses .hunch/team.json and selects ${this.privateDir} in ${this.mode} mode; team-store auto-discovery is disabled for this process. Unset HUNCH_PRIVATE_DIR to use the advertised team store.`;
+    }
+    return null;
   }
 
   /** Where a capture belongs: an explicit private:true always goes to the overlay
@@ -351,11 +416,41 @@ export class HunchStore {
       }
       counts.components = comps.length;
 
+      const resources = this.recs("resources");
+      const insResource = db.prepare(
+        `INSERT INTO resources VALUES (@id,@schema,@kind,@name,@scope,@locator,@lifecycle,@criticality,@contract_version,@currentness,@metadata,@ps,@pc,@pe,@created_at,@updated_at)`,
+      );
+      for (const resource of resources) {
+        insResource.run({
+          id: resource.id, schema: resource.schema, kind: resource.kind, name: resource.name,
+          scope: JSON.stringify(resource.scope), locator: resource.locator, lifecycle: resource.lifecycle,
+          criticality: resource.criticality ?? null, contract_version: resource.contract_version ?? null,
+          currentness: JSON.stringify(resource.currentness), metadata: JSON.stringify(resource.metadata),
+          ps: resource.provenance.source, pc: resource.provenance.confidence,
+          pe: JSON.stringify(resource.provenance.evidence), created_at: resource.created_at, updated_at: resource.updated_at,
+        });
+        fts(resource.id, "resources", resource.name,
+          `${resource.kind} ${resource.scope.join(" ")} ${resource.locator ?? ""} ${resource.lifecycle} ${resource.contract_version ?? ""}`);
+      }
+      counts.resources = resources.length;
+
       const edges = this.recs("edges");
       const insEdge = db.prepare(`INSERT INTO edges VALUES (@id,@from,@to,@type,@reason,@strength,@ps,@pc,@pe)`);
+      const insResourceRelationship = db.prepare(
+        `INSERT INTO resource_relationships VALUES (@id,@schema,@from,@to,@type,@reason,@strength,@currentness,@environment,@criticality,@contract_version,@metadata,@ps,@pc,@pe)`,
+      );
       for (const e of edges) {
         insEdge.run({ id: e.id, from: e.from, to: e.to, type: e.type, reason: e.reason, strength: e.strength,
           ps: e.provenance.source, pc: e.provenance.confidence, pe: JSON.stringify(e.provenance.evidence) });
+        if (e.schema === "hunch.resource-relationship/1") {
+          insResourceRelationship.run({
+            id: e.id, schema: e.schema, from: e.from, to: e.to, type: e.type, reason: e.reason,
+            strength: e.strength, currentness: JSON.stringify(e.currentness), environment: e.environment,
+            criticality: e.criticality ?? null, contract_version: e.contract_version ?? null,
+            metadata: JSON.stringify(e.metadata), ps: e.provenance.source, pc: e.provenance.confidence,
+            pe: JSON.stringify(e.provenance.evidence),
+          });
+        }
       }
       counts.edges = edges.length;
 
@@ -645,7 +740,11 @@ export class HunchStore {
       }
       // w > 1 (a trigger match) shifts UP, w < 1 shifts DOWN, both clamped.
       const shift = Math.max(-MAX_PRIOR_SHIFT, Math.min(MAX_PRIOR_SHIFT, (1 - w) * PRIOR_SHIFT_SCALE));
-      return { h, pos: pos + shift };
+      // Recorded intent outranks code that merely shares the query's vocabulary. Applied
+      // OUTSIDE the clamp above: that bound keeps the trust dimmer from becoming the sort
+      // key, whereas this is a kind-level tie-break between two different answer types.
+      const memory = MEMORY_KINDS.has(h.kind) ? -MEMORY_PRIOR_SHIFT : 0;
+      return { h, pos: pos + shift + memory };
     });
     scored.sort((a, b) => a.pos - b.pos);
     return scored.slice(0, limit).map((x) => x.h);
@@ -687,7 +786,7 @@ export class HunchStore {
    *  sync FTS (zero added latency) when there's no embedder or no vectors yet, so
    *  the lean install and fallback regressions are unaffected. Pass
    *  `embedder: null` to FORCE FTS-only without auto-selecting. */
-  async hybridSearch(query: string, limit = 12, opts: { embedder?: Embedder | null; graphWeight?: number } = {}): Promise<SearchHit[]> {
+  async hybridSearch(query: string, limit = 12, opts: HybridSearchOpts = {}): Promise<SearchHit[]> {
     // Explicit `embedder: null` forces pure FTS-only (no semantic, no graph) — the
     // documented escape hatch and the lean-fallback regression guard.
     if (opts.embedder === null) return this.search(query, limit);
@@ -709,7 +808,11 @@ export class HunchStore {
     // The graph stream is model-free, so it contributes even on a lean (no-embeddings)
     // install. With neither semantic nor graph signal, return pure FTS so the
     // zero-fusion-overhead fast path is preserved.
-    const graph = this.graphExpand([...fts, ...sem], 50, gw);
+    const graph = this.graphExpand([...fts, ...sem], {
+      maxDepth: boundedWhole(opts.graphDepth, GRAPH_MAX_DEPTH, GRAPH_DEPTH_HARD_MAX),
+      nodeCap: boundedWhole(opts.graphNodeCap, GRAPH_NODE_CAP, GRAPH_NODE_HARD_MAX),
+      tokenCap: boundedWhole(opts.graphTokenCap, GRAPH_TOKEN_CAP, GRAPH_TOKEN_HARD_MAX),
+    }, gw);
     if (!sem.length && !graph.length) return this.rerankByPriors(fts, limit, query);
     // Fuse with headroom so the prior rerank can promote from below the cut line.
     return this.rerankByPriors(this.rrfFuse(fts, sem, graph, Math.max(limit, 24), gw), limit, query);
@@ -812,44 +915,90 @@ export class HunchStore {
     return [...acc.values()].sort((a, b) => b.score - a.score).slice(0, limit).map((e) => ({ ...e.hit, score: e.score }));
   }
 
-  /** Graph retrieval stream (roadmap #1): 1-hop expansion over the dependency graph
-   *  from the lexical/semantic seed hits. For each seed SYMBOL, surface its direct
-   *  neighbors (callers/callees, importers/imported, container) — the cross-file
-   *  evidence a "why" question needs but that neither bm25 nor cosine reaches. Each
-   *  neighbor accrues GAMMA-decayed support per linking seed (one pulled in by several
-   *  top seeds ranks higher); seeds themselves are excluded, so this only ADDS context.
-   *  Deterministic, model-free (runs on a lean install too), one indexed query per seed. */
-  private graphExpand(seeds: SearchHit[], n: number, weight = RRF_W_GRAPH): SearchHit[] {
-    if (weight <= 0) return [];
-    const symSeeds = seeds.filter((h) => h.ref.startsWith("sym_"));
-    if (!symSeeds.length) return [];
-    const seen = new Set(seeds.map((h) => h.ref)); // never re-surface a seed
+  /** Bounded relevance traversal over the dependency graph. Lexical/semantic symbol
+   *  and component hits seed a small number of depth layers; support decays per hop
+   *  and adds across multiple useful paths. Each frontier and the returned context
+   *  obey a hard node cap, while hydration obeys a separate token cap. Only records
+   *  present in the indexed symbol/component tables can enter the frontier, so
+   *  shared external-package hubs never become context or bridge unrelated symbols. */
+  private graphExpand(
+    seeds: SearchHit[],
+    opts: { maxDepth: number; nodeCap: number; tokenCap: number },
+    weight = RRF_W_GRAPH,
+  ): SearchHit[] {
+    if (weight <= 0 || GRAPH_GAMMA <= 0 || opts.maxDepth <= 0 || opts.nodeCap <= 0 || opts.tokenCap <= 0) return [];
+    const seedRefs = new Set(seeds.map((h) => h.ref)); // never re-surface a seed
+    let frontier = new Map<string, number>();
+    seeds.forEach((hit, rank) => {
+      if (!isGraphContextRef(hit.ref)) return;
+      frontier.set(hit.ref, (frontier.get(hit.ref) ?? 0) + 1 / (RRF_K + rank + 1));
+    });
+    if (!frontier.size) return [];
+
     const nbStmt = this.db.prepare(
       /* sql */ `
-      SELECT e."to"   AS nb FROM edges e WHERE e."from" = ? AND e.type IN ('calls','depends_on','imports','contains')
+      SELECT e."to" AS nb
+        FROM edges e
+       WHERE e."from" = ? AND e.type IN ('calls','depends_on','imports','contains')
+         AND (EXISTS (SELECT 1 FROM symbols s WHERE s.id = e."to")
+           OR EXISTS (SELECT 1 FROM components c WHERE c.id = e."to"))
       UNION
-      SELECT e."from" AS nb FROM edges e WHERE e."to"   = ? AND e.type IN ('calls','depends_on','imports','contains')`,
+      SELECT e."from" AS nb
+        FROM edges e
+       WHERE e."to" = ? AND e.type IN ('calls','depends_on','imports','contains')
+         AND (EXISTS (SELECT 1 FROM symbols s WHERE s.id = e."from")
+           OR EXISTS (SELECT 1 FROM components c WHERE c.id = e."from"))
+       ORDER BY nb`,
     );
+    const expanded = new Set<string>();
     const score = new Map<string, number>();
-    symSeeds.forEach((h, i) => {
-      const contrib = GRAPH_GAMMA / (RRF_K + i + 1);
-      for (const r of nbStmt.all(h.ref, h.ref) as Array<{ nb: string }>) {
-        if (seen.has(r.nb)) continue;
-        score.set(r.nb, (score.get(r.nb) ?? 0) + contrib);
+
+    for (let depth = 1; depth <= opts.maxDepth && frontier.size; depth++) {
+      const layer = new Map<string, number>();
+      const rankedFrontier = [...frontier.entries()]
+        .sort((a, b) => b[1] - a[1] || compareRefs(a[0], b[0]))
+        .slice(0, opts.nodeCap)
+        .filter(([ref]) => !expanded.has(ref));
+      // Mark the whole frontier visited before walking it. Otherwise an edge
+      // between peers in this layer credits whichever peer sorts second as if
+      // it were deeper context, making scores depend on ref ordering.
+      for (const [ref] of rankedFrontier) expanded.add(ref);
+      for (const [ref, support] of rankedFrontier) {
+        const contribution = support * GRAPH_GAMMA;
+        for (const row of nbStmt.all(ref, ref) as Array<{ nb: string }>) {
+          if (seedRefs.has(row.nb) || expanded.has(row.nb)) continue;
+          layer.set(row.nb, (layer.get(row.nb) ?? 0) + contribution);
+        }
       }
-    });
+      const rankedLayer = [...layer.entries()]
+        .sort((a, b) => b[1] - a[1] || compareRefs(a[0], b[0]))
+        .slice(0, opts.nodeCap);
+      for (const [ref, support] of rankedLayer) score.set(ref, (score.get(ref) ?? 0) + support);
+      frontier = new Map(rankedLayer);
+    }
+
     if (!score.size) return [];
-    const top = [...score.entries()].sort((a, b) => b[1] - a[1]).slice(0, n);
+    const top = [...score.entries()]
+      .sort((a, b) => b[1] - a[1] || compareRefs(a[0], b[0]))
+      .slice(0, opts.nodeCap);
     // Hydrate title/snippet from the FTS table in ONE query (mirrors cosineRank).
     const placeholders = top.map(() => "?").join(",");
-    const meta = new Map<string, { title: string; body: string }>();
-    for (const row of this.db.prepare(`SELECT ref, title, body FROM search WHERE ref IN (${placeholders})`).all(...top.map(([ref]) => ref)) as Array<{ ref: string; title: string; body: string }>) {
-      meta.set(row.ref, { title: row.title, body: row.body });
+    const meta = new Map<string, { kind: string; title: string; body: string }>();
+    for (const row of this.db.prepare(`SELECT ref, kind, title, body FROM search WHERE ref IN (${placeholders})`).all(...top.map(([ref]) => ref)) as Array<{ ref: string; kind: string; title: string; body: string }>) {
+      meta.set(row.ref, { kind: row.kind, title: row.title, body: row.body });
     }
-    return top.map(([ref, s]) => {
+    const hits: SearchHit[] = [];
+    let usedTokens = 0;
+    for (const [ref, s] of top) {
       const m = meta.get(ref);
-      return { ref, kind: ref.startsWith("cmp_") ? "component" : "symbol", title: m?.title ?? ref, snippet: (m?.body ?? "").slice(0, 120), score: s };
-    });
+      if (!m) continue;
+      const hit = { ref, kind: m.kind, title: m.title, snippet: m.body.slice(0, 120), score: s };
+      const tokenCost = estimatedSearchHitTokens(hit);
+      if (usedTokens + tokenCost > opts.tokenCap) continue;
+      hits.push(hit);
+      usedTokens += tokenCost;
+    }
+    return hits;
   }
 
   /** All decisions/bugs/constraints/symbols/components touching a file path or
@@ -1338,6 +1487,7 @@ export class HunchStore {
     };
     json.put("decisions", closed);
     const edge: Edge = {
+      schema: "hunch.edge/1",
       id: edgeId(by.id, oldId, "supersedes"),
       from: by.id,
       to: oldId,
@@ -1345,6 +1495,8 @@ export class HunchStore {
       reason: `${by.id} supersedes ${oldId}`,
       strength: 1,
       provenance: { source: "derived", confidence: 1, evidence: [by.id, oldId] },
+      environment: null,
+      metadata: {},
     };
     json.put("edges", edge);
     return closed;
@@ -1695,7 +1847,13 @@ const RRF_K = numEnv("HUNCH_RRF_K", 60);
 const RRF_W_FTS = numEnv("HUNCH_RRF_W_FTS", 1);
 const RRF_W_SEM = numEnv("HUNCH_RRF_W_SEM", 0.7);
 const RRF_W_GRAPH = numEnv("HUNCH_RRF_W_GRAPH", 0.5);
-const GRAPH_GAMMA = numEnv("HUNCH_GRAPH_GAMMA", 0.25);
+const GRAPH_GAMMA = Math.min(1, numEnv("HUNCH_GRAPH_GAMMA", 0.25));
+const GRAPH_DEPTH_HARD_MAX = 8;
+const GRAPH_NODE_HARD_MAX = 500;
+const GRAPH_TOKEN_HARD_MAX = 100_000;
+const GRAPH_MAX_DEPTH = boundedWhole(numEnv("HUNCH_GRAPH_MAX_DEPTH", 2), 2, GRAPH_DEPTH_HARD_MAX);
+const GRAPH_NODE_CAP = boundedWhole(numEnv("HUNCH_GRAPH_NODE_CAP", 50), 50, GRAPH_NODE_HARD_MAX);
+const GRAPH_TOKEN_CAP = boundedWhole(numEnv("HUNCH_GRAPH_TOKEN_CAP", 2_000), 2_000, GRAPH_TOKEN_HARD_MAX);
 
 /** Prior tuning: how far a trust weight may move a hit from its FUSED position.
  *  SCALE maps the weight's realistic span onto positions (this repo's own decisions
@@ -1704,11 +1862,40 @@ const GRAPH_GAMMA = numEnv("HUNCH_GRAPH_GAMMA", 0.25);
  *  rerankByPriors for the measurement that fixed it at 4. */
 const PRIOR_SHIFT_SCALE = numEnv("HUNCH_PRIOR_SHIFT_SCALE", 12);
 const MAX_PRIOR_SHIFT = numEnv("HUNCH_MAX_PRIOR_SHIFT", 4);
+/** Memory-record prior: a "why" question is answered by RECORDED INTENT (decisions,
+ *  constraints, bugs, runbooks, policies), not by the code symbols that merely share
+ *  its vocabulary. Symbols carry a neutral prior (priorMeta -> null), so on a graph
+ *  with thousands of indexed symbols a lexical tie let them occupy the whole top-k
+ *  and bury the one live decision — including a topic-chain successor that promotion
+ *  had correctly injected just below the cut line. This lifts memory records by a
+ *  bounded number of positions; it never EXCLUDES a kind (a symbol-name query still
+ *  returns symbols, and a constraint stays reachable), it only breaks the tie toward
+ *  intent. Measured on bench/golden-retrieval.json: Recall@10 70% -> 90%, MRR
+ *  0.402 -> 0.575. Set HUNCH_MEMORY_PRIOR_SHIFT=0 to disable. */
+const MEMORY_PRIOR_SHIFT = numEnv("HUNCH_MEMORY_PRIOR_SHIFT", 12);
+const MEMORY_KINDS = new Set(["decisions", "constraints", "bugs", "runbooks", "policies"]);
 function numEnv(name: string, dflt: number): number {
   const v = Number(process.env[name]);
   // >= 0, not > 0: zero is the documented kill-switch (HUNCH_RRF_W_*=0 disables
   // a stream); rejecting it silently re-enabled the default weight (issue #33).
   return Number.isFinite(v) && v >= 0 ? v : dflt;
+}
+
+function boundedWhole(value: number | undefined, dflt: number, hardMax: number): number {
+  if (value === undefined || !Number.isFinite(value) || value < 0) return dflt;
+  return Math.min(Math.floor(value), hardMax);
+}
+
+function isGraphContextRef(ref: string): boolean {
+  return ref.startsWith("sym_") || ref.startsWith("cmp_");
+}
+
+function compareRefs(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function estimatedSearchHitTokens(hit: Pick<SearchHit, "ref" | "kind" | "title" | "snippet">): number {
+  return Math.max(1, Math.ceil([...`${hit.kind} ${hit.ref}\n${hit.title}\n${hit.snippet}`].length / 4));
 }
 
 /** Pack a vector's exact bytes for SQLite. Explicit offset+length so a SUBARRAY
