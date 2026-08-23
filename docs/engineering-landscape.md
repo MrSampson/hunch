@@ -1,6 +1,6 @@
 # Engineering Landscape Graph
 
-Updated 2026-08-21. This document defines Hunch's durable side of the product-to-code landscape.
+Updated 2026-08-23. This document defines Hunch's durable side of the product-to-code landscape.
 The graph remains the authority for engineering semantics inside a repository; it does not make
 Hunch a runtime discovery service or cross-provider orchestrator.
 
@@ -222,15 +222,20 @@ runtime-health fields and credential material anywhere in the durable resource/r
 The same fixture proves that the fragment remains useful without ORC and that no runtime
 reachability or health claim is inferred from a durable declaration.
 
-The first HLG-2 discovery slice has landed. `discoverRepositoryLandscape` reads a caller-selected
+The package/Git and first MCP HLG-2 discovery slices have landed. `discoverRepositoryLandscape` reads a caller-selected
 exact commit, bounds and parses root/workspace package manifests, canonicalizes configured and
 manifest-declared repository identity without retaining credentials or host paths, and returns
 content-addressed `hunch.landscape-candidate/1` resources/relationships. Evidence names the exact
 file/field/revision/content hash. Working-tree bytes cannot alter an exact-revision result;
-repository-identity conflicts remain explicit and leave packages unbound. The extractor is pure and
-never writes `.hunch` graph authority.
+repository-identity conflicts remain explicit and leave packages unbound. It also reads a fixed,
+bounded set of committed project-local MCP JSON/JSONC configurations and emits candidate-only
+`mcp_server` resources plus repository `depends_on` relationships. Identical declarations merge;
+conflicting names remain issues. Commands, arguments, environment values and credential-bearing
+URLs are hashed into exact content evidence at most and never appear in the candidate fragment. The
+extractor is pure and never writes `.hunch` graph authority.
 
-HLG-2 next adds one source family at a time, beginning with MCP declarations, under the same
+HLG-2 next completes remaining committed MCP declaration formats (`.codex/config.toml` and registry
+`server.json`), then adds deployment/CI/API/schema families one at a time under the same
 candidate/issue envelope. HLG-3 then projects only reviewed graph records through the existing
 delivery envelope; HLG-4 adds external-reference drift intake. ORC's aligned execution snapshot
 explicitly rejects `hunch.landscape-candidate/1` and requires an accepted, current fragment plus its

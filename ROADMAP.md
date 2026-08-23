@@ -63,12 +63,13 @@ facts that govern them.
    kind-qualified resource IDs and directional relationship IDs now extend the existing JSON graph;
    lifecycle, credential-free locators, provenance/currentness, forward migration and rebuildable
    SQLite projections are covered by the focused landscape fixture.
-2. **HLG-2 — deterministic repository fragment discovery. IN PROGRESS (first exact-source slice
-   landed 2026-08-21).** `discoverRepositoryLandscape` now reads one exact Git revision, discovers
-   bounded root/workspace `package.json` declarations plus canonical credential-free Git remotes,
-   emits content-addressed candidate resources/relationships with file/field/revision evidence,
-   surfaces identity conflicts without choosing, and never writes graph authority. MCP, deployment,
-   CI, API/event/schema and ownership sources remain.
+2. **HLG-2 — deterministic repository fragment discovery. IN PROGRESS (package/Git plus the first
+   MCP declaration slice landed through 2026-08-23).** `discoverRepositoryLandscape` now reads one
+   exact Git revision, discovers bounded root/workspace `package.json` declarations, canonical
+   credential-free Git remotes and supported project-local MCP JSON/JSONC configurations, emits
+   content-addressed candidate resources/relationships with file/field/revision evidence, surfaces
+   identity conflicts without choosing, and never writes graph authority. Remaining MCP declaration
+   formats, deployment, CI, API/event/schema and ownership sources remain.
 3. **HLG-3 — bounded landscape delivery.** Return task-relevant resources, relationships and linked
    Hunch reasoning through the existing ranking, budget, currentness and native receipt envelope;
    add an explicit CLI/MCP view only as a projection over that machinery. Freeze the additive
@@ -110,8 +111,15 @@ identity without retaining credentials or local paths, and returns explicit
 `hunch.landscape-candidate/1` wrappers. Conflicting repository declarations leave package candidates
 unbound; neither discovery nor ORC may treat them as accepted graph authority.
 
-The immediate next HLG-2 handoff is one additional deterministic source family—MCP declarations
-before deployment/CI/API/schema breadth—using the same bounded issue/evidence/candidate envelope.
+The first MCP declaration slice now reads only committed `.mcp.json`, Cursor, VS Code JSONC,
+Windsurf, Antigravity and plugin MCP configurations. It emits bounded `mcp_server` candidates and
+repository `depends_on` relationships, merges identical declarations, leaves conflicts unresolved,
+and never returns stdio commands, arguments, environment values or credential-bearing URLs. Exact
+revision and content evidence remain visible without echoing the configuration body.
+
+The immediate next HLG-2 handoff is to complete remaining committed MCP declaration formats
+(`.codex/config.toml` and registry `server.json`) before deployment/CI/API/schema breadth, using the
+same bounded issue/evidence/candidate envelope.
 HLG-3 begins only after candidate review/adoption preserves identity and provenance through the
 existing delivery receipt. Hunch still does not claim live runtime health, cross-repository
 traversal or a new CLI/MCP surface. HLG-1 is closed by accepted decision `dec_a6d088f409`; the live
