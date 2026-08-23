@@ -111,15 +111,16 @@ identity without retaining credentials or local paths, and returns explicit
 `hunch.landscape-candidate/1` wrappers. Conflicting repository declarations leave package candidates
 unbound; neither discovery nor ORC may treat them as accepted graph authority.
 
-The first MCP declaration slice now reads only committed `.mcp.json`, Cursor, VS Code JSONC,
-Windsurf, Antigravity and plugin MCP configurations. It emits bounded `mcp_server` candidates and
-repository `depends_on` relationships, merges identical declarations, leaves conflicts unresolved,
-and never returns stdio commands, arguments, environment values or credential-bearing URLs. Exact
-revision and content evidence remain visible without echoing the configuration body.
+The committed MCP declaration slice now reads `.mcp.json`, Cursor, VS Code JSONC, Windsurf,
+Antigravity, plugin and canonical Codex TOML configurations plus official registry `server.json`
+manifests. Project-client declarations emit repository `depends_on` relationships; registry
+manifests emit repository `provides` relationships. Discovery merges identical declarations,
+leaves conflicts unresolved, ignores unrelated `server.json` files and never returns stdio
+commands, arguments, environment values or credential-bearing URLs. Exact revision and content
+evidence remain visible without echoing the configuration body.
 
-The immediate next HLG-2 handoff is to complete remaining committed MCP declaration formats
-(`.codex/config.toml` and registry `server.json`) before deployment/CI/API/schema breadth, using the
-same bounded issue/evidence/candidate envelope.
+The immediate next HLG-2 handoff is deployment and CI declarations, followed by API/schema families
+one at a time under the same bounded issue/evidence/candidate envelope.
 HLG-3 begins only after candidate review/adoption preserves identity and provenance through the
 existing delivery receipt. Hunch still does not claim live runtime health, cross-repository
 traversal or a new CLI/MCP surface. HLG-1 is closed by accepted decision `dec_a6d088f409`; the live
