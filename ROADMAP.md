@@ -64,13 +64,13 @@ facts that govern them.
    lifecycle, credential-free locators, provenance/currentness, forward migration and rebuildable
    SQLite projections are covered by the focused landscape fixture.
 2. **HLG-2 — deterministic repository fragment discovery. IN PROGRESS (package/Git, committed MCP
-   and the first CI/container-delivery slice landed through 2026-08-23).**
+   and CI/deployment declaration slices landed through 2026-08-23).**
    `discoverRepositoryLandscape` now reads one exact Git revision and emits bounded,
    content-addressed candidate resources/relationships for root/workspace packages, canonical
    credential-free Git remotes, supported MCP declarations, major committed CI formats,
-   Dockerfile build artifacts and Docker Compose deployment targets. Evidence retains only safe
-   file/field/revision/content identity; declaration bodies, commands, environment values and
-   credentials never enter the fragment. Kubernetes/systemd deployment identity,
+   Dockerfile build artifacts, Docker Compose targets, structured Kubernetes workloads and systemd
+   service units. Evidence retains only safe file/field/revision/content identity; declaration
+   bodies, commands, images, environment values and credentials never enter the fragment.
    API/event/schema and ownership sources remain.
 3. **HLG-3 — bounded landscape delivery.** Return task-relevant resources, relationships and linked
    Hunch reasoning through the existing ranking, budget, currentness and native receipt envelope;
@@ -129,9 +129,16 @@ Jenkins declarations require only their bounded structural marker because Hunch 
 commands. Symlinks, unsafe paths, malformed/oversized files and declarations beyond the fixed cap
 remain explicit issues. No image, command, argument, environment or service-body value is returned.
 
-The immediate next HLG-2 handoff is structured Kubernetes and systemd declaration identity,
-followed by API/schema families one at a time under the same bounded issue/evidence/candidate
-envelope.
+The structured deployment slice recognizes workload documents in committed `k8s/`, `kubernetes/`,
+`manifests/` and `deploy/` YAML plus committed `.service` units. Kubernetes identity is
+path-scoped and derived only from a supported workload's `apiVersion`, `kind`, namespace and name;
+non-workload documents are ignored, unsafe/templated identities are issues, and duplicate workload
+identity remains unresolved. Systemd units require a real `[Service]` section and expose only their
+safe committed unit path. The 128-declaration cap applies after multi-document expansion, so one
+large manifest cannot manufacture an unbounded fragment.
+
+The immediate next HLG-2 handoff is API/schema families one at a time under the same bounded
+issue/evidence/candidate envelope, beginning with OpenAPI.
 HLG-3 begins only after candidate review/adoption preserves identity and provenance through the
 existing delivery receipt. Hunch still does not claim live runtime health, cross-repository
 traversal or a new CLI/MCP surface. HLG-1 is closed by accepted decision `dec_a6d088f409`; the live
