@@ -252,15 +252,16 @@ after multi-document expansion. Committed `.service` units contribute systemd de
 only when a `[Service]` section exists. Images, commands, environment values, Secret/ConfigMap data
 and runtime state never enter either candidate family.
 
-Committed OpenAPI/Swagger-named YAML and JSON files now contribute path-stable `api` candidates
-after bounded UTF-8, syntax and top-level version validation. The repository relationship is only
-`contains`: a committed contract does not prove that this repository implements it, serves it or
-has a healthy runtime. Evidence retains the declaration path, exact revision, content hash and
-`openapi`/`swagger` version field; titles, servers, paths, operations, schemas, extensions and
-security bodies never enter the fragment. Unsupported Git modes, unsafe paths, malformed or
-oversized declarations and declaration-cap overflow remain explicit reviewable issues.
+Committed OpenAPI/Swagger/AsyncAPI-named YAML and JSON files now contribute family/path-stable
+`api` candidates after bounded UTF-8, syntax and top-level version validation. The repository
+relationship is only `contains`: a committed contract does not prove that this repository
+implements it, serves it or has a healthy runtime. Evidence retains the declaration path, exact
+revision, content hash and `openapi`/`swagger`/`asyncapi` version field; titles, servers, channels,
+paths, operations, schemas, extensions and security bodies never enter the fragment. Unsupported
+Git modes, unsafe paths, malformed or oversized declarations and declaration-cap overflow remain
+explicit reviewable issues.
 
-HLG-2 next adds AsyncAPI under the same candidate/issue envelope, followed by later schema families
+HLG-2 next adds protobuf under the same candidate/issue envelope, followed by later schema families
 one at a time. HLG-3 then projects only reviewed graph records through the existing
 delivery envelope; HLG-4 adds external-reference drift intake. ORC's aligned execution snapshot
 explicitly rejects `hunch.landscape-candidate/1` and requires an accepted, current fragment plus its

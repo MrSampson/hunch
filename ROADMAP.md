@@ -64,7 +64,7 @@ facts that govern them.
    lifecycle, credential-free locators, provenance/currentness, forward migration and rebuildable
    SQLite projections are covered by the focused landscape fixture.
 2. **HLG-2 — deterministic repository fragment discovery. IN PROGRESS (package/Git, committed MCP,
-   CI/deployment and OpenAPI declaration slices landed through 2026-08-26).**
+   CI/deployment, OpenAPI and AsyncAPI declaration slices landed through 2026-08-26).**
    `discoverRepositoryLandscape` now reads one exact Git revision and emits bounded,
    content-addressed candidate resources/relationships for root/workspace packages, canonical
    credential-free Git remotes, supported MCP declarations, major committed CI formats,
@@ -137,12 +137,12 @@ identity remains unresolved. Systemd units require a real `[Service]` section an
 safe committed unit path. The 128-declaration cap applies after multi-document expansion, so one
 large manifest cannot manufacture an unbounded fragment.
 
-The first API/schema slice recognizes only committed OpenAPI/Swagger-named YAML or JSON files,
-validates one supported top-level contract version and emits path-stable `api` candidates with a
-repository `contains` relationship. It retains no title, path/operation body, extension value or
-runtime claim; unsafe paths, unsupported modes, malformed/oversized declarations and cap overflow
-remain explicit issues. The immediate next HLG-2 handoff is AsyncAPI under the same bounded
-issue/evidence/candidate envelope.
+The API/schema slice recognizes only committed OpenAPI/Swagger/AsyncAPI-named YAML or JSON files,
+validates exactly one supported top-level contract version and emits family/path-stable `api`
+candidates with a repository `contains` relationship. It retains no title, server, channel,
+path/operation body, extension value or runtime claim; unsafe paths, unsupported modes,
+malformed/oversized declarations and cap overflow remain explicit issues. The immediate next HLG-2
+handoff is protobuf under the same bounded issue/evidence/candidate envelope.
 HLG-3 begins only after candidate review/adoption preserves identity and provenance through the
 existing delivery receipt. Hunch still does not claim live runtime health, cross-repository
 traversal or a new CLI/MCP surface. HLG-1 is closed by accepted decision `dec_a6d088f409`; the live
