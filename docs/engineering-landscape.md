@@ -252,19 +252,21 @@ after multi-document expansion. Committed `.service` units contribute systemd de
 only when a `[Service]` section exists. Images, commands, environment values, Secret/ConfigMap data
 and runtime state never enter either candidate family.
 
-Committed OpenAPI/Swagger/AsyncAPI-named YAML/JSON and `.proto` files now contribute
-family/path-stable `api` candidates after bounded UTF-8, syntax/header and version validation. The repository
+Committed OpenAPI/Swagger/AsyncAPI-named YAML/JSON, fixed `*.schema.json` and `.proto` files now
+contribute family/path-stable `api` candidates after bounded UTF-8, syntax/header and version validation. The repository
 relationship is only `contains`: a committed contract does not prove that this repository
 implements it, serves it or has a healthy runtime. Evidence retains the declaration path, exact
-revision, content hash and `openapi`/`swagger`/`asyncapi` version or protobuf `syntax` field; titles,
+revision, content hash and `openapi`/`swagger`/`asyncapi`/JSON Schema dialect version or protobuf `syntax` field; titles,
 servers, channels, paths, operations, schemas, messages, fields, services, methods, options,
-extensions and security bodies never enter the fragment. Protobuf requires exactly one first
+extensions and security bodies never enter the fragment. JSON Schema retains only recognized
+2020-12, 2019-09 or draft-07 dialect identity; `$id`, properties, definitions and examples are
+discarded. Protobuf requires exactly one first
 statement `proto2`/`proto3` syntax header plus lexically balanced strings/comments/braces; this is
 bounded declaration identity evidence, not a compiler-validity claim. Unsupported Git modes,
 unsafe paths, malformed or oversized declarations and declaration-cap overflow remain explicit
 reviewable issues.
 
-HLG-2 next adds later schema/migration families one at a time under the same candidate/issue
+HLG-2 next adds migration contract families one at a time under the same candidate/issue
 envelope. HLG-3 then projects only reviewed graph records through the existing
 delivery envelope; HLG-4 adds external-reference drift intake. ORC's aligned execution snapshot
 explicitly rejects `hunch.landscape-candidate/1` and requires an accepted, current fragment plus its
