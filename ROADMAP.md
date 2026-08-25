@@ -64,7 +64,7 @@ facts that govern them.
    lifecycle, credential-free locators, provenance/currentness, forward migration and rebuildable
    SQLite projections are covered by the focused landscape fixture.
 2. **HLG-2 — deterministic repository fragment discovery. IN PROGRESS (package/Git, committed MCP,
-   CI/deployment, OpenAPI, AsyncAPI, protobuf, JSON Schema and Prisma migration declaration slices landed through 2026-08-26).**
+   CI/deployment, OpenAPI, AsyncAPI, protobuf, JSON Schema, Prisma and Flyway migration declaration slices landed through 2026-08-26).**
    `discoverRepositoryLandscape` now reads one exact Git revision and emits bounded,
    content-addressed candidate resources/relationships for root/workspace packages, canonical
    credential-free Git remotes, supported MCP declarations, major committed CI formats,
@@ -146,11 +146,12 @@ runtime claim; JSON Schema `$id`, properties, definitions and examples are also 
 paths, unsupported modes, malformed/oversized declarations and cap overflow remain explicit issues.
 Protobuf detection requires one first-statement proto2/proto3 syntax header and balanced lexical
 structure but does not claim compiler validity. The first migration slice recognizes only committed
-`prisma/migrations/<id>/migration.sql` conventions, emits path/version-stable database-migration
-`artifact` candidates and never retains SQL text or infers a target database, execution status or
-schema effect. Empty, malformed-mode, oversized and cap-overflow declarations remain explicit
-issues. The immediate next HLG-2 handoff is another migration contract family under the same
-bounded envelope.
+`prisma/migrations/<id>/migration.sql` conventions. The second recognizes Flyway's standard
+`db/migration/V<version>__<description>.sql`, undo `U...` and repeatable `R__...` filenames. Both
+emit path/version-stable database-migration `artifact` candidates and never retain SQL text or infer
+a target database, execution status or schema effect. Empty, malformed-mode, oversized and
+cap-overflow declarations remain explicit issues. The immediate next HLG-2 handoff is another
+migration contract family under the same bounded envelope.
 HLG-3 begins only after candidate review/adoption preserves identity and provenance through the
 existing delivery receipt. Hunch still does not claim live runtime health, cross-repository
 traversal or a new CLI/MCP surface. HLG-1 is closed by accepted decision `dec_a6d088f409`; the live
