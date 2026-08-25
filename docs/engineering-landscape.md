@@ -266,11 +266,12 @@ bounded declaration identity evidence, not a compiler-validity claim. Unsupporte
 unsafe paths, malformed or oversized declarations and declaration-cap overflow remain explicit
 reviewable issues.
 
-Committed `prisma/migrations/<id>/migration.sql` files and standard Flyway
-`db/migration/V<version>__<description>.sql`, `U...` and `R__...` files now contribute
+Committed `prisma/migrations/<id>/migration.sql` files, standard Flyway
+`db/migration/V<version>__<description>.sql`, `U...` and `R__...` files, and conventional Rails
+`db/migrate/<14-digit-version>_<name>.rb` files now contribute
 path/version-stable database-migration `artifact` candidates with repository `contains`
 relationships. Evidence keeps only the safe path, framework, migration type/version, exact
-revision and content hash; SQL bodies, inferred tables, target database identity, execution state
+revision and content hash; SQL/Ruby bodies, inferred tables, target database identity, execution state
 and schema effects never enter the fragment. Empty, oversized, unsupported-mode and excess
 declarations remain explicit reviewable issues.
 

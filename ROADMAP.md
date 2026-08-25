@@ -64,7 +64,7 @@ facts that govern them.
    lifecycle, credential-free locators, provenance/currentness, forward migration and rebuildable
    SQLite projections are covered by the focused landscape fixture.
 2. **HLG-2 — deterministic repository fragment discovery. IN PROGRESS (package/Git, committed MCP,
-   CI/deployment, OpenAPI, AsyncAPI, protobuf, JSON Schema, Prisma and Flyway migration declaration slices landed through 2026-08-26).**
+   CI/deployment, OpenAPI, AsyncAPI, protobuf, JSON Schema, Prisma, Flyway and Rails migration declaration slices landed through 2026-08-26).**
    `discoverRepositoryLandscape` now reads one exact Git revision and emits bounded,
    content-addressed candidate resources/relationships for root/workspace packages, canonical
    credential-free Git remotes, supported MCP declarations, major committed CI formats,
@@ -147,9 +147,11 @@ paths, unsupported modes, malformed/oversized declarations and cap overflow rema
 Protobuf detection requires one first-statement proto2/proto3 syntax header and balanced lexical
 structure but does not claim compiler validity. The first migration slice recognizes only committed
 `prisma/migrations/<id>/migration.sql` conventions. The second recognizes Flyway's standard
-`db/migration/V<version>__<description>.sql`, undo `U...` and repeatable `R__...` filenames. Both
+`db/migration/V<version>__<description>.sql`, undo `U...` and repeatable `R__...` filenames. The
+third recognizes conventional Rails `db/migrate/<14-digit-version>_<name>.rb` files. These families
 emit path/version-stable database-migration `artifact` candidates and never retain SQL text or infer
-a target database, execution status or schema effect. Empty, malformed-mode, oversized and
+a target database, execution status or schema effect; Rails Ruby bodies are equally discarded.
+Empty, malformed-mode, oversized and
 cap-overflow declarations remain explicit issues. The immediate next HLG-2 handoff is another
 migration contract family under the same bounded envelope.
 HLG-3 begins only after candidate review/adoption preserves identity and provenance through the
