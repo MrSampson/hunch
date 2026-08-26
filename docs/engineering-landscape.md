@@ -172,6 +172,16 @@ omitted-item evidence
 native delivery receipt identity
 ```
 
+This is now the versioned `hunch.delivery-envelope/1` contract, with a content-addressed
+`hdr_*` receipt for the exact response. Its optional `hunch.landscape-fragment/1` section carries
+the reviewed records themselves rather than asking a client to reconstruct them from prose. The
+human-readable text and structured records share one hard caller budget; `accounted_chars`
+conservatively includes each delivered landscape record as well as its headline. A relationship is
+withheld unless both endpoint resources were delivered, and every budget/cap omission remains
+explicit. The envelope receipt list maps one-to-one onto the selected structured records and repeats
+their exact rank, delivery reason, provenance status and token charge; duplicate or substituted
+entries invalidate even a newly content-addressed envelope.
+
 The default bounded orientation target is 3–8 non-blocking landscape/decision headlines per
 role-specific delivery. Mandatory blocking constraints are pinned outside that target, duplicate
 IDs count once, and more items require a recorded mandatory/ambiguity reason plus explicit token
@@ -222,7 +232,8 @@ runtime-health fields and credential material anywhere in the durable resource/r
 The same fixture proves that the fragment remains useful without ORC and that no runtime
 reachability or health claim is inferred from a durable declaration.
 
-The package/Git, committed MCP and CI/deployment HLG-2 discovery slices have landed.
+The package/Git, committed MCP and CI/deployment HLG-2 discovery slices and the explicit
+review/adoption seam have landed.
 `discoverRepositoryLandscape` reads a caller-selected exact commit, bounds and parses root/workspace
 package manifests, canonicalizes configured and manifest-declared repository identity without
 retaining credentials or host paths, and returns content-addressed `hunch.landscape-candidate/1`
@@ -344,10 +355,48 @@ Malformed/non-UTF-8, unsafe-path, unsupported-mode, oversized and excess declara
 explicit issues; symlinks are never followed and dependency-owned declarations are ignored before
 the cap.
 
-HLG-2 next adds another bounded source family or an explicitly designed candidate-review/adoption
-seam. HLG-3
-then projects only reviewed graph records through the existing
-delivery envelope; HLG-4 adds external-reference drift intake. ORC's aligned execution snapshot
+`hunch landscape review` now exposes the exact revision, complete content-addressed candidate set,
+discovery hash and bounded issues without creating `.hunch` graph state. `hunch landscape adopt`
+requires that reviewed discovery hash, an explicit reviewer label, either the full set or exact
+candidate hashes, and acknowledgement when issues exist. Adoption re-runs discovery at the named
+revision, verifies every candidate and envelope hash, refuses unknown/duplicate selections,
+requires both endpoint resources for a selected relationship, and fails rather than overwriting a
+different curated graph record. Accepted records shed candidate authority, become current and
+human-confirmed, retain the candidate/discovery/review identities in bounded metadata, flow through
+the ordinary public/private/shared capture boundary, and return a native
+`hunch.landscape-adoption-receipt/1`. Retrying the same exact fragment reuses its accepted records
+instead of duplicating them.
+
+HLG-2 is therefore complete at the bounded repository-discovery and explicit-adoption boundary.
+
+HLG-3 is complete at the reviewed-delivery boundary. `assembleContext` now selects a deterministic,
+target-oriented fragment from current records whose discovery candidate and adoption review
+identities are intact. Exact/task matches, the repository root and one-hop reviewed neighbors are
+ranked under the bounded orientation cap. When a reviewed root exists, one resource slot is reserved
+for it so consumers can bind the fragment to a repository even under a crowded task match; the
+displaced resource remains explicit omission evidence. Candidate, unreviewed, stale and retired landscape
+records never acquire delivery authority through lexical relevance. The canonical envelope carries
+the selected resource and relationship records, selection and delivery receipts, review/discovery
+hashes, exact source revisions, omission evidence and one content-addressed fragment hash. CLI,
+MCP and edit-time injection all use that same envelope; MCP advertises the structured contract and
+the served ledger records the exact resource/relationship headlines that reached the caller.
+The exported validator independently proves the receipt list is a unique exact mapping to those
+records, rather than accepting matching list counts alone.
+Historical `as_of` requests deliberately withhold the current landscape until resource records have
+valid-time semantics, preventing current topology from leaking into a historical response.
+
+The focused HLG-3 acceptance covers deterministic replay, candidate/stale exclusion, tamper
+detection, endpoint withholding, tiny hard budgets, structured MCP schema publication, a
+plain-English task path and served-ledger evidence.
+
+HLG-4's initial drift-intake boundary is complete. A strict,
+content-addressed `hunch.landscape-drift-candidate/1` accepts only credential-free evidence of one
+observed repository identity mismatch. Its deterministic conversion produces only an open,
+medium-severity advisory Finding with exact candidate provenance. It cannot create or rewrite a
+resource, relationship, currentness claim, constraint, decision or policy rule. ORC remains the
+authority for the actual provider observation and Hunch Memory remains only the separately
+authorized store transport.
+ORC's aligned execution snapshot
 explicitly rejects `hunch.landscape-candidate/1` and requires an accepted, current fragment plus its
 native receipt before execution authority can be frozen.
 

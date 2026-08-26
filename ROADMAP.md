@@ -63,7 +63,8 @@ facts that govern them.
    kind-qualified resource IDs and directional relationship IDs now extend the existing JSON graph;
    lifecycle, credential-free locators, provenance/currentness, forward migration and rebuildable
    SQLite projections are covered by the focused landscape fixture.
-2. **HLG-2 — deterministic repository fragment discovery. IN PROGRESS (package/Git/internal
+2. **HLG-2 — deterministic repository fragment discovery. DONE at the bounded repository
+   discovery/adoption boundary (2026-08-26; package/Git/internal
    workspace dependencies/submodules, committed MCP,
    CI/deployment, Helm chart, OpenAPI, AsyncAPI, protobuf, JSON Schema, Prisma, Flyway, Rails,
    Django, Laravel and Alembic migration, CODEOWNERS ownership, committed runbook, JSON dashboard
@@ -76,14 +77,17 @@ facts that govern them.
    identity; declaration
    bodies, commands, images, environment values and credentials never enter the fragment.
    Additional explicitly bounded declaration sources remain.
-3. **HLG-3 — bounded landscape delivery.** Return task-relevant resources, relationships and linked
+3. **HLG-3 — bounded landscape delivery. DONE (2026-08-26).** Return task-relevant resources, relationships and linked
    Hunch reasoning through the existing ranking, budget, currentness and native receipt envelope;
    add an explicit CLI/MCP view only as a projection over that machinery. Freeze the additive
    envelope before Hunch Memory implements transport; the service must preserve IDs, source/graph
    evidence, omissions and the native receipt byte-for-byte or by canonical hash.
-4. **HLG-4 — cross-repository references and drift intake.** Preserve stable external repository and
-   contract references. Accept ORC-observed mismatches only as evidenced findings/proposals; live
-   observation never silently rewrites declared architecture.
+4. **HLG-4 — cross-repository references and drift intake. INITIAL DRIFT INTAKE COMPLETE
+   (2026-08-26).** Preserve stable external repository and contract references. A strict,
+   content-addressed `hunch.landscape-drift-candidate/1` records credential-free identity evidence
+   for one real mismatch and can become only an open advisory Finding. ORC owns live observation
+   and Hunch Memory owns isolated transport; neither path rewrites the graph, currentness,
+   constraints, decisions or policy.
 
 Done means a repository can publish a revision-current, receipted landscape fragment that remains
 useful to any Hunch client, while ORC can assemble multiple authorized fragments without duplicating
