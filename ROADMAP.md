@@ -65,13 +65,13 @@ facts that govern them.
    SQLite projections are covered by the focused landscape fixture.
 2. **HLG-2 — deterministic repository fragment discovery. IN PROGRESS (package/Git/internal
    workspace dependencies/submodules, committed MCP,
-   CI/deployment, OpenAPI, AsyncAPI, protobuf, JSON Schema, Prisma, Flyway, Rails, Django, Laravel
+   CI/deployment, Helm chart, OpenAPI, AsyncAPI, protobuf, JSON Schema, Prisma, Flyway, Rails, Django, Laravel
    and Alembic migration, CODEOWNERS ownership, committed runbook, JSON dashboard and OpenSLO v1 declaration slices landed through 2026-08-26).**
    `discoverRepositoryLandscape` now reads one exact Git revision and emits bounded,
    content-addressed candidate resources/relationships for root/workspace packages, canonical
    credential-free Git remotes, supported MCP declarations, major committed CI formats,
-   Dockerfile build artifacts, Docker Compose targets, structured Kubernetes workloads and systemd
-   service units. Evidence retains only safe file/field/revision/content identity; declaration
+Dockerfile build artifacts, Docker Compose targets, structured Kubernetes workloads and systemd
+service units plus Helm chart packages. Evidence retains only safe file/field/revision/content identity; declaration
    bodies, commands, images, environment values and credentials never enter the fragment.
    Additional explicitly bounded declaration sources remain.
 3. **HLG-3 — bounded landscape delivery.** Return task-relevant resources, relationships and linked

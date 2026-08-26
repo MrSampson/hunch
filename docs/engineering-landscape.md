@@ -144,7 +144,7 @@ Hunch may derive candidate resources and relationships from repository-local, re
 
 - package manifests, scripts, binaries and dependency declarations;
 - MCP configuration and expected capability declarations;
-- Docker, Compose, Kubernetes, systemd and deployment manifests;
+- Docker, Compose, Helm, Kubernetes, systemd and deployment manifests;
 - CI workflows, artifact definitions and environment templates;
 - OpenAPI, AsyncAPI, protobuf and schema/migration contracts;
 - Git remotes, workspace manifests and submodules;
@@ -269,6 +269,14 @@ remain explicit (`contains`, `builds`, `deploys`); candidates never claim that a
 image exists or a deployment is healthy. Discovery validates bounded structure and UTF-8, rejects
 symlinks and unsafe paths, and retains only declaration path/field/revision/content hashes—not
 workflow commands, images, build arguments, environment values or service bodies.
+
+Committed `Chart.yaml` files now contribute path-derived Helm `artifact` candidates with a
+repository `contains` relationship. Discovery requires structurally valid YAML, Helm chart
+`apiVersion` v1 or v2, a bounded safe name and a SemVer package version. The candidate retains only
+the safe declaration path, chart contract version, exact revision and content hash; chart names,
+package versions, descriptions, dependencies, repositories, values and templates never enter the
+fragment. Dependency-owned paths are ignored before the shared delivery cap, and unsafe paths,
+symlinks, malformed declarations and oversized files remain explicit issues.
 
 Committed YAML under explicit Kubernetes/deployment directories now contributes path-scoped
 `deployment_target` candidates for `Deployment`, `StatefulSet`, `DaemonSet`, `Job`, `CronJob` and
