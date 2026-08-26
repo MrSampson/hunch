@@ -1,6 +1,6 @@
 # Hunch roadmap
 
-Updated 2026-08-22.
+Updated 2026-08-26.
 
 Hunch is building the validated delivery layer for engineering intent: record why the code is the
 way it is, deliver the right evidence at the moment an agent needs it, and deterministically check
@@ -63,23 +63,31 @@ facts that govern them.
    kind-qualified resource IDs and directional relationship IDs now extend the existing JSON graph;
    lifecycle, credential-free locators, provenance/currentness, forward migration and rebuildable
    SQLite projections are covered by the focused landscape fixture.
-2. **HLG-2 — deterministic repository fragment discovery. IN PROGRESS (package/Git, committed MCP
-   and CI/deployment declaration slices landed through 2026-08-23).**
+2. **HLG-2 — deterministic repository fragment discovery. DONE at the bounded repository
+   discovery/adoption boundary (2026-08-26; package/Git/internal
+   workspace dependencies/submodules, committed MCP,
+   CI/deployment, Helm chart, OpenAPI, AsyncAPI, protobuf, JSON Schema, Prisma, Flyway, Rails,
+   Django, Laravel and Alembic migration, CODEOWNERS ownership, committed runbook, JSON dashboard
+   and OpenSLO v1 declaration slices landed through 2026-08-26).**
    `discoverRepositoryLandscape` now reads one exact Git revision and emits bounded,
    content-addressed candidate resources/relationships for root/workspace packages, canonical
    credential-free Git remotes, supported MCP declarations, major committed CI formats,
-   Dockerfile build artifacts, Docker Compose targets, structured Kubernetes workloads and systemd
-   service units. Evidence retains only safe file/field/revision/content identity; declaration
+   Dockerfile build artifacts, Docker Compose targets, structured Kubernetes workloads, systemd
+   service units and Helm chart packages. Evidence retains only safe file/field/revision/content
+   identity; declaration
    bodies, commands, images, environment values and credentials never enter the fragment.
-   API/event/schema and ownership sources remain.
-3. **HLG-3 — bounded landscape delivery.** Return task-relevant resources, relationships and linked
+   Additional explicitly bounded declaration sources remain.
+3. **HLG-3 — bounded landscape delivery. DONE (2026-08-26).** Return task-relevant resources, relationships and linked
    Hunch reasoning through the existing ranking, budget, currentness and native receipt envelope;
    add an explicit CLI/MCP view only as a projection over that machinery. Freeze the additive
    envelope before Hunch Memory implements transport; the service must preserve IDs, source/graph
    evidence, omissions and the native receipt byte-for-byte or by canonical hash.
-4. **HLG-4 — cross-repository references and drift intake.** Preserve stable external repository and
-   contract references. Accept ORC-observed mismatches only as evidenced findings/proposals; live
-   observation never silently rewrites declared architecture.
+4. **HLG-4 — cross-repository references and drift intake. INITIAL DRIFT INTAKE COMPLETE
+   (2026-08-26).** Preserve stable external repository and contract references. A strict,
+   content-addressed `hunch.landscape-drift-candidate/1` records credential-free identity evidence
+   for one real mismatch and can become only an open advisory Finding. ORC owns live observation
+   and Hunch Memory owns isolated transport; neither path rewrites the graph, currentness,
+   constraints, decisions or policy.
 
 Done means a repository can publish a revision-current, receipted landscape fragment that remains
 useful to any Hunch client, while ORC can assemble multiple authorized fragments without duplicating
@@ -113,6 +121,19 @@ identity without retaining credentials or local paths, and returns explicit
 `hunch.landscape-candidate/1` wrappers. Conflicting repository declarations leave package candidates
 unbound; neither discovery nor ORC may treat them as accepted graph authority.
 
+Package discovery also resolves unique package names across the bounded workspace set and emits
+package-to-package `depends_on` candidates for internal dependencies declared in `dependencies`,
+`devDependencies`, `peerDependencies` or `optionalDependencies`. Duplicate package identities stay
+unresolved, malformed/self dependencies are issues, and the edge set is capped before candidate
+construction. Version specifiers and registry URLs never enter the fragment.
+
+Committed Git submodule discovery reads only a bounded ordinary `.gitmodules` blob at the exact
+revision and requires a matching `160000` gitlink. Credential-free network targets become scoped
+external `repository` candidates with root-repository `depends_on` relationships; repeated target
+repositories merge their path and gitlink evidence. Local/relative or unsupported URLs,
+self-references, duplicate/unsafe paths, missing gitlinks, malformed/oversized declarations and cap
+overflow remain issues. Raw URLs, subsection labels and credentials never enter the fragment.
+
 The committed MCP declaration slice now reads `.mcp.json`, Cursor, VS Code JSONC, Windsurf,
 Antigravity, plugin and canonical Codex TOML configurations plus official registry `server.json`
 manifests. Project-client declarations emit repository `depends_on` relationships; registry
@@ -137,14 +158,62 @@ identity remains unresolved. Systemd units require a real `[Service]` section an
 safe committed unit path. The 128-declaration cap applies after multi-document expansion, so one
 large manifest cannot manufacture an unbounded fragment.
 
-The immediate next HLG-2 handoff is API/schema families one at a time under the same bounded
-issue/evidence/candidate envelope, beginning with OpenAPI.
+The API/schema slice recognizes only committed OpenAPI/Swagger/AsyncAPI-named YAML/JSON, fixed
+`*.schema.json` and `.proto` files, validates exactly one supported top-level contract
+version/header and emits
+family/path-stable `api` candidates with a repository `contains` relationship. It retains no title,
+server, channel, message, field, service, method, option, path/operation body, extension value or
+runtime claim; JSON Schema `$id`, properties, definitions and examples are also excluded. Unsafe
+paths, unsupported modes, malformed/oversized declarations and cap overflow remain explicit issues.
+Protobuf detection requires one first-statement proto2/proto3 syntax header and balanced lexical
+structure but does not claim compiler validity. The first migration slice recognizes only committed
+`prisma/migrations/<id>/migration.sql` conventions. The second recognizes Flyway's standard
+`db/migration/V<version>__<description>.sql`, undo `U...` and repeatable `R__...` filenames. The
+third recognizes conventional Rails `db/migrate/<14-digit-version>_<name>.rb` files; Django,
+Laravel and Alembic add their strict default numbered/timestamped/revision-file conventions. These
+families emit path/version-stable database-migration `artifact` candidates and never retain SQL,
+Ruby, Python or PHP bodies or infer dependencies, revision edges, a target database, execution
+status or schema effect.
+Empty, malformed-mode, oversized and
+cap-overflow declarations remain explicit issues. The immediate next HLG-2 handoff is another
+source family under the same bounded envelope or an explicitly designed candidate-review/adoption
+seam.
+
+The first ownership slice follows GitHub's CODEOWNERS location precedence and reads only the last
+repository-wide `*` rule. It emits credential-free `team_ref` candidates and repository `owned_by`
+relationships only for `@organization/team` owners. Path-specific rules, individual handles,
+emails, comments and the declaration body are discarded. Unsupported modes, invalid UTF-8,
+oversized files and team overflow remain reviewable issues; a higher-precedence unsafe file never
+falls through to a lower-precedence declaration.
+
+The first operations slice recognizes a root `RUNBOOK.md` plus Markdown/MDX files below explicit
+`runbook/` or `runbooks/` directories (excluding their README/index files). It emits path-stable
+`runbook` candidates and repository `contains` relationships while retaining only the path, exact
+revision and content hash. Runbook headings, procedures, incident details and credential-like body
+text never enter the fragment. Empty/non-UTF-8, unsafe-path, unsupported-mode, oversized and excess
+files remain explicit issues, and exact-revision discovery never follows a runbook symlink.
+
+The dashboard slice recognizes JSON objects below explicit `dashboards/` directories and emits
+path-stable `dashboard` candidates with repository `contains` relationships. Evidence retains only
+the safe path, exact revision and content hash; titles, UIDs, panels, queries, variables, datasource
+names, links and the complete JSON body are discarded. Invalid/non-object/non-UTF-8, unsafe-path,
+unsupported-mode, oversized and excess declarations remain issues, and symlinks are never followed.
+
+The SLO slice recognizes single-document OpenSLO v1 `kind: SLO` YAML/JSON under explicit `slo/`,
+`slos/` or `.openslo/` directories plus conventionally named SLO files. It emits path-stable `slo`
+candidates with repository `contains` relationships after checking the required OpenSLO header and
+`metadata.name`. Evidence retains only the safe path, `openslo/v1` contract identity, exact revision
+and content hash; names, services, objectives, indicators, targets, queries, labels and alert policy
+bodies are discarded. Invalid/non-UTF-8, unsafe-path, unsupported-mode, oversized and excess
+declarations remain issues, dependency-owned files are ignored before the cap, and symlinks are
+never followed.
+
 HLG-3 begins only after candidate review/adoption preserves identity and provenance through the
 existing delivery receipt. Hunch still does not claim live runtime health, cross-repository
 traversal or a new CLI/MCP surface. HLG-1 is closed by accepted decision `dec_a6d088f409`; the live
 roadmap anchor is `roadmap.engineering-landscape-hlg-2` (`dec_9130451387`).
 
-## Current baseline — v1.18.0
+## Current baseline — v1.19.0
 
 - Architectural Conformance and decision-grounding are deterministic release gates.
 - CLI, MCP, and edit hooks share one currentness-checked, hard-budgeted delivery envelope.

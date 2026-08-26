@@ -1,6 +1,6 @@
 # Engineering Landscape Graph
 
-Updated 2026-08-23. This document defines Hunch's durable side of the product-to-code landscape.
+Updated 2026-08-26. This document defines Hunch's durable side of the product-to-code landscape.
 The graph remains the authority for engineering semantics inside a repository; it does not make
 Hunch a runtime discovery service or cross-provider orchestrator.
 
@@ -144,7 +144,7 @@ Hunch may derive candidate resources and relationships from repository-local, re
 
 - package manifests, scripts, binaries and dependency declarations;
 - MCP configuration and expected capability declarations;
-- Docker, Compose, Kubernetes, systemd and deployment manifests;
+- Docker, Compose, Helm, Kubernetes, systemd and deployment manifests;
 - CI workflows, artifact definitions and environment templates;
 - OpenAPI, AsyncAPI, protobuf and schema/migration contracts;
 - Git remotes, workspace manifests and submodules;
@@ -171,6 +171,16 @@ estimated token cost
 omitted-item evidence
 native delivery receipt identity
 ```
+
+This is now the versioned `hunch.delivery-envelope/1` contract, with a content-addressed
+`hdr_*` receipt for the exact response. Its optional `hunch.landscape-fragment/1` section carries
+the reviewed records themselves rather than asking a client to reconstruct them from prose. The
+human-readable text and structured records share one hard caller budget; `accounted_chars`
+conservatively includes each delivered landscape record as well as its headline. A relationship is
+withheld unless both endpoint resources were delivered, and every budget/cap omission remains
+explicit. The envelope receipt list maps one-to-one onto the selected structured records and repeats
+their exact rank, delivery reason, provenance status and token charge; duplicate or substituted
+entries invalidate even a newly content-addressed envelope.
 
 The default bounded orientation target is 3–8 non-blocking landscape/decision headlines per
 role-specific delivery. Mandatory blocking constraints are pinned outside that target, duplicate
@@ -222,19 +232,46 @@ runtime-health fields and credential material anywhere in the durable resource/r
 The same fixture proves that the fragment remains useful without ORC and that no runtime
 reachability or health claim is inferred from a durable declaration.
 
-The package/Git, committed MCP and CI/deployment HLG-2 discovery slices have landed.
+The package/Git, committed MCP and CI/deployment HLG-2 discovery slices and the explicit
+review/adoption seam have landed.
 `discoverRepositoryLandscape` reads a caller-selected exact commit, bounds and parses root/workspace
 package manifests, canonicalizes configured and manifest-declared repository identity without
 retaining credentials or host paths, and returns content-addressed `hunch.landscape-candidate/1`
 resources/relationships. Evidence names the exact file/field/revision/content hash. Working-tree
 bytes cannot alter an exact-revision result; repository-identity conflicts remain explicit and leave
-packages unbound. It reads a fixed, bounded set of project-local MCP JSON/JSONC configurations,
-canonical Codex TOML tables and official MCP registry `server.json` manifests. Client declarations
+packages unbound. One exact tree snapshot is shared across every source classifier; source families
+do not repeat repository tree walks or observe different path sets. That same snapshot carries exact
+blob sizes, so source families launch no separate size-check processes; only bodies within each
+per-file byte limit are hydrated through bounded batches, and oversized objects are never read. It
+also binds exact revision and commit time in one replacement-isolated commit snapshot instead of
+launching separate repository, revision and timestamp probes. It
+reads a fixed, bounded set of
+project-local MCP JSON/JSONC configurations, canonical Codex TOML tables and official MCP registry
+`server.json` manifests. Client declarations
 produce repository dependencies; registry manifests identify repository-provided servers. Identical
 descriptors merge and conflicting identities remain issues. Unrelated `server.json` files are
 ignored. Commands, arguments, environment values, package arguments and credential-bearing URLs
 never appear in the candidate fragment. The extractor is pure and never writes `.hunch` graph
 authority.
+
+Repository-wide API, migration, delivery and operations classifiers ignore declarations below
+committed `node_modules/`, `vendor/`, `third_party/` and `third-party/` segments before applying
+their caps. Dependency-owned files describe the dependency rather than the first-party repository;
+they cannot manufacture candidates or crowd first-party evidence out of a bounded fragment.
+
+Within the bounded workspace set, unique package identities now contribute exact internal
+package-to-package `depends_on` candidates from `dependencies`, `devDependencies`,
+`peerDependencies` and `optionalDependencies`. Multiple fields for the same pair merge as evidence;
+duplicate package names remain unresolved, malformed/self dependencies are issues, and the
+relationship cap is applied before candidate construction. Dependency version specifiers and
+registry URLs are never retained.
+
+Committed Git submodules contribute scoped external `repository` candidates and root-repository
+`depends_on` relationships only when a bounded ordinary `.gitmodules` entry has a distinct
+credential-free network identity and a matching exact-revision `160000` gitlink. Repeated target
+repositories merge declaration-path and gitlink evidence. Local/relative or unsupported URLs,
+self-references, duplicate/unsafe paths, missing gitlinks, malformed/oversized declarations and cap
+overflow stay reviewable issues. Raw URLs, subsection labels and credentials are discarded.
 
 Committed GitHub Actions, GitLab CI, CircleCI, Buildkite and root Jenkins declarations now produce
 path-derived `pipeline` candidates. Dockerfiles produce path-derived container `artifact`
@@ -244,6 +281,14 @@ image exists or a deployment is healthy. Discovery validates bounded structure a
 symlinks and unsafe paths, and retains only declaration path/field/revision/content hashes—not
 workflow commands, images, build arguments, environment values or service bodies.
 
+Committed `Chart.yaml` files now contribute path-derived Helm `artifact` candidates with a
+repository `contains` relationship. Discovery requires structurally valid YAML, Helm chart
+`apiVersion` v1 or v2, a bounded safe name and a SemVer package version. The candidate retains only
+the safe declaration path, chart contract version, exact revision and content hash; chart names,
+package versions, descriptions, dependencies, repositories, values and templates never enter the
+fragment. Dependency-owned paths are ignored before the shared delivery cap, and unsafe paths,
+symlinks, malformed declarations and oversized files remain explicit issues.
+
 Committed YAML under explicit Kubernetes/deployment directories now contributes path-scoped
 `deployment_target` candidates for `Deployment`, `StatefulSet`, `DaemonSet`, `Job`, `CronJob` and
 `Pod` documents. Identity retains only safe `apiVersion`, kind, namespace and name; non-workload
@@ -252,9 +297,106 @@ after multi-document expansion. Committed `.service` units contribute systemd de
 only when a `[Service]` section exists. Images, commands, environment values, Secret/ConfigMap data
 and runtime state never enter either candidate family.
 
-HLG-2 next adds API/schema families one at a time under the same candidate/issue envelope,
-beginning with OpenAPI. HLG-3 then projects only reviewed graph records through the existing
-delivery envelope; HLG-4 adds external-reference drift intake. ORC's aligned execution snapshot
+Committed OpenAPI/Swagger/AsyncAPI-named YAML/JSON, fixed `*.schema.json` and `.proto` files now
+contribute family/path-stable `api` candidates after bounded UTF-8, syntax/header and version validation. The repository
+relationship is only `contains`: a committed contract does not prove that this repository
+implements it, serves it or has a healthy runtime. Evidence retains the declaration path, exact
+revision, content hash and `openapi`/`swagger`/`asyncapi`/JSON Schema dialect version or protobuf `syntax` field; titles,
+servers, channels, paths, operations, schemas, messages, fields, services, methods, options,
+extensions and security bodies never enter the fragment. JSON Schema retains only recognized
+2020-12, 2019-09 or draft-07 dialect identity; `$id`, properties, definitions and examples are
+discarded. Protobuf requires exactly one first
+statement `proto2`/`proto3` syntax header plus lexically balanced strings/comments/braces; this is
+bounded declaration identity evidence, not a compiler-validity claim. Unsupported Git modes,
+unsafe paths, malformed or oversized declarations and declaration-cap overflow remain explicit
+reviewable issues.
+
+Committed `prisma/migrations/<id>/migration.sql` files, standard Flyway
+`db/migration/V<version>__<description>.sql`, `U...` and `R__...` files, and conventional Rails
+`db/migrate/<14-digit-version>_<name>.rb` and Django
+`<app>/migrations/<number>_<name>.py` and Laravel
+`database/migrations/<timestamp>_<name>.php` plus default Alembic
+`alembic/versions/<revision>_<name>.py` files now contribute
+path/version-stable database-migration `artifact` candidates with repository `contains`
+relationships. Evidence keeps only the safe path, framework, migration type/version, exact
+revision and content hash; SQL/Ruby/Python/PHP bodies, inferred tables, dependencies or revision edges, target database identity, execution state
+and schema effects never enter the fragment. Empty, oversized, unsupported-mode and excess
+declarations remain explicit reviewable issues.
+
+For GitHub repositories, the precedence-selected `.github/CODEOWNERS`, root `CODEOWNERS` or
+`docs/CODEOWNERS` file can now contribute repository-wide team ownership candidates. Discovery
+uses only the last global `*` rule, normalizes and bounds `@organization/team` references, and
+emits `team_ref` resources with repository `owned_by` relationships. It ignores path-specific
+rules, individual handles and email owners, and retains no comments or declaration body. Invalid
+UTF-8, oversized files, unsupported Git modes and excess teams are explicit issues; an unsafe
+higher-precedence file cannot silently fall through to a lower-precedence one.
+
+Committed root `RUNBOOK.md` and Markdown/MDX files below explicit `runbook/` or `runbooks/`
+directories now contribute path-stable `runbook` candidates with repository `contains`
+relationships. README/index files are ignored. Evidence retains only the safe path, exact revision
+and content hash; headings, procedures, incident data and body text never enter the fragment.
+Empty/non-UTF-8, unsafe-path, unsupported-mode, oversized and excess declarations are explicit
+issues, and symlinks are never followed.
+
+Committed JSON objects below explicit `dashboards/` directories contribute path-stable `dashboard`
+candidates with repository `contains` relationships. Evidence retains only the safe path, exact
+revision and content hash. Dashboard titles, UIDs, panels, queries, variables, datasource names,
+links and complete JSON bodies never enter the fragment. Invalid/non-object/non-UTF-8, unsafe-path,
+unsupported-mode, oversized and excess declarations are explicit issues; symlinks are never
+followed and dependency-owned dashboard directories are ignored before the cap.
+
+Single-document OpenSLO v1 YAML/JSON under explicit `slo/`, `slos/` or `.openslo/` directories, or
+with conventional SLO filenames, contributes path-stable `slo` candidates after the required
+`apiVersion: openslo/v1`, `kind: SLO` and `metadata.name` structure is confirmed. Repository
+relationships remain `contains`; a declaration does not prove that a target is measured, met or
+enforced. Evidence retains only the path, contract version, exact revision and content hash. Names,
+services, indicators, objectives, targets, queries, labels and alert policies are discarded.
+Malformed/non-UTF-8, unsafe-path, unsupported-mode, oversized and excess declarations remain
+explicit issues; symlinks are never followed and dependency-owned declarations are ignored before
+the cap.
+
+`hunch landscape review` now exposes the exact revision, complete content-addressed candidate set,
+discovery hash and bounded issues without creating `.hunch` graph state. `hunch landscape adopt`
+requires that reviewed discovery hash, an explicit reviewer label, either the full set or exact
+candidate hashes, and acknowledgement when issues exist. Adoption re-runs discovery at the named
+revision, verifies every candidate and envelope hash, refuses unknown/duplicate selections,
+requires both endpoint resources for a selected relationship, and fails rather than overwriting a
+different curated graph record. Accepted records shed candidate authority, become current and
+human-confirmed, retain the candidate/discovery/review identities in bounded metadata, flow through
+the ordinary public/private/shared capture boundary, and return a native
+`hunch.landscape-adoption-receipt/1`. Retrying the same exact fragment reuses its accepted records
+instead of duplicating them.
+
+HLG-2 is therefore complete at the bounded repository-discovery and explicit-adoption boundary.
+
+HLG-3 is complete at the reviewed-delivery boundary. `assembleContext` now selects a deterministic,
+target-oriented fragment from current records whose discovery candidate and adoption review
+identities are intact. Exact/task matches, the repository root and one-hop reviewed neighbors are
+ranked under the bounded orientation cap. When a reviewed root exists, one resource slot is reserved
+for it so consumers can bind the fragment to a repository even under a crowded task match; the
+displaced resource remains explicit omission evidence. Candidate, unreviewed, stale and retired landscape
+records never acquire delivery authority through lexical relevance. The canonical envelope carries
+the selected resource and relationship records, selection and delivery receipts, review/discovery
+hashes, exact source revisions, omission evidence and one content-addressed fragment hash. CLI,
+MCP and edit-time injection all use that same envelope; MCP advertises the structured contract and
+the served ledger records the exact resource/relationship headlines that reached the caller.
+The exported validator independently proves the receipt list is a unique exact mapping to those
+records, rather than accepting matching list counts alone.
+Historical `as_of` requests deliberately withhold the current landscape until resource records have
+valid-time semantics, preventing current topology from leaking into a historical response.
+
+The focused HLG-3 acceptance covers deterministic replay, candidate/stale exclusion, tamper
+detection, endpoint withholding, tiny hard budgets, structured MCP schema publication, a
+plain-English task path and served-ledger evidence.
+
+HLG-4's initial drift-intake boundary is complete. A strict,
+content-addressed `hunch.landscape-drift-candidate/1` accepts only credential-free evidence of one
+observed repository identity mismatch. Its deterministic conversion produces only an open,
+medium-severity advisory Finding with exact candidate provenance. It cannot create or rewrite a
+resource, relationship, currentness claim, constraint, decision or policy rule. ORC remains the
+authority for the actual provider observation and Hunch Memory remains only the separately
+authorized store transport.
+ORC's aligned execution snapshot
 explicitly rejects `hunch.landscape-candidate/1` and requires an accepted, current fragment plus its
 native receipt before execution authority can be frozen.
 
