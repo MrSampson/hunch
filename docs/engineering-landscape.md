@@ -238,6 +238,11 @@ ignored. Commands, arguments, environment values, package arguments and credenti
 never appear in the candidate fragment. The extractor is pure and never writes `.hunch` graph
 authority.
 
+Repository-wide API, migration, delivery and operations classifiers ignore declarations below
+committed `node_modules/`, `vendor/`, `third_party/` and `third-party/` segments before applying
+their caps. Dependency-owned files describe the dependency rather than the first-party repository;
+they cannot manufacture candidates or crowd first-party evidence out of a bounded fragment.
+
 Within the bounded workspace set, unique package identities now contribute exact internal
 package-to-package `depends_on` candidates from `dependencies`, `devDependencies`,
 `peerDependencies` and `optionalDependencies`. Multiple fields for the same pair merge as evidence;
