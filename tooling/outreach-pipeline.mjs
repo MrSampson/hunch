@@ -35,6 +35,11 @@ function text(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function lowerInitial(value) {
+  const valueText = text(value);
+  return valueText ? `${valueText[0].toLowerCase()}${valueText.slice(1)}` : "";
+}
+
 function validHttpsUrl(value) {
   try {
     const url = new URL(value);
@@ -312,16 +317,21 @@ export function recordFollowUp(lead, date = day()) {
   return next;
 }
 
-export function draftForLead(lead, { followUp = false, today = day() } = {}) {
+export function draftForLead(lead, { followUp = false, preview = false, today = day() } = {}) {
   const errors = validateLead(lead);
   if (errors.length) throw new Error(errors.join("; "));
+  if (followUp && preview) throw new Error("--preview and --follow-up are mutually exclusive");
   if (followUp) {
     if (lead.status !== "contacted" || (lead.follow_ups ?? 0) >= 1) {
       throw new Error("a follow-up requires contacted status and no prior follow-up");
     }
     if (!lead.follow_up_at || lead.follow_up_at > today) throw new Error("the follow-up is not due yet");
+  } else if (preview) {
+    if (lead.status !== "qualified" && lead.status !== "approved") {
+      throw new Error("a preview requires qualified or approved status");
+    }
   } else if (lead.status !== "approved") {
-    throw new Error("a first-touch draft requires explicit approved status");
+    throw new Error("a first-touch draft requires explicit approved status; use --preview to review a qualified lead");
   }
   const name = text(lead.contact?.name) || `${lead.project} maintainer`;
   const proof = PROOFS[lead.proof_id];
@@ -336,14 +346,33 @@ export function draftForLead(lead, { followUp = false, today = day() } = {}) {
       "— Dave",
     ].join("\n");
   }
-  const observation = `I noticed ${lead.observed_signal} (${lead.source_url})`;
+  const observation = `Your public agent instructions show that ${lowerInitial(lead.observed_signal)} (${lead.source_url})`;
+  const hypothesis = `The concrete question I would like to test is whether ${lowerInitial(lead.problem_hypothesis)}`;
   const story = "I built Hunch because coding assistants can read the current code but usually lose why a team chose a design, rejected an alternative, or kept a strange-looking bug fix. Hunch keeps that engineering history with the project and gives the relevant reason back before an edit.";
   const measured = `${proof.short} ${proof.caveat} (${proof.url})`;
   const paragraphs = variantFor(lead) === "proof" ? [observation, measured, story] : [observation, story, measured];
+  if (lead.contact.permission === "community_permission") {
+    return [
+      ...(preview ? ["[UNAPPROVED PREVIEW — DO NOT SEND]", ""] : []),
+      "Title: Could Hunch make your project decisions easier for coding agents to use?",
+      "",
+      observation,
+      "",
+      hypothesis,
+      "",
+      ...paragraphs.slice(1).flatMap((paragraph) => [paragraph, ""]),
+      `Rather than asking anyone to install it blind, I would like to run a free 30-minute memory audit on ${lead.project} using only its public history. I would post the actual receipt and its limits here. Would that be useful?`,
+      "",
+      "— Dave",
+    ].join("\n");
+  }
   return [
+    ...(preview ? ["[UNAPPROVED PREVIEW — DO NOT SEND]", ""] : []),
     `Hi ${name},`,
     "",
     ...paragraphs.flatMap((paragraph) => [paragraph, ""]),
+    hypothesis,
+    "",
     `Would you be open to a free 30-minute memory audit on ${lead.project}? I would use only its public history, send you the receipt, and stop there if it is not useful.`,
     "",
     "— Dave",
@@ -372,6 +401,26 @@ export function outreachReport(leads) {
   };
 }
 
+export function previewQueueDocument(leads) {
+  const qualified = buildQueue(leads).approval;
+  const sections = qualified.map((lead) => [
+    `## ${lead.project}`,
+    "",
+    `- Status: **unapproved — do not send**`,
+    `- Destination: ${lead.contact.destination}`,
+    `- Evidence: ${lead.source_url}`,
+    "",
+    draftForLead(lead, { preview: true }),
+  ].join("\n"));
+  return [
+    "# Hunch outreach previews",
+    "",
+    "These messages are research previews. Approve each lead explicitly before posting it.",
+    "",
+    ...sections.flatMap((section) => [section, ""]),
+  ].join("\n");
+}
+
 function readStore(path) {
   return existsSync(path) ? parseLeads(readFileSync(path, "utf8")) : [];
 }
@@ -380,6 +429,13 @@ function writeStore(path, leads) {
   mkdirSync(dirname(path), { recursive: true });
   const temporary = `${path}.tmp-${process.pid}`;
   writeFileSync(temporary, serializeLeads(leads), { encoding: "utf8", mode: 0o600 });
+  renameSync(temporary, path);
+}
+
+function writePrivateText(path, source) {
+  mkdirSync(dirname(path), { recursive: true });
+  const temporary = `${path}.tmp-${process.pid}`;
+  writeFileSync(temporary, source, { encoding: "utf8", mode: 0o600 });
   renameSync(temporary, path);
 }
 
@@ -419,7 +475,8 @@ function usage() {
     "  npm run outreach -- review [--limit 10] [--file PATH]",
     "  npm run outreach -- qualify LEAD_ID --signal TEXT --problem TEXT --name NAME --channel CHANNEL --destination DESTINATION --permission PERMISSION --segment SEGMENT [--proof PROOF_ID]",
     "  npm run outreach -- approve LEAD_ID [--date YYYY-MM-DD] [--file PATH]",
-    "  npm run outreach -- draft LEAD_ID [--follow-up] [--file PATH]",
+    "  npm run outreach -- draft LEAD_ID [--preview|--follow-up] [--file PATH]",
+    "  npm run outreach -- preview-queue [--output PATH] [--file PATH]",
     "  npm run outreach -- record LEAD_ID --status contacted|replied|pilot|activated|not_fit|do_not_contact [--date YYYY-MM-DD] [--note TEXT] [--file PATH]",
     "  npm run outreach -- record-follow-up LEAD_ID [--date YYYY-MM-DD] [--file PATH]",
     "  npm run outreach -- report [--file PATH]",
@@ -515,7 +572,17 @@ export function runCli(argv) {
   if (command === "draft") {
     const lead = leads.find((candidate) => candidate.id === id);
     if (!lead) throw new Error(`unknown lead: ${id ?? "(missing)"}`);
-    process.stdout.write(`${draftForLead(lead, { followUp: args.includes("--follow-up") })}\n`);
+    process.stdout.write(`${draftForLead(lead, {
+      followUp: args.includes("--follow-up"),
+      preview: args.includes("--preview"),
+    })}\n`);
+    return 0;
+  }
+  if (command === "preview-queue") {
+    const output = resolve(option(args, "--output", resolve(dirname(store), "previews.md")));
+    if (output === store) throw new Error("preview output cannot overwrite the lead store");
+    writePrivateText(output, previewQueueDocument(leads));
+    process.stdout.write(`${JSON.stringify({ previews: buildQueue(leads).approval.length, output }, null, 2)}\n`);
     return 0;
   }
   if (command === "record") {

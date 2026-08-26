@@ -91,6 +91,8 @@ npm run outreach -- qualify acme-payments \
   --name 'Project maintainer' --channel email \
   --destination maintainers@example.invalid --permission published_project_contact \
   --segment platform_team
+npm run outreach -- draft acme-payments --preview
+npm run outreach -- preview-queue
 npm run outreach -- approve acme-payments
 npm run outreach -- draft acme-payments
 npm run outreach -- record acme-payments --status contacted
@@ -101,7 +103,10 @@ Use `--file PATH` to work with another private store. `queue` separates research
 touch, due follow-up and active conversations. `draft LEAD_ID --follow-up` is permitted only for a
 contacted lead with zero prior follow-ups.
 
-`draft` never changes state. Qualification, approval, recording a sent message and recording a reply
+`draft --preview` prints a visible **UNAPPROVED — DO NOT SEND** review copy for a qualified lead.
+`preview-queue` writes all current review copies to the private `.outreach/previews.md` file.
+An ordinary `draft` still refuses to run until approval. Drafting never changes state.
+Qualification, approval, recording a sent message and recording a reply
 are separate explicit commands because each is evidence supplied by the operator, not a fact inferred
 from generating text. Record one due follow-up with `record-follow-up`; a second is rejected.
 
