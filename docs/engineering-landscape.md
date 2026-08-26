@@ -229,7 +229,9 @@ retaining credentials or host paths, and returns content-addressed `hunch.landsc
 resources/relationships. Evidence names the exact file/field/revision/content hash. Working-tree
 bytes cannot alter an exact-revision result; repository-identity conflicts remain explicit and leave
 packages unbound. One exact tree snapshot is shared across every source classifier; source families
-do not repeat repository tree walks or observe different path sets. It reads a fixed, bounded set of
+do not repeat repository tree walks or observe different path sets. Selected object sizes are
+resolved in one batch, then only bodies within the per-file byte limit are hydrated through a
+second bounded batch; oversized objects are never read. It reads a fixed, bounded set of
 project-local MCP JSON/JSONC configurations, canonical Codex TOML tables and official MCP registry
 `server.json` manifests. Client declarations
 produce repository dependencies; registry manifests identify repository-provided servers. Identical
