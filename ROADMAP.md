@@ -65,7 +65,7 @@ facts that govern them.
    SQLite projections are covered by the focused landscape fixture.
 2. **HLG-2 — deterministic repository fragment discovery. IN PROGRESS (package/Git, committed MCP,
    CI/deployment, OpenAPI, AsyncAPI, protobuf, JSON Schema, Prisma, Flyway, Rails, Django, Laravel
-   and Alembic migration declaration slices landed through 2026-08-26).**
+   and Alembic migration plus CODEOWNERS ownership declaration slices landed through 2026-08-26).**
    `discoverRepositoryLandscape` now reads one exact Git revision and emits bounded,
    content-addressed candidate resources/relationships for root/workspace packages, canonical
    credential-free Git remotes, supported MCP declarations, major committed CI formats,
@@ -156,7 +156,15 @@ Ruby, Python or PHP bodies or infer dependencies, revision edges, a target datab
 status or schema effect.
 Empty, malformed-mode, oversized and
 cap-overflow declarations remain explicit issues. The immediate next HLG-2 handoff is another
-migration contract family under the same bounded envelope.
+source family under the same bounded envelope or an explicitly designed candidate-review/adoption
+seam.
+
+The first ownership slice follows GitHub's CODEOWNERS location precedence and reads only the last
+repository-wide `*` rule. It emits credential-free `team_ref` candidates and repository `owned_by`
+relationships only for `@organization/team` owners. Path-specific rules, individual handles,
+emails, comments and the declaration body are discarded. Unsupported modes, invalid UTF-8,
+oversized files and team overflow remain reviewable issues; a higher-precedence unsafe file never
+falls through to a lower-precedence declaration.
 HLG-3 begins only after candidate review/adoption preserves identity and provenance through the
 existing delivery receipt. Hunch still does not claim live runtime health, cross-repository
 traversal or a new CLI/MCP surface. HLG-1 is closed by accepted decision `dec_a6d088f409`; the live

@@ -278,7 +278,16 @@ revision and content hash; SQL/Ruby/Python/PHP bodies, inferred tables, dependen
 and schema effects never enter the fragment. Empty, oversized, unsupported-mode and excess
 declarations remain explicit reviewable issues.
 
-HLG-2 next adds another migration contract family under the same candidate/issue envelope. HLG-3
+For GitHub repositories, the precedence-selected `.github/CODEOWNERS`, root `CODEOWNERS` or
+`docs/CODEOWNERS` file can now contribute repository-wide team ownership candidates. Discovery
+uses only the last global `*` rule, normalizes and bounds `@organization/team` references, and
+emits `team_ref` resources with repository `owned_by` relationships. It ignores path-specific
+rules, individual handles and email owners, and retains no comments or declaration body. Invalid
+UTF-8, oversized files, unsupported Git modes and excess teams are explicit issues; an unsafe
+higher-precedence file cannot silently fall through to a lower-precedence one.
+
+HLG-2 next adds another bounded source family or an explicitly designed candidate-review/adoption
+seam. HLG-3
 then projects only reviewed graph records through the existing
 delivery envelope; HLG-4 adds external-reference drift intake. ORC's aligned execution snapshot
 explicitly rejects `hunch.landscape-candidate/1` and requires an accepted, current fragment plus its
