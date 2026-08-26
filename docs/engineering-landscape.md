@@ -232,6 +232,8 @@ packages unbound. One exact tree snapshot is shared across every source classifi
 do not repeat repository tree walks or observe different path sets. That same snapshot carries exact
 blob sizes, so source families launch no separate size-check processes; only bodies within each
 per-file byte limit are hydrated through bounded batches, and oversized objects are never read. It
+also binds exact revision and commit time in one replacement-isolated commit snapshot instead of
+launching separate repository, revision and timestamp probes. It
 reads a fixed, bounded set of
 project-local MCP JSON/JSONC configurations, canonical Codex TOML tables and official MCP registry
 `server.json` manifests. Client declarations
