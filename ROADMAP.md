@@ -66,14 +66,14 @@ facts that govern them.
 2. **HLG-2 — deterministic repository fragment discovery. IN PROGRESS (package/Git/internal
    workspace dependencies/submodules, committed MCP,
    CI/deployment, OpenAPI, AsyncAPI, protobuf, JSON Schema, Prisma, Flyway, Rails, Django, Laravel
-   and Alembic migration, CODEOWNERS ownership, committed runbook and JSON dashboard declaration slices landed through 2026-08-26).**
+   and Alembic migration, CODEOWNERS ownership, committed runbook, JSON dashboard and OpenSLO v1 declaration slices landed through 2026-08-26).**
    `discoverRepositoryLandscape` now reads one exact Git revision and emits bounded,
    content-addressed candidate resources/relationships for root/workspace packages, canonical
    credential-free Git remotes, supported MCP declarations, major committed CI formats,
    Dockerfile build artifacts, Docker Compose targets, structured Kubernetes workloads and systemd
    service units. Evidence retains only safe file/field/revision/content identity; declaration
    bodies, commands, images, environment values and credentials never enter the fragment.
-   Additional SLO and other explicitly bounded declaration sources remain.
+   Additional explicitly bounded declaration sources remain.
 3. **HLG-3 — bounded landscape delivery.** Return task-relevant resources, relationships and linked
    Hunch reasoning through the existing ranking, budget, currentness and native receipt envelope;
    add an explicit CLI/MCP view only as a projection over that machinery. Freeze the additive
@@ -192,6 +192,15 @@ path-stable `dashboard` candidates with repository `contains` relationships. Evi
 the safe path, exact revision and content hash; titles, UIDs, panels, queries, variables, datasource
 names, links and the complete JSON body are discarded. Invalid/non-object/non-UTF-8, unsafe-path,
 unsupported-mode, oversized and excess declarations remain issues, and symlinks are never followed.
+
+The SLO slice recognizes single-document OpenSLO v1 `kind: SLO` YAML/JSON under explicit `slo/`,
+`slos/` or `.openslo/` directories plus conventionally named SLO files. It emits path-stable `slo`
+candidates with repository `contains` relationships after checking the required OpenSLO header and
+`metadata.name`. Evidence retains only the safe path, `openslo/v1` contract identity, exact revision
+and content hash; names, services, objectives, indicators, targets, queries, labels and alert policy
+bodies are discarded. Invalid/non-UTF-8, unsafe-path, unsupported-mode, oversized and excess
+declarations remain issues, dependency-owned files are ignored before the cap, and symlinks are
+never followed.
 
 HLG-3 begins only after candidate review/adoption preserves identity and provenance through the
 existing delivery receipt. Hunch still does not claim live runtime health, cross-repository

@@ -323,6 +323,16 @@ links and complete JSON bodies never enter the fragment. Invalid/non-object/non-
 unsupported-mode, oversized and excess declarations are explicit issues; symlinks are never
 followed and dependency-owned dashboard directories are ignored before the cap.
 
+Single-document OpenSLO v1 YAML/JSON under explicit `slo/`, `slos/` or `.openslo/` directories, or
+with conventional SLO filenames, contributes path-stable `slo` candidates after the required
+`apiVersion: openslo/v1`, `kind: SLO` and `metadata.name` structure is confirmed. Repository
+relationships remain `contains`; a declaration does not prove that a target is measured, met or
+enforced. Evidence retains only the path, contract version, exact revision and content hash. Names,
+services, indicators, objectives, targets, queries, labels and alert policies are discarded.
+Malformed/non-UTF-8, unsafe-path, unsupported-mode, oversized and excess declarations remain
+explicit issues; symlinks are never followed and dependency-owned declarations are ignored before
+the cap.
+
 HLG-2 next adds another bounded source family or an explicitly designed candidate-review/adoption
 seam. HLG-3
 then projects only reviewed graph records through the existing
