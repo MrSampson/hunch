@@ -66,14 +66,14 @@ facts that govern them.
 2. **HLG-2 — deterministic repository fragment discovery. IN PROGRESS (package/Git/internal
    workspace dependencies/submodules, committed MCP,
    CI/deployment, OpenAPI, AsyncAPI, protobuf, JSON Schema, Prisma, Flyway, Rails, Django, Laravel
-   and Alembic migration plus CODEOWNERS ownership declaration slices landed through 2026-08-26).**
+   and Alembic migration, CODEOWNERS ownership and committed runbook declaration slices landed through 2026-08-26).**
    `discoverRepositoryLandscape` now reads one exact Git revision and emits bounded,
    content-addressed candidate resources/relationships for root/workspace packages, canonical
    credential-free Git remotes, supported MCP declarations, major committed CI formats,
    Dockerfile build artifacts, Docker Compose targets, structured Kubernetes workloads and systemd
    service units. Evidence retains only safe file/field/revision/content identity; declaration
    bodies, commands, images, environment values and credentials never enter the fragment.
-   Additional API/event/schema/migration and ownership sources remain.
+   Additional dashboard/SLO and other explicitly bounded declaration sources remain.
 3. **HLG-3 — bounded landscape delivery.** Return task-relevant resources, relationships and linked
    Hunch reasoning through the existing ranking, budget, currentness and native receipt envelope;
    add an explicit CLI/MCP view only as a projection over that machinery. Freeze the additive
@@ -179,6 +179,14 @@ relationships only for `@organization/team` owners. Path-specific rules, individ
 emails, comments and the declaration body are discarded. Unsupported modes, invalid UTF-8,
 oversized files and team overflow remain reviewable issues; a higher-precedence unsafe file never
 falls through to a lower-precedence declaration.
+
+The first operations slice recognizes a root `RUNBOOK.md` plus Markdown/MDX files below explicit
+`runbook/` or `runbooks/` directories (excluding their README/index files). It emits path-stable
+`runbook` candidates and repository `contains` relationships while retaining only the path, exact
+revision and content hash. Runbook headings, procedures, incident details and credential-like body
+text never enter the fragment. Empty/non-UTF-8, unsafe-path, unsupported-mode, oversized and excess
+files remain explicit issues, and exact-revision discovery never follows a runbook symlink.
+
 HLG-3 begins only after candidate review/adoption preserves identity and provenance through the
 existing delivery receipt. Hunch still does not claim live runtime health, cross-repository
 traversal or a new CLI/MCP surface. HLG-1 is closed by accepted decision `dec_a6d088f409`; the live

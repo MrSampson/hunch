@@ -300,6 +300,13 @@ rules, individual handles and email owners, and retains no comments or declarati
 UTF-8, oversized files, unsupported Git modes and excess teams are explicit issues; an unsafe
 higher-precedence file cannot silently fall through to a lower-precedence one.
 
+Committed root `RUNBOOK.md` and Markdown/MDX files below explicit `runbook/` or `runbooks/`
+directories now contribute path-stable `runbook` candidates with repository `contains`
+relationships. README/index files are ignored. Evidence retains only the safe path, exact revision
+and content hash; headings, procedures, incident data and body text never enter the fragment.
+Empty/non-UTF-8, unsafe-path, unsupported-mode, oversized and excess declarations are explicit
+issues, and symlinks are never followed.
+
 HLG-2 next adds another bounded source family or an explicitly designed candidate-review/adoption
 seam. HLG-3
 then projects only reviewed graph records through the existing
