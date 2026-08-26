@@ -270,10 +270,11 @@ Committed `prisma/migrations/<id>/migration.sql` files, standard Flyway
 `db/migration/V<version>__<description>.sql`, `U...` and `R__...` files, and conventional Rails
 `db/migrate/<14-digit-version>_<name>.rb` and Django
 `<app>/migrations/<number>_<name>.py` and Laravel
-`database/migrations/<timestamp>_<name>.php` files now contribute
+`database/migrations/<timestamp>_<name>.php` plus default Alembic
+`alembic/versions/<revision>_<name>.py` files now contribute
 path/version-stable database-migration `artifact` candidates with repository `contains`
 relationships. Evidence keeps only the safe path, framework, migration type/version, exact
-revision and content hash; SQL/Ruby/Python/PHP bodies, inferred tables or dependencies, target database identity, execution state
+revision and content hash; SQL/Ruby/Python/PHP bodies, inferred tables, dependencies or revision edges, target database identity, execution state
 and schema effects never enter the fragment. Empty, oversized, unsupported-mode and excess
 declarations remain explicit reviewable issues.
 

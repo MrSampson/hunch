@@ -64,7 +64,8 @@ facts that govern them.
    lifecycle, credential-free locators, provenance/currentness, forward migration and rebuildable
    SQLite projections are covered by the focused landscape fixture.
 2. **HLG-2 — deterministic repository fragment discovery. IN PROGRESS (package/Git, committed MCP,
-   CI/deployment, OpenAPI, AsyncAPI, protobuf, JSON Schema, Prisma, Flyway and Rails migration declaration slices landed through 2026-08-26).**
+   CI/deployment, OpenAPI, AsyncAPI, protobuf, JSON Schema, Prisma, Flyway, Rails, Django, Laravel
+   and Alembic migration declaration slices landed through 2026-08-26).**
    `discoverRepositoryLandscape` now reads one exact Git revision and emits bounded,
    content-addressed candidate resources/relationships for root/workspace packages, canonical
    credential-free Git remotes, supported MCP declarations, major committed CI formats,
@@ -148,9 +149,11 @@ Protobuf detection requires one first-statement proto2/proto3 syntax header and 
 structure but does not claim compiler validity. The first migration slice recognizes only committed
 `prisma/migrations/<id>/migration.sql` conventions. The second recognizes Flyway's standard
 `db/migration/V<version>__<description>.sql`, undo `U...` and repeatable `R__...` filenames. The
-third recognizes conventional Rails `db/migrate/<14-digit-version>_<name>.rb` files. These families
-emit path/version-stable database-migration `artifact` candidates and never retain SQL text or infer
-a target database, execution status or schema effect; Rails Ruby bodies are equally discarded.
+third recognizes conventional Rails `db/migrate/<14-digit-version>_<name>.rb` files; Django,
+Laravel and Alembic add their strict default numbered/timestamped/revision-file conventions. These
+families emit path/version-stable database-migration `artifact` candidates and never retain SQL,
+Ruby, Python or PHP bodies or infer dependencies, revision edges, a target database, execution
+status or schema effect.
 Empty, malformed-mode, oversized and
 cap-overflow declarations remain explicit issues. The immediate next HLG-2 handoff is another
 migration contract family under the same bounded envelope.
@@ -159,7 +162,7 @@ existing delivery receipt. Hunch still does not claim live runtime health, cross
 traversal or a new CLI/MCP surface. HLG-1 is closed by accepted decision `dec_a6d088f409`; the live
 roadmap anchor is `roadmap.engineering-landscape-hlg-2` (`dec_9130451387`).
 
-## Current baseline — v1.18.0
+## Current baseline — v1.19.0
 
 - Architectural Conformance and decision-grounding are deterministic release gates.
 - CLI, MCP, and edit hooks share one currentness-checked, hard-budgeted delivery envelope.
