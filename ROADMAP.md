@@ -64,7 +64,7 @@ facts that govern them.
    lifecycle, credential-free locators, provenance/currentness, forward migration and rebuildable
    SQLite projections are covered by the focused landscape fixture.
 2. **HLG-2 — deterministic repository fragment discovery. IN PROGRESS (package/Git/internal
-   workspace dependencies, committed MCP,
+   workspace dependencies/submodules, committed MCP,
    CI/deployment, OpenAPI, AsyncAPI, protobuf, JSON Schema, Prisma, Flyway, Rails, Django, Laravel
    and Alembic migration plus CODEOWNERS ownership declaration slices landed through 2026-08-26).**
    `discoverRepositoryLandscape` now reads one exact Git revision and emits bounded,
@@ -120,6 +120,13 @@ package-to-package `depends_on` candidates for internal dependencies declared in
 `devDependencies`, `peerDependencies` or `optionalDependencies`. Duplicate package identities stay
 unresolved, malformed/self dependencies are issues, and the edge set is capped before candidate
 construction. Version specifiers and registry URLs never enter the fragment.
+
+Committed Git submodule discovery reads only a bounded ordinary `.gitmodules` blob at the exact
+revision and requires a matching `160000` gitlink. Credential-free network targets become scoped
+external `repository` candidates with root-repository `depends_on` relationships; repeated target
+repositories merge their path and gitlink evidence. Local/relative or unsupported URLs,
+self-references, duplicate/unsafe paths, missing gitlinks, malformed/oversized declarations and cap
+overflow remain issues. Raw URLs, subsection labels and credentials never enter the fragment.
 
 The committed MCP declaration slice now reads `.mcp.json`, Cursor, VS Code JSONC, Windsurf,
 Antigravity, plugin and canonical Codex TOML configurations plus official registry `server.json`

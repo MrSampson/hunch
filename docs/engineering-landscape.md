@@ -243,6 +243,13 @@ duplicate package names remain unresolved, malformed/self dependencies are issue
 relationship cap is applied before candidate construction. Dependency version specifiers and
 registry URLs are never retained.
 
+Committed Git submodules contribute scoped external `repository` candidates and root-repository
+`depends_on` relationships only when a bounded ordinary `.gitmodules` entry has a distinct
+credential-free network identity and a matching exact-revision `160000` gitlink. Repeated target
+repositories merge declaration-path and gitlink evidence. Local/relative or unsupported URLs,
+self-references, duplicate/unsafe paths, missing gitlinks, malformed/oversized declarations and cap
+overflow stay reviewable issues. Raw URLs, subsection labels and credentials are discarded.
+
 Committed GitHub Actions, GitLab CI, CircleCI, Buildkite and root Jenkins declarations now produce
 path-derived `pipeline` candidates. Dockerfiles produce path-derived container `artifact`
 candidates, and canonical Compose files produce `deployment_target` candidates. Repository edges
