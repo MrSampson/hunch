@@ -228,8 +228,10 @@ package manifests, canonicalizes configured and manifest-declared repository ide
 retaining credentials or host paths, and returns content-addressed `hunch.landscape-candidate/1`
 resources/relationships. Evidence names the exact file/field/revision/content hash. Working-tree
 bytes cannot alter an exact-revision result; repository-identity conflicts remain explicit and leave
-packages unbound. It reads a fixed, bounded set of project-local MCP JSON/JSONC configurations,
-canonical Codex TOML tables and official MCP registry `server.json` manifests. Client declarations
+packages unbound. One exact tree snapshot is shared across every source classifier; source families
+do not repeat repository tree walks or observe different path sets. It reads a fixed, bounded set of
+project-local MCP JSON/JSONC configurations, canonical Codex TOML tables and official MCP registry
+`server.json` manifests. Client declarations
 produce repository dependencies; registry manifests identify repository-provided servers. Identical
 descriptors merge and conflicting identities remain issues. Unrelated `server.json` files are
 ignored. Commands, arguments, environment values, package arguments and credential-bearing URLs
