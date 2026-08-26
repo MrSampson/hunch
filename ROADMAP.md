@@ -63,7 +63,8 @@ facts that govern them.
    kind-qualified resource IDs and directional relationship IDs now extend the existing JSON graph;
    lifecycle, credential-free locators, provenance/currentness, forward migration and rebuildable
    SQLite projections are covered by the focused landscape fixture.
-2. **HLG-2 — deterministic repository fragment discovery. IN PROGRESS (package/Git, committed MCP,
+2. **HLG-2 — deterministic repository fragment discovery. IN PROGRESS (package/Git/internal
+   workspace dependencies, committed MCP,
    CI/deployment, OpenAPI, AsyncAPI, protobuf, JSON Schema, Prisma, Flyway, Rails, Django, Laravel
    and Alembic migration plus CODEOWNERS ownership declaration slices landed through 2026-08-26).**
    `discoverRepositoryLandscape` now reads one exact Git revision and emits bounded,
@@ -113,6 +114,12 @@ only an exact commit, bounds manifests, ignores non-workspace packages, canonica
 identity without retaining credentials or local paths, and returns explicit
 `hunch.landscape-candidate/1` wrappers. Conflicting repository declarations leave package candidates
 unbound; neither discovery nor ORC may treat them as accepted graph authority.
+
+Package discovery also resolves unique package names across the bounded workspace set and emits
+package-to-package `depends_on` candidates for internal dependencies declared in `dependencies`,
+`devDependencies`, `peerDependencies` or `optionalDependencies`. Duplicate package identities stay
+unresolved, malformed/self dependencies are issues, and the edge set is capped before candidate
+construction. Version specifiers and registry URLs never enter the fragment.
 
 The committed MCP declaration slice now reads `.mcp.json`, Cursor, VS Code JSONC, Windsurf,
 Antigravity, plugin and canonical Codex TOML configurations plus official registry `server.json`

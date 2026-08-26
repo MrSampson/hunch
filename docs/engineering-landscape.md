@@ -236,6 +236,13 @@ ignored. Commands, arguments, environment values, package arguments and credenti
 never appear in the candidate fragment. The extractor is pure and never writes `.hunch` graph
 authority.
 
+Within the bounded workspace set, unique package identities now contribute exact internal
+package-to-package `depends_on` candidates from `dependencies`, `devDependencies`,
+`peerDependencies` and `optionalDependencies`. Multiple fields for the same pair merge as evidence;
+duplicate package names remain unresolved, malformed/self dependencies are issues, and the
+relationship cap is applied before candidate construction. Dependency version specifiers and
+registry URLs are never retained.
+
 Committed GitHub Actions, GitLab CI, CircleCI, Buildkite and root Jenkins declarations now produce
 path-derived `pipeline` candidates. Dockerfiles produce path-derived container `artifact`
 candidates, and canonical Compose files produce `deployment_target` candidates. Repository edges
