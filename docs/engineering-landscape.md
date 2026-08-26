@@ -314,6 +314,13 @@ and content hash; headings, procedures, incident data and body text never enter 
 Empty/non-UTF-8, unsafe-path, unsupported-mode, oversized and excess declarations are explicit
 issues, and symlinks are never followed.
 
+Committed JSON objects below explicit `dashboards/` directories contribute path-stable `dashboard`
+candidates with repository `contains` relationships. Evidence retains only the safe path, exact
+revision and content hash. Dashboard titles, UIDs, panels, queries, variables, datasource names,
+links and complete JSON bodies never enter the fragment. Invalid/non-object/non-UTF-8, unsafe-path,
+unsupported-mode, oversized and excess declarations are explicit issues; symlinks are never
+followed and dependency-owned dashboard directories are ignored before the cap.
+
 HLG-2 next adds another bounded source family or an explicitly designed candidate-review/adoption
 seam. HLG-3
 then projects only reviewed graph records through the existing
