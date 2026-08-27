@@ -39,9 +39,10 @@ import {
   writeSynthesisPreference,
   type SynthPreference,
 } from "../synthesis/provider.js";
-import { isGitRepo, isGitRepoRoot, sameGitPublication, sameRemoteUrl, canonicalRemoteUrl, repositoryUsesRemote, headSha, isolatedHeadSha, logSince, lastChangeDate, stagedFiles, workingFiles, commitFiles, asOfDate, stagedDiff, workingDiff, commitDiff, rangeFiles, rangeDiff, rangeSubjects, revExists, revParse, commitAndPushHunch, pullHunchStatus, syncExistingHunch, gitUntrackCached, gitCommonDir, hooksDir, isLinkedWorktree, mainWorktreeRoot, gitMemoryLog, memoryMoveDiff, revertMemoryMove, pushCurrentBranch, commitChanges, type HunchPullStatus } from "../extractors/git.js";
+import { isGitRepo, isGitRepoRoot, sameGitPublication, sameRemoteUrl, canonicalRemoteUrl, repositoryUsesRemote, headSha, isolatedHeadSha, logSince, lastChangeDate, stagedFiles, workingFiles, commitFiles, asOfDate, stagedDiff, workingDiff, commitDiff, rangeFiles, rangeDiff, rangeSubjects, revExists, revParse, commitAndPushHunch, pullHunchStatus, syncExistingHunch, gitUntrackCached, gitCommonDir, hooksDir, isLinkedWorktree, mainWorktreeRoot, gitMemoryLog, memoryMoveDiff, revertMemoryMove, pushCurrentBranch, commitChanges, isAncestor, mergeRangeChanges, type HunchPullStatus } from "../extractors/git.js";
 import { parseMemoryLog, type MemoryMove } from "../core/memorylog.js";
 import { renamesOf, planRepair, repairDecision, repairConstraint, type RepairPlan } from "../core/repair.js";
+import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit } from "../core/commitrepair.js";
 import { planPolicyRepair, repairPolicySpec, type PolicyBindingRewrite } from "../constitution/repairPolicies.js";
 import { writeTeamConfig, ensureTeamOverlay, readTeamConfig, safeGitUrl, safeTeamRef, overlayMatchesTeamRemote, advertisedTeamRemoteContract, boundedTeamGitEnv, cloneValidatedTeamOverlay, explicitTeamRemoteContract, teamRemoteContract } from "../integrations/team.js";
 import { runbookId, decisionId } from "../core/ids.js";
@@ -50,7 +51,7 @@ import type { Runbook } from "../core/types.js";
 import { extractInlineIntent } from "../extractors/comments.js";
 import { renderText, renderMarkdown, renderSarif, renderImpact, reportFailsStrict, type CheckReport, type SarifExtras } from "../core/checkreport.js";
 import { partitionReview, isReviewDraft, READY_MIN_GROUNDED, type ReviewItem } from "../core/reviewqueue.js";
-import { installPostCommitHook, installPreCommitHook } from "../integrations/hooks.js";
+import { installPostCommitHook, installPreCommitHook, installPostMergeHook } from "../integrations/hooks.js";
 import { ensureSharedOverlayPointer } from "../integrations/worktree.js";
 import { flushCapture, flushMemoryHome, flushMemoryHomes, pinSharedRemote, sharedRemoteFor, type MemoryHome } from "../integrations/sync.js";
 import { installMergeDriver } from "../integrations/mergeDriver.js";
@@ -292,6 +293,8 @@ program
       const syncToOverlay = !!(opts.privateSync || opts.sharedSync);
       const h = installPostCommitHook(root, inv.shell, { private: syncToOverlay, commit: opts.autoCommit, localOnly: syncToOverlay });
       console.log(`  ✓ post-commit hook ${h.action} (learning loop)${syncToOverlay ? " — syncs to the shared overlay" : ""}${opts.autoCommit ? " — auto-commit on" : ""}`);
+      const pm = installPostMergeHook(root, inv.shell);
+      console.log(`  ✓ post-merge hook ${pm.action} (squash-merge provenance repair)`);
       const m = installMergeDriver(root, inv.shell);
       console.log(`  ✓ team merge driver ${m.action}`);
       // Auto-install the pre-commit guard by default (advisory: flags invariants
@@ -1117,6 +1120,8 @@ function configureOverlay(dir: string | undefined, opts: OverlaySetupOpts, mode:
     freshSetup?.markHookWrite();
     const h = installPostCommitHook(root, inv.shell, { private: true, commit: opts.autoCommit, localOnly: mode === "private" });
     hookNote = `  ✓ post-commit hook ${h.action} — captured decisions route here${opts.autoCommit ? " (auto-commit+push on)" : ""}\n`;
+    const pm = installPostMergeHook(root, inv.shell);
+    hookNote += `  ✓ post-merge hook ${pm.action} (squash-merge provenance repair)\n`;
   }
 
   // 5) one-time migration: MOVE existing public memory INTO the overlay, then make
@@ -4602,6 +4607,74 @@ program
       for (const r of res.policyRewrites) console.log(`  ${r.id}  ${r.field}: ${r.from} → ${r.to}`);
       if (res.policyRewrites.length && res.applied) console.log(dim("\nRepaired policies need a fresh proof — they ask via `hunch escalations`."));
       if (!res.applied) console.log(dim("\nDry run — nothing changed. Re-run with --apply."));
+    } finally {
+      store.close();
+    }
+  });
+
+// ---- repair-provenance (squash-merge commit provenance repair) ------------
+program
+  .command("repair-provenance")
+  .description("Self-repair: rewrite a decision's commit provenance after its commits were squash-merged away, matched by exact related_files overlap against the newly merged commit range — zero guessing beyond that. Dry-run unless --apply; the post-merge hook applies this automatically in the background.")
+  .option("--apply", "rewrite provenance (auto-commits each touched store as a `repair` move)")
+  .option("--from-hook", "invoked by the git post-merge hook")
+  .option("--quiet", "minimal output")
+  .option("--range <old..new>", "commit range to scan for replacement commits (default: ORIG_HEAD..HEAD)")
+  .action((opts: { apply?: boolean; fromHook?: boolean; quiet?: boolean; range?: string }) => {
+    const { store, root } = storeFor();
+    try {
+      if (!isGitRepo(root)) { if (!opts.fromHook) fail("repair-provenance needs a git repo."); return; }
+
+      let oldRef = "ORIG_HEAD";
+      let newRef = "HEAD";
+      if (opts.range) {
+        const parts = opts.range.split("..");
+        if (parts.length !== 2 || !parts[0] || !parts[1]) { fail('--range must look like "old..new"'); return; }
+        [oldRef, newRef] = parts as [string, string];
+      }
+      if (!revExists(oldRef, root) || !revExists(newRef, root)) {
+        if (!opts.fromHook) fail(`range "${oldRef}..${newRef}" does not resolve in this repository`);
+        return;
+      }
+
+      const candidates = mergeRangeChanges(oldRef, newRef, root);
+      if (!candidates.length) {
+        if (!opts.quiet) console.log("✓ Nothing to repair — the range contains no new commits.");
+        return;
+      }
+
+      const orphaned = orphanedCommitDecisions(store.recs("decisions"), (sha) => isAncestor(sha, newRef, root));
+      const plan = planCommitRepair(orphaned, candidates);
+      if (!plan.rewrites.length) {
+        if (!opts.quiet) console.log("✓ Nothing to repair — no orphaned commit reference matched the merged range unambiguously.");
+        return;
+      }
+
+      if (!opts.apply) {
+        if (!opts.quiet) {
+          console.log(`Would repair ${plan.rewrites.length} commit reference(s):`);
+          for (const r of plan.rewrites) console.log(`  ${r.id}  ${r.from} → ${r.to}`);
+          console.log(dim("\nDry run — nothing changed. Re-run with --apply."));
+        }
+        return;
+      }
+
+      const touchedHomes = new Set<MemoryHome>();
+      for (const d of store.recs("decisions")) {
+        const healed = repairDecisionCommit(d, plan);
+        if (healed === d) continue;
+        const home = decisionMemoryHome(store, d.id);
+        store.putWhereItLives("decisions", healed);
+        touchedHomes.add(home);
+      }
+      store.reindex();
+      pumpMemoryHomes(store, root, touchedHomes, `hunch: repair ${plan.rewrites.length} commit reference(s) after squash-merge (${oldRef}..${newRef})`);
+      if (!opts.quiet) {
+        console.log(`✓ Repaired ${plan.rewrites.length} commit reference(s):`);
+        for (const r of plan.rewrites) console.log(`  ${r.id}  ${r.from} → ${r.to}`);
+      }
+    } catch (err) {
+      if (!opts.fromHook) throw err;
     } finally {
       store.close();
     }
