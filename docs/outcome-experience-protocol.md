@@ -125,15 +125,22 @@ replay support appropriate to the claim.
 OEL-0 through OEL-3 are the first valuable slice. Later ranking or policy changes must pass Hunch's
 normal deterministic evaluation and authority gates.
 
-The Hunch-owned usefulness contract is now implemented as
-`hunch.usefulness-observation/1`. One episode/receipt/record identity has one deterministic key;
+OEL-0 through OEL-3 are implemented across the service boundary. The Hunch-owned contract is
+`hunch.usefulness-observation/1`: one episode/receipt/record identity has one deterministic key, and
 different content under that key is a visible conflict. The seal binds the exact episode, current
 Hunch Memory receipt, graph/source revision, record revision/content hash and bounded external
-evidence references while excluding transcripts and provider output. Every observation has zero
-behavioral, ranking, promotion or authority effect. Only `contradicted` and `stale` can be converted
-into a new open advisory Finding, and that conversion still does not change trusted knowledge.
-Transport, store-scoped issuance lookup and idempotent usefulness persistence remain separate
-service work before OEL-3 is complete.
+evidence references while excluding transcripts and provider output.
+
+Hunch Memory now resolves the authenticated store, proves the named issuance, validates and
+idempotently retains the observation, and reports privacy-safe aggregate coverage without exposing
+episode, receipt, record or evidence identifiers. ORC derives observations only from eligible
+terminal outcomes and delivers them through the exact project connection. Missing connections,
+unbound stores and delivery failures remain explicit operational states.
+
+Every observation still has zero behavioral, ranking, promotion or authority effect. Only
+`contradicted` and `stale` can become new open advisory Findings, and that conversion does not change
+trusted knowledge. OEL-4 ranking and replay experiments remain gated on a meaningful aggregate
+coverage baseline and the normal deterministic evaluation and authority checks.
 
 ## Non-goals
 

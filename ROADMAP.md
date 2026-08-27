@@ -335,13 +335,16 @@ instead of being appended afterward. Each delivered record's receipt records its
 reason, provenance/currentness result, and estimated token cost; older local ledgers migrate
 additively without becoming a new source of truth.
 
+The first service loop is complete. Hunch Memory verifies the exact store-scoped issuance, validates
+and idempotently retains `hunch.usefulness-observation/1`, and exposes privacy-safe aggregate
+coverage. ORC derives feedback only from eligible terminal outcomes, preserves the exact receipt and
+record identities, and delivers it without granting ranking, promotion, policy or enforcement
+authority. Contradiction and staleness still create only open advisory findings.
+
 Still open: fused task-relevance ranking (FTS/vector/graph), patch/change IDs for squash merges,
-service intake/storage and measured retrieval use of the now-versioned receipt-bound usefulness
-signals, delivery profiles, transport preservation of the full delivery envelope through service
-integrations such as Hunch Memory, and the benchmark named above. The core
-`hunch.usefulness-observation/1` contract is content-addressed and conflict-visible; it can create
-only open advisory contradiction/staleness findings and has no ranking, promotion or enforcement
-authority.
+delivery profiles, measured retrieval experiments using the retained signals, and the benchmark
+named above. Aggregate coverage is the gate for those experiments: known, unknown, evidence-backed
+and per-signal counts must establish a meaningful baseline before usefulness can influence ranking.
 
 ## Later — compile into native agent surfaces
 
