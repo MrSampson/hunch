@@ -289,6 +289,26 @@ historical records remain historical. No closure gate remains for this audit ite
 The original failed audit remains the regression fixture. The signed final receipt, rather than a
 green unit suite or parser alone, closes this roadmap item.
 
+### Next validation — one real Infection issue or PR, reviewed blind
+
+The corpus and graph audit proves deterministic coverage; it does not prove that the resulting
+orientation saves a maintainer time on a real change. Before using Infection as an accuracy or
+adoption claim, ask an Infection maintainer to select one current issue or pull request and freeze
+the selection before seeing Hunch's result.
+
+For that exact target, publish a bounded review packet containing:
+
+1. the issue/PR identity, repository revision and changed-file set used for the run;
+2. Hunch's current ADR matches, dependency paths, blast radius and advisory inspection shortlist;
+3. the complete omissions and uncertainty statement, including unresolved dynamic dispatch;
+4. a timestamped hash of the packet created before maintainer feedback; and
+5. the maintainer's later assessment of useful hits, misses and false leads, kept separate from the
+   frozen Hunch output.
+
+Done means a maintainer can compare the blind packet with project knowledge without being asked to
+trust a demo. One successful case remains a pilot, not an accuracy percentage; a weak result stays
+published and becomes the next measured improvement target.
+
 ## Then — complete validated delivery
 
 1. Rank every delivered record by task relevance, recency, and trusted provenance.
