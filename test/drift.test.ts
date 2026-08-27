@@ -200,3 +200,21 @@ test("drift commit-unresolvable: skipped entirely outside a git repo (never a fa
   store.json.put("decisions", DEC({ id: "dec_x", commit: "deadbeef00deadbeef00deadbeef00deadbeef00" }) as never);
   assert.equal(computeDrift(store, root).findings.filter((f) => f.kind === "commit-unresolvable").length, 0);
 });
+
+test("drift commit-unresolvable: a rejected (never-adopted) decision is not flagged even though it isn't superseded", (t) => {
+  const { store, root, cleanup } = tempStore();
+  t.after(cleanup);
+  execFileSync("git", ["init", "-q"], { cwd: root });
+  execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: root });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: root });
+  writeFileSync(join(root, "a.txt"), "x\n");
+  execFileSync("git", ["add", "a.txt"], { cwd: root });
+  execFileSync("git", ["commit", "-qm", "init"], { cwd: root });
+
+  store.json.put("decisions", DEC({
+    id: "dec_rejected", status: "rejected", superseded_by: null,
+    commit: "deadbeef00deadbeef00deadbeef00deadbeef00",
+  }) as never);
+
+  assert.equal(computeDrift(store, root).findings.filter((f) => f.kind === "commit-unresolvable").length, 0);
+});

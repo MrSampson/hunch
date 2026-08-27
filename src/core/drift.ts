@@ -82,7 +82,10 @@ export function computeDrift(store: HunchStore, root: string): DriftReport {
       //    resolves at all (source branch gone + gc'd past recovery). The
       //    opportunistic post-merge repair (commitrepair.ts) is the fix path; this
       //    is purely the "nothing caught it" signal — deterministic, never auto-fixed.
-      if (d.commit && gitRepo && !revExists(d.commit, root)) {
+      //    Mirrors repair.ts:59's live-records-only rule: `inForce` alone doesn't
+      //    exclude a never-adopted "rejected" decision (superseded_by is null for
+      //    those too), so exclude it explicitly here.
+      if (d.commit && gitRepo && d.status !== "rejected" && !revExists(d.commit, root)) {
         findings.push({ kind: "commit-unresolvable", id: d.id, detail: `commit ${d.commit} no longer resolves in this repository — provenance may need manual repair` });
       }
     }
