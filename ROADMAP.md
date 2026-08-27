@@ -226,6 +226,8 @@ roadmap anchor is `roadmap.engineering-landscape-hlg-2` (`dec_9130451387`).
   content rather than file name.
 - The MADR bridge is bidirectional and shipped: `import-adr` populates the graph from an existing
   corpus deterministically; `export-adr` projects it back as standard MADR (Backstage-readable).
+  Imported live ADRs remain advisory until a human answers the inline, exact-hash approve/decline
+  question; unchanged re-imports preserve that answer and changed bytes require a fresh one.
 - Go joins TypeScript, JavaScript, and Python in the symbol/dependency graph (v1.15); YAML anchors,
   aliases, and chart-scoped Helm helper references join it in v1.18.
 - Retrieval ranks recorded intent above vocabulary-sharing code symbols — a bounded prior, never
@@ -264,6 +266,9 @@ Completed in the implementation milestone:
   superseded states, and resolves explicit ADR successors without treating issue `#1760` as one.
 - A machine-readable receipt binds every ADR to its pinned path, SHA-256, introduction commit,
   date, imported ID, lifecycle, successor and representative retrieval query.
+- Day-to-day review is chat-native: session orientation and `hunch_escalations` ask about one exact
+  imported ADR at a time, while the MCP write tool and CLI both reject stale hashes. Approval grants
+  human authority; decline stays advisory; silence does nothing.
 - PHP is a native `LanguageSpec`: namespaces, classes, interfaces, traits, enums, functions,
   methods, Composer PSR-4 identities, imports/includes, conservative calls and static type
   relationships enter the existing graph. Dynamic dispatch remains unresolved rather than guessed.
