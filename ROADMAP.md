@@ -336,8 +336,12 @@ reason, provenance/currentness result, and estimated token cost; older local led
 additively without becoming a new source of truth.
 
 Still open: fused task-relevance ranking (FTS/vector/graph), patch/change IDs for squash merges,
-usefulness signals beyond served/refreshed, delivery profiles, transport preservation of the full
-delivery envelope through service integrations such as Hunch Memory, and the benchmark named above.
+service intake/storage and measured retrieval use of the now-versioned receipt-bound usefulness
+signals, delivery profiles, transport preservation of the full delivery envelope through service
+integrations such as Hunch Memory, and the benchmark named above. The core
+`hunch.usefulness-observation/1` contract is content-addressed and conflict-visible; it can create
+only open advisory contradiction/staleness findings and has no ranking, promotion or enforcement
+authority.
 
 ## Later — compile into native agent surfaces
 
