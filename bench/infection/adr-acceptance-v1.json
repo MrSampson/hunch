@@ -195,8 +195,8 @@
     }
   ],
   "human_signoff": {
-    "status": "required",
-    "reviewer": null,
-    "signed_at": null
+    "status": "signed",
+    "reviewer": "human:David-Sheffer",
+    "signed_at": "2026-08-27T20:57:19Z"
   }
 }

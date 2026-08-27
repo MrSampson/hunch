@@ -278,16 +278,16 @@ Completed in the implementation milestone:
   correction-source scan. The `@final` probe remains a shortlist with exact-owner claims disabled;
   scanning the language is not presented as an accuracy result.
 
-Still required before the audit item is closed:
+The final deterministic rerun is now published in `bench/infection/audit-v1.json`. It reproduced the
+complete PHP graph, current-over-superseded retrieval order, structure/path/impact/shortlist probes,
+and exact Git-history bindings for all 12 PHP files changed by the pinned commit. The live CLI audit
+also caught and fixed a misleading template warning: `0000-template.md` was excluded correctly but
+was falsely described as malformed. A human reviewer then signed the complete 13-record corpus and
+approved all 10 live imported ADRs through their exact source and mapped-meaning hashes. The 3
+historical records remain historical. No closure gate remains for this audit item.
 
-1. A human reviewer must sign the 13-record ADR receipt; deterministic checks do not substitute for
-   corpus-level review.
-2. Rerun and publish the final Infection audit from the same pinned revision, including the ADR and
-   PHP receipts, the current-policy retrieval check, behavioral graph probes, and all remaining
-   limitations. Empty, lossy or ambiguous mappings remain blockers rather than inferred prose.
-
-The original failed audit remains the regression fixture. A green unit suite, a parser, or an
-unsigned successful import alone does not close this roadmap item.
+The original failed audit remains the regression fixture. The signed final receipt, rather than a
+green unit suite or parser alone, closes this roadmap item.
 
 ## Then — complete validated delivery
 
