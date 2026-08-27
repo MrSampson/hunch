@@ -110,3 +110,52 @@ export function installPreCommitHook(root: string, invocation: string, strict = 
   chmodSync(hookPath, 0o755);
   return { path: hookPath, action: "appended" };
 }
+
+const MERGE_MARK = "# >>> hunch post-merge >>>";
+const MERGE_END = "# <<< hunch post-merge <<<";
+
+function mergeBlock(invocation: string): string {
+  return [
+    MERGE_MARK,
+    'if [ -z "$HUNCH_MERGE_SYNC" ]; then',
+    "  export HUNCH_MERGE_SYNC=1",
+    `  ( ${invocation} repair-provenance --from-hook --quiet --apply >/dev/null 2>&1 || true ) &`,
+    "fi",
+    MERGE_END,
+  ].join("\n");
+}
+
+/** Install a post-merge hook that opportunistically repairs a decision's commit
+ *  provenance right after a squash-merged branch lands locally (including a
+ *  fast-forward from `git pull`) — while the original commits are still fully
+ *  intact and matchable. Same idempotent create/append/update-in-place logic as
+ *  installPostCommitHook; own env-var guard, since this hook's own repair
+ *  commit is a `git commit`, not a `git merge`, so it can't re-trigger itself
+ *  the way HUNCH_SYNC guards post-commit against its own commit. */
+export function installPostMergeHook(root: string, invocation: string): HookInstall {
+  const dir = hooksDir(root);
+  const abs = isAbsolute(dir) ? dir : join(root, dir);
+  mkdirSync(abs, { recursive: true });
+  const hookPath = join(abs, "post-merge");
+  const blk = mergeBlock(invocation);
+
+  if (!existsSync(hookPath)) {
+    writeFileSync(hookPath, `#!/bin/sh\n${blk}\n`);
+    chmodSync(hookPath, 0o755);
+    return { path: hookPath, action: "created" };
+  }
+
+  const cur = readFileSync(hookPath, "utf8");
+  if (cur.includes(MERGE_MARK)) {
+    const updated = cur.replace(new RegExp(`${escapeRe(MERGE_MARK)}[\\s\\S]*?${escapeRe(MERGE_END)}`), blk);
+    if (updated === cur) return { path: hookPath, action: "unchanged" };
+    writeFileSync(hookPath, updated);
+    chmodSync(hookPath, 0o755);
+    return { path: hookPath, action: "updated" };
+  }
+
+  const appended = cur.endsWith("\n") ? `${cur}${blk}\n` : `${cur}\n${blk}\n`;
+  writeFileSync(hookPath, appended);
+  chmodSync(hookPath, 0o755);
+  return { path: hookPath, action: "appended" };
+}

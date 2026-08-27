@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-import { installPostCommitHook, installPreCommitHook } from "../src/integrations/hooks.js";
+import { installPostCommitHook, installPreCommitHook, installPostMergeHook } from "../src/integrations/hooks.js";
 
 const PROJECT_ROOT = process.cwd();
 const TSX = join(PROJECT_ROOT, "node_modules/tsx/dist/cli.mjs");
@@ -62,6 +62,49 @@ test("post-commit hook: re-install is idempotent (managed block replaced, not du
     const h = hookText(r);
     assert.equal(h.match(/>>> hunch post-commit >>>/g)?.length, 1); // single managed block
     assert.match(h, /--private --commit/);
+  } finally { rmSync(r, { recursive: true, force: true }); }
+});
+
+const mergeHookText = (r: string): string => readFileSync(join(r, ".git", "hooks", "post-merge"), "utf8");
+
+test("post-merge hook: invokes repair-provenance, applied, from the hook, quietly", () => {
+  const r = repo();
+  try {
+    installPostMergeHook(r, "hunch");
+    const h = mergeHookText(r);
+    assert.match(h, /hunch repair-provenance --from-hook --quiet --apply >/);
+    assert.match(h, /HUNCH_MERGE_SYNC/);
+  } finally { rmSync(r, { recursive: true, force: true }); }
+});
+
+test("post-merge hook: re-install is idempotent (managed block replaced, not duplicated)", () => {
+  const r = repo();
+  try {
+    installPostMergeHook(r, "hunch");
+    installPostMergeHook(r, "hunch");
+    const h = mergeHookText(r);
+    assert.equal(h.match(/>>> hunch post-merge >>>/g)?.length, 1);
+  } finally { rmSync(r, { recursive: true, force: true }); }
+});
+
+test("post-merge hook: appended to an existing hook file without clobbering it", () => {
+  const r = repo();
+  try {
+    mkdirSync(join(r, ".git", "hooks"), { recursive: true });
+    writeFileSync(join(r, ".git", "hooks", "post-merge"), "#!/bin/sh\necho existing\n");
+    installPostMergeHook(r, "hunch");
+    const h = mergeHookText(r);
+    assert.match(h, /echo existing/);
+    assert.match(h, />>> hunch post-merge >>>/);
+  } finally { rmSync(r, { recursive: true, force: true }); }
+});
+
+test("post-merge hook: unchanged action when re-installed identically", () => {
+  const r = repo();
+  try {
+    installPostMergeHook(r, "hunch");
+    const result = installPostMergeHook(r, "hunch");
+    assert.equal(result.action, "unchanged");
   } finally { rmSync(r, { recursive: true, force: true }); }
 });
 
