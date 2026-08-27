@@ -27,8 +27,9 @@ import { parseDocAnchors } from "./docanchors.js";
 import { markdownDocs, STALE_MARKER, SRC_REF } from "./docscan.js";
 import { computeWikiDrift } from "../wiki/wiki.js";
 import { computeMadrDrift } from "../integrations/madrManifest.js";
+import { isGitRepo, revExists } from "../extractors/git.js";
 
-export type DriftKind = "dead-ref" | "supersede" | "doc-stale" | "anchor-stale" | "doc-anchor-stale" | "doc-anchor-dangling" | "wiki-stale" | "finding-stale" | "premise-stale" | "madr-stale" | "madr-edited" | "madr-orphan";
+export type DriftKind = "dead-ref" | "supersede" | "doc-stale" | "anchor-stale" | "doc-anchor-stale" | "doc-anchor-dangling" | "wiki-stale" | "finding-stale" | "premise-stale" | "commit-unresolvable" | "madr-stale" | "madr-edited" | "madr-orphan";
 
 export interface DriftFinding {
   kind: DriftKind;
@@ -60,6 +61,10 @@ export function computeDrift(store: HunchStore, root: string): DriftReport {
     return liveFiles.has(p) || liveDirs.some((dir) => p.startsWith(dir));
   };
   const premiseEnv: PremiseEnv = { now: new Date().toISOString(), exists: (p) => existsSync(join(root, p)) };
+  // A plain existence check is meaningless outside a git repo — computed once,
+  // not per decision, and never a false positive for a directory that merely
+  // happens to hold .hunch/ without being a git checkout.
+  const gitRepo = isGitRepo(root);
 
   for (const d of decisions) {
     // 1. DEAD-REFERENCE — only for in-force decisions; a superseded one referencing
@@ -71,6 +76,14 @@ export function computeDrift(store: HunchStore, root: string): DriftReport {
         if (!referenceExists(store, root, d.id, f)) {
           findings.push({ kind: "dead-ref", id: d.id, detail: `references missing file "${f}"` });
         }
+      }
+
+      // 8. COMMIT-UNRESOLVABLE — an in-force decision's commit provenance no longer
+      //    resolves at all (source branch gone + gc'd past recovery). The
+      //    opportunistic post-merge repair (commitrepair.ts) is the fix path; this
+      //    is purely the "nothing caught it" signal — deterministic, never auto-fixed.
+      if (d.commit && gitRepo && !revExists(d.commit, root)) {
+        findings.push({ kind: "commit-unresolvable", id: d.id, detail: `commit ${d.commit} no longer resolves in this repository — provenance may need manual repair` });
       }
     }
 
