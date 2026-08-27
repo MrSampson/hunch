@@ -1,6 +1,6 @@
 # Hunch roadmap
 
-Updated 2026-08-26.
+Updated 2026-08-27.
 
 Hunch is building the validated delivery layer for engineering intent: record why the code is the
 way it is, deliver the right evidence at the moment an agent needs it, and deterministically check
@@ -226,6 +226,8 @@ roadmap anchor is `roadmap.engineering-landscape-hlg-2` (`dec_9130451387`).
   content rather than file name.
 - The MADR bridge is bidirectional and shipped: `import-adr` populates the graph from an existing
   corpus deterministically; `export-adr` projects it back as standard MADR (Backstage-readable).
+  Imported live ADRs remain advisory until a human answers the inline, exact-hash approve/decline
+  question; unchanged re-imports preserve that answer and changed bytes require a fresh one.
 - Go joins TypeScript, JavaScript, and Python in the symbol/dependency graph (v1.15); YAML anchors,
   aliases, and chart-scoped Helm helper references join it in v1.18.
 - Retrieval ranks recorded intent above vocabulary-sharing code symbols — a bounded prior, never
@@ -249,7 +251,45 @@ roadmap anchor is `roadmap.engineering-landscape-hlg-2` (`dec_9130451387`).
 Still near-term: freshness/staleness scoring for decisions feeding context ranking only — never
 authority.
 
-## Next — complete validated delivery
+## Next — close the Infection PHP and ADR audit
+
+<!-- hunch:topic roadmap.infection-pilot-remediation dec_587ce6a081 -->
+
+The pinned public-history audit of `infection/infection` exposed two gaps that local fixtures did
+not: Hunch saw only 27 YAML files while omitting 1,823 tracked PHP files, and ADR import lost real
+lifecycle meaning. This work is deliberately one acceptance gate rather than separate parser demos.
+
+Completed in the implementation milestone:
+
+- ADR import excludes `0000-template.md`, imports all 13 real records (including
+  `0002-@covers-annotations.md`), accepts Infection's nested status sections, preserves proposed and
+  superseded states, and resolves explicit ADR successors without treating issue `#1760` as one.
+- A machine-readable receipt binds every ADR to its pinned path, SHA-256, introduction commit,
+  date, imported ID, lifecycle, successor and representative retrieval query.
+- Day-to-day review is chat-native: session orientation and `hunch_escalations` ask about one exact
+  imported ADR at a time, while the MCP write tool and CLI both reject stale hashes. Approval grants
+  human authority; decline stays advisory; silence does nothing.
+- PHP is a native `LanguageSpec`: namespaces, classes, interfaces, traits, enums, functions,
+  methods, Composer PSR-4 identities, imports/includes, conservative calls and static type
+  relationships enter the existing graph. Dynamic dispatch remains unresolved rather than guessed.
+- Exact-revision coverage is frozen for Infection (1,822/1,823 PHP files parsed; the only exclusion
+  is a tracked outside-repository symlink) and a second repository, Composer (622/622 PHP files).
+- PHP participates in changed-file history, `structure`, bounded `path`/impact queries and the
+  correction-source scan. The `@final` probe remains a shortlist with exact-owner claims disabled;
+  scanning the language is not presented as an accuracy result.
+
+Still required before the audit item is closed:
+
+1. A human reviewer must sign the 13-record ADR receipt; deterministic checks do not substitute for
+   corpus-level review.
+2. Rerun and publish the final Infection audit from the same pinned revision, including the ADR and
+   PHP receipts, the current-policy retrieval check, behavioral graph probes, and all remaining
+   limitations. Empty, lossy or ambiguous mappings remain blockers rather than inferred prose.
+
+The original failed audit remains the regression fixture. A green unit suite, a parser, or an
+unsigned successful import alone does not close this roadmap item.
+
+## Then — complete validated delivery
 
 1. Rank every delivered record by task relevance, recency, and trusted provenance.
 2. Enforce a hard context budget with a default 3–8 non-blocking headline target per role-specific delivery; pin mandatory blocking constraints outside that target, count duplicate IDs once, and require a recorded mandatory/ambiguity reason plus token accounting when more are delivered. Use progressive disclosure for deeper context.
@@ -279,7 +319,7 @@ Still open: fused task-relevance ranking (FTS/vector/graph), patch/change IDs fo
 usefulness signals beyond served/refreshed, delivery profiles, transport preservation of the full
 delivery envelope through service integrations such as Hunch Memory, and the benchmark named above.
 
-## Then — compile into native agent surfaces
+## Later — compile into native agent surfaces
 
 - Generate path-scoped rules, nested `AGENTS.md`, skills, and MCP prompts/resources as
   reproducible, drift-policed artifacts.
