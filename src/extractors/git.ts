@@ -1986,6 +1986,35 @@ export function commitChanges(sha: string, cwd: string): CommitFileChange[] {
   return out;
 }
 
+export interface CommitCandidate {
+  sha: string;
+  files: string[];
+}
+
+/** Is `commit` reachable from `ref`? Used to tell a merged commit from one that
+ *  fell out of history (e.g. squashed away) — `git merge-base --is-ancestor`
+ *  exits 0 for yes, non-zero for no, with no stdout either way, so this can't
+ *  reuse gitSafe (which can't distinguish "false" from "error"). */
+export function isAncestor(commit: string, ref: string, cwd: string): boolean {
+  try {
+    execFileSync("git", ["-C", cwd, "merge-base", "--is-ancestor", commit, ref], { stdio: "ignore", timeout: 5_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Every commit newly reachable in `oldRef..newRef`, with the files each one
+ *  changed (rename-aware, via commitChanges). Used to find the commit a
+ *  squash-merge produced from a set of now-orphaned source-branch commits. */
+export function mergeRangeChanges(oldRef: string, newRef: string, cwd: string): CommitCandidate[] {
+  const shas = gitSafe(["rev-list", `${oldRef}..${newRef}`], cwd).split("\n").filter(Boolean).reverse();
+  return shas.map((sha) => ({
+    sha,
+    files: commitChanges(sha, cwd).map((c) => c.after ?? c.before).filter((f): f is string => !!f),
+  }));
+}
+
 /** Machine-generated paths that carry no design "why" — lockfiles, build output,
  *  vendored deps, snapshots, source maps. Excluded from synthesis diffs via git
  *  pathspec BEFORE git assembles/orders the patch: a huge lockfile sorts ahead of

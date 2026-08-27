@@ -1,0 +1,90 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { isAncestor, mergeRangeChanges } from "../src/extractors/git.js";
+
+function git(root: string, ...args: string[]): string {
+  return execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+}
+
+function repo(): { root: string; cleanup(): void } {
+  const root = mkdtempSync(join(tmpdir(), "hunch-git-merge-range-"));
+  git(root, "init", "-q", "-b", "main");
+  git(root, "config", "user.email", "test@example.com");
+  git(root, "config", "user.name", "Test Human");
+  return { root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+test("isAncestor: true for a real ancestor, false for an unrelated/unreachable commit", () => {
+  const { root, cleanup } = repo();
+  try {
+    writeFileSync(join(root, "a.txt"), "1\n");
+    git(root, "add", "a.txt");
+    git(root, "commit", "-qm", "first");
+    const first = git(root, "rev-parse", "HEAD");
+    writeFileSync(join(root, "a.txt"), "2\n");
+    git(root, "add", "a.txt");
+    git(root, "commit", "-qm", "second");
+    const second = git(root, "rev-parse", "HEAD");
+
+    assert.equal(isAncestor(first, "HEAD", root), true);
+    assert.equal(isAncestor(second, "HEAD", root), true);
+    assert.equal(isAncestor("0000000000000000000000000000000000000000", "HEAD", root), false);
+  } finally { cleanup(); }
+});
+
+test("isAncestor: false for a commit only reachable via a branch not merged into ref", () => {
+  const { root, cleanup } = repo();
+  try {
+    writeFileSync(join(root, "a.txt"), "1\n");
+    git(root, "add", "a.txt");
+    git(root, "commit", "-qm", "base");
+    git(root, "checkout", "-qb", "feature");
+    writeFileSync(join(root, "b.txt"), "1\n");
+    git(root, "add", "b.txt");
+    git(root, "commit", "-qm", "feature work");
+    const featureSha = git(root, "rev-parse", "HEAD");
+    git(root, "checkout", "-q", "main");
+
+    assert.equal(isAncestor(featureSha, "main", root), false);
+  } finally { cleanup(); }
+});
+
+test("mergeRangeChanges: one candidate per commit in the range, with its changed files", () => {
+  const { root, cleanup } = repo();
+  try {
+    writeFileSync(join(root, "a.txt"), "1\n");
+    git(root, "add", "a.txt");
+    git(root, "commit", "-qm", "base");
+    const base = git(root, "rev-parse", "HEAD");
+
+    writeFileSync(join(root, "b.txt"), "1\n");
+    git(root, "add", "b.txt");
+    git(root, "commit", "-qm", "add b");
+    const addB = git(root, "rev-parse", "HEAD");
+
+    writeFileSync(join(root, "c.txt"), "1\n");
+    git(root, "add", "c.txt");
+    git(root, "commit", "-qm", "add c");
+    const addC = git(root, "rev-parse", "HEAD");
+
+    const candidates = mergeRangeChanges(base, "HEAD", root);
+    assert.deepEqual(candidates, [
+      { sha: addB, files: ["b.txt"] },
+      { sha: addC, files: ["c.txt"] },
+    ]);
+  } finally { cleanup(); }
+});
+
+test("mergeRangeChanges: empty range yields no candidates", () => {
+  const { root, cleanup } = repo();
+  try {
+    writeFileSync(join(root, "a.txt"), "1\n");
+    git(root, "add", "a.txt");
+    git(root, "commit", "-qm", "base");
+    assert.deepEqual(mergeRangeChanges("HEAD", "HEAD", root), []);
+  } finally { cleanup(); }
+});
