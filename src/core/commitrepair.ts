@@ -9,7 +9,7 @@
  * repair.ts's rename-repair.
  */
 import type { Decision } from "./types.js";
-import type { CommitCandidate } from "../extractors/git.js";
+import type { CommitCandidate, CommitRepairStatus } from "../extractors/git.js";
 import { replaceExact } from "./refrepair.js";
 
 export interface CommitRewrite {
@@ -28,15 +28,18 @@ function isExactPath(entry: string): boolean {
   return !!entry && !/[*?[\]{}]/.test(entry);
 }
 
-/** Live decisions whose cited commit is no longer an ancestor of the current tip. */
+/** Live decisions whose cited commit still exists here but is no longer an
+ *  ancestor of the current tip. Only "orphaned" qualifies: a commit that
+ *  doesn't resolve at all ("unresolvable") is out of repair scope, and a git
+ *  failure ("unknown") must never be mistaken for repair-eligible. */
 export function orphanedCommitDecisions(
   decisions: readonly Decision[],
-  isAncestor: (sha: string) => boolean,
+  status: (sha: string) => CommitRepairStatus,
 ): Decision[] {
   return decisions.filter((d) => {
     if (d.status === "superseded" || d.status === "rejected") return false;
     if (!d.commit) return false;
-    return !isAncestor(d.commit);
+    return status(d.commit) === "orphaned";
   });
 }
 
@@ -58,14 +61,17 @@ export function planCommitRepair(
 }
 
 /** Pure: rewrite `commit` and its matching `commit:<sha>` evidence entry for one
- *  decision, or return the same reference when the plan doesn't touch it. */
+ *  decision, or return the same reference when the plan doesn't touch it.
+ *  If the record moved on since the plan was built (its commit no longer equals
+ *  the plan's `from`), bail entirely — commit and evidence rewrite together or
+ *  not at all, never one without the other. */
 export function repairDecisionCommit(d: Decision, plan: CommitRepairPlan): Decision {
   const mine = plan.rewrites.find((r) => r.id === d.id);
-  if (!mine) return d;
+  if (!mine || d.commit !== mine.from) return d;
   const evidence = replaceExact(d.provenance.evidence, `commit:${mine.from}`, `commit:${mine.to}`);
   return {
     ...d,
-    commit: d.commit === mine.from ? mine.to : d.commit,
+    commit: mine.to,
     provenance: { ...d.provenance, evidence: evidence.values },
   };
 }

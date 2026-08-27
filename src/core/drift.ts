@@ -41,7 +41,11 @@ export interface DriftReport {
   findings: DriftFinding[];
 }
 
-export function computeDrift(store: HunchStore, root: string): DriftReport {
+export function computeDrift(
+  store: HunchStore,
+  root: string,
+  deps: { commitResolvable?: (sha: string) => boolean } = {},
+): DriftReport {
   const findings: DriftFinding[] = [];
   const decisions = store.recs("decisions");
   const byId = new Map(decisions.map((d) => [d.id, d] as const));
@@ -63,8 +67,14 @@ export function computeDrift(store: HunchStore, root: string): DriftReport {
   const premiseEnv: PremiseEnv = { now: new Date().toISOString(), exists: (p) => existsSync(join(root, p)) };
   // A plain existence check is meaningless outside a git repo — computed once,
   // not per decision, and never a false positive for a directory that merely
-  // happens to hold .hunch/ without being a git checkout.
+  // happens to hold .hunch/ without being a git checkout. Injectable so tests
+  // (and callers with a cheaper oracle) never have to shell out per decision.
   const gitRepo = isGitRepo(root);
+  const defaultCommitResolvable = (sha: string): boolean => {
+    if (!gitRepo) return true; // never flag outside a git repo
+    try { return revExists(sha, root); } catch { return true; } // fail open
+  };
+  const commitResolvable = deps.commitResolvable ?? defaultCommitResolvable;
 
   for (const d of decisions) {
     // 1. DEAD-REFERENCE — only for in-force decisions; a superseded one referencing
@@ -85,7 +95,7 @@ export function computeDrift(store: HunchStore, root: string): DriftReport {
       //    Mirrors repair.ts:59's live-records-only rule: `inForce` alone doesn't
       //    exclude a never-adopted "rejected" decision (superseded_by is null for
       //    those too), so exclude it explicitly here.
-      if (d.commit && gitRepo && d.status !== "rejected" && !revExists(d.commit, root)) {
+      if (d.commit && d.status !== "rejected" && !commitResolvable(d.commit)) {
         findings.push({ kind: "commit-unresolvable", id: d.id, detail: `commit ${d.commit} no longer resolves in this repository — provenance may need manual repair` });
       }
     }

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit } from "../src/core/commitrepair.js";
 import type { Decision } from "../src/core/types.js";
-import type { CommitCandidate } from "../src/extractors/git.js";
+import type { CommitCandidate, CommitRepairStatus } from "../src/extractors/git.js";
 
 const D = (over: Partial<Decision> & { id: string }): Decision => ({
   id: over.id, title: `t ${over.id}`, decision: "d", status: over.status ?? "accepted",
@@ -14,8 +14,8 @@ const D = (over: Partial<Decision> & { id: string }): Decision => ({
 } as unknown as Decision);
 
 test("orphanedCommitDecisions: only live decisions with a non-ancestor commit are orphaned", () => {
-  const ancestorSet = new Set(["sha_ancestor"]);
-  const isAncestor = (sha: string): boolean => ancestorSet.has(sha);
+  const statuses = new Map<string, CommitRepairStatus>([["sha_ancestor", "current"], ["sha_gone", "orphaned"]]);
+  const status = (sha: string): CommitRepairStatus => statuses.get(sha) ?? "unresolvable";
   const decisions = [
     D({ id: "dec_ancestor", commit: "sha_ancestor" }),
     D({ id: "dec_orphaned", commit: "sha_gone" }),
@@ -23,7 +23,22 @@ test("orphanedCommitDecisions: only live decisions with a non-ancestor commit ar
     D({ id: "dec_superseded", commit: "sha_gone", status: "superseded" }),
     D({ id: "dec_rejected", commit: "sha_gone", status: "rejected" }),
   ];
-  assert.deepEqual(orphanedCommitDecisions(decisions, isAncestor).map((d) => d.id), ["dec_orphaned"]);
+  assert.deepEqual(orphanedCommitDecisions(decisions, status).map((d) => d.id), ["dec_orphaned"]);
+});
+
+test("orphanedCommitDecisions: unresolvable and unknown commits are never repair-eligible", () => {
+  const statuses = new Map<string, CommitRepairStatus>([
+    ["sha_orphaned", "orphaned"],
+    ["sha_missing", "unresolvable"],
+    ["sha_git_failed", "unknown"],
+  ]);
+  const status = (sha: string): CommitRepairStatus => statuses.get(sha)!;
+  const decisions = [
+    D({ id: "dec_orphaned", commit: "sha_orphaned" }),
+    D({ id: "dec_foreign", commit: "sha_missing" }),
+    D({ id: "dec_git_failed", commit: "sha_git_failed" }),
+  ];
+  assert.deepEqual(orphanedCommitDecisions(decisions, status).map((d) => d.id), ["dec_orphaned"]);
 });
 
 test("planCommitRepair: a unique related_files-subset match is rewritten", () => {
@@ -85,5 +100,15 @@ test("repairDecisionCommit: dedupes evidence if the destination is already cited
 test("repairDecisionCommit: returns the same reference when the plan doesn't touch this decision", () => {
   const d = D({ id: "dec_untouched", commit: "sha_old" });
   const plan = { rewrites: [{ id: "dec_other", from: "sha_a", to: "sha_b" }], records: ["dec_other"] };
+  assert.equal(repairDecisionCommit(d, plan), d);
+});
+
+test("repairDecisionCommit: bails atomically when the record's commit moved on since the plan was built", () => {
+  const d = D({
+    id: "dec_1",
+    commit: "sha_moved",
+    provenance: { source: "human_confirmed", confidence: 0.9, evidence: ["commit:sha_old"] },
+  });
+  const plan = { rewrites: [{ id: "dec_1", from: "sha_old", to: "sha_new" }], records: ["dec_1"] };
   assert.equal(repairDecisionCommit(d, plan), d);
 });

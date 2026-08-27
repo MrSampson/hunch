@@ -96,9 +96,11 @@ test("repair-provenance --apply rewrites commit + evidence to the squash-merge c
   try {
     const run = runCli(fixture.root, "repair-provenance", "--range", `${fixture.oldRef}..${fixture.newRef}`, "--apply");
     assert.equal(run.status, 0, run.stderr);
+    // Repaired records carry the same abbreviated sha every synthesized decision uses.
+    const shortNewRef = git(fixture.root, "rev-parse", "--short", fixture.newRef);
     const repaired = JSON.parse(readFileSync(fixture.decisionFile, "utf8")) as Decision;
-    assert.equal(repaired.commit, fixture.newRef);
-    assert.deepEqual(repaired.provenance.evidence, [`commit:${fixture.newRef}`]);
+    assert.equal(repaired.commit, shortNewRef);
+    assert.deepEqual(repaired.provenance.evidence, [`commit:${shortNewRef}`]);
     assert.match(git(fixture.root, "log", "-1", "--format=%s"), /^hunch: repair 1 commit reference\(s\) after squash-merge/);
   } finally {
     fixture.cleanup();
@@ -113,6 +115,23 @@ test("repair-provenance dry run (no --apply) reports the plan but changes nothin
     assert.equal(run.status, 0, run.stderr);
     assert.match(run.stdout, /Would repair 1 commit reference/);
     assert.equal(readFileSync(fixture.decisionFile, "utf8"), before);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --from-hook --apply (no --range) repairs via the real default ORIG_HEAD..HEAD, exactly as the installed hook invokes it", () => {
+  const fixture = squashFixture();
+  try {
+    // ORIG_HEAD is what a real merge/reset/rebase leaves behind; set it directly
+    // so this exercises the hook's actual flags with no --range override.
+    git(fixture.root, "update-ref", "ORIG_HEAD", fixture.oldRef);
+    const run = runCli(fixture.root, "repair-provenance", "--from-hook", "--quiet", "--apply");
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.stdout.trim(), "", "quiet mode prints nothing on success");
+    const repaired = JSON.parse(readFileSync(fixture.decisionFile, "utf8")) as Decision;
+    assert.notEqual(repaired.commit, fixture.origCommit, "commit was rewritten away from the orphaned sha");
+    assert.equal(repaired.commit, git(fixture.root, "rev-parse", "--short", fixture.newRef));
   } finally {
     fixture.cleanup();
   }

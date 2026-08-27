@@ -39,7 +39,7 @@ import {
   writeSynthesisPreference,
   type SynthPreference,
 } from "../synthesis/provider.js";
-import { isGitRepo, isGitRepoRoot, sameGitPublication, sameRemoteUrl, canonicalRemoteUrl, repositoryUsesRemote, headSha, isolatedHeadSha, logSince, lastChangeDate, stagedFiles, workingFiles, commitFiles, asOfDate, stagedDiff, workingDiff, commitDiff, rangeFiles, rangeDiff, rangeSubjects, revExists, revParse, commitAndPushHunch, pullHunchStatus, syncExistingHunch, gitUntrackCached, gitCommonDir, hooksDir, isLinkedWorktree, mainWorktreeRoot, gitMemoryLog, memoryMoveDiff, revertMemoryMove, pushCurrentBranch, commitChanges, isAncestor, mergeRangeChanges, type HunchPullStatus } from "../extractors/git.js";
+import { isGitRepo, isGitRepoRoot, sameGitPublication, sameRemoteUrl, canonicalRemoteUrl, repositoryUsesRemote, headSha, isolatedHeadSha, logSince, lastChangeDate, stagedFiles, workingFiles, commitFiles, asOfDate, stagedDiff, workingDiff, commitDiff, rangeFiles, rangeDiff, rangeSubjects, revExists, revParse, commitAndPushHunch, pullHunchStatus, syncExistingHunch, gitUntrackCached, gitCommonDir, hooksDir, isLinkedWorktree, mainWorktreeRoot, gitMemoryLog, memoryMoveDiff, revertMemoryMove, pushCurrentBranch, commitChanges, commitRepairStatus, mergeRangeChanges, type HunchPullStatus } from "../extractors/git.js";
 import { parseMemoryLog, type MemoryMove } from "../core/memorylog.js";
 import { renamesOf, planRepair, repairDecision, repairConstraint, type RepairPlan } from "../core/repair.js";
 import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit } from "../core/commitrepair.js";
@@ -870,8 +870,11 @@ function beginFreshOverlaySetup(
   const sharedPointer = commonDir ? join(commonDir, "hunch", "local.json") : "";
   const configuredHooks = includeHook ? hooksDir(root) : "";
   const hookDir = configuredHooks ? (isAbsolute(configuredHooks) ? configuredHooks : join(root, configuredHooks)) : "";
-  const hookFile = hookDir ? join(hookDir, "post-commit") : "";
-  const paths = [localFile, codeGitignore, teamFile, ...(sharedPointer ? [sharedPointer] : []), ...(hookFile ? [hookFile] : [])];
+  // Setup installs post-commit AND post-merge together, so both must be in the
+  // ledger — restoring one while leaving the other pointing at a just-deleted
+  // overlay is not a rollback.
+  const hookFiles = hookDir ? [join(hookDir, "post-commit"), join(hookDir, "post-merge")] : [];
+  const paths = [localFile, codeGitignore, teamFile, ...(sharedPointer ? [sharedPointer] : []), ...hookFiles];
   const snapshots = new Map(paths.map((path) => [path, setupPathSnapshot(path)] as const));
   const parentExisted = new Map([
     [dirname(localFile), existsSync(dirname(localFile))],
@@ -890,7 +893,7 @@ function beginFreshOverlaySetup(
     markGitignoreWrite: () => mark(codeGitignore),
     markTeamWrite: () => mark(teamFile),
     markSharedPointerWrite: () => mark(sharedPointer),
-    markHookWrite: () => mark(hookFile),
+    markHookWrite: () => hookFiles.forEach(mark),
     // Migration is a one-way ownership handoff. Once public records have been
     // durably copied into this clone, a later setup failure may restore routing
     // files but must not delete the clone that now holds their surviving copy.
@@ -4629,7 +4632,7 @@ program
       let newRef = "HEAD";
       if (opts.range) {
         const parts = opts.range.split("..");
-        if (parts.length !== 2 || !parts[0] || !parts[1]) { fail('--range must look like "old..new"'); return; }
+        if (parts.length !== 2 || !parts[0] || !parts[1]) { if (!opts.fromHook) fail('--range must look like "old..new"'); return; }
         [oldRef, newRef] = parts as [string, string];
       }
       if (!revExists(oldRef, root) || !revExists(newRef, root)) {
@@ -4643,7 +4646,8 @@ program
         return;
       }
 
-      const orphaned = orphanedCommitDecisions(store.recs("decisions"), (sha) => isAncestor(sha, newRef, root));
+      const decisions = store.recs("decisions");
+      const orphaned = orphanedCommitDecisions(decisions, (sha) => commitRepairStatus(sha, newRef, root));
       const plan = planCommitRepair(orphaned, candidates);
       if (!plan.rewrites.length) {
         if (!opts.quiet) console.log("✓ Nothing to repair — no orphaned commit reference matched the merged range unambiguously.");
@@ -4660,7 +4664,7 @@ program
       }
 
       const touchedHomes = new Set<MemoryHome>();
-      for (const d of store.recs("decisions")) {
+      for (const d of decisions) {
         const healed = repairDecisionCommit(d, plan);
         if (healed === d) continue;
         const home = decisionMemoryHome(store, d.id);
@@ -5053,6 +5057,13 @@ program
         console.log(`${premiseStale.length} decision(s) rest on a premise that no longer holds (world≠graph):\n`);
         for (const f of premiseStale) console.log(`· ${f.id} — ${f.detail}`);
         console.log(`\nHeal: this is a HUMAN call — the decision's authority is unchanged until you make it. Re-attest (update the premise's review_by/attested), supersede via /capture, or retire the decision. Keeping it for consistency is a valid answer.\n`);
+      }
+      // Every drift kind heals here — see bug_drift_heal_asymmetry above.
+      const commitUnresolvable = kind("commit-unresolvable");
+      if (commitUnresolvable.length) {
+        console.log(`${commitUnresolvable.length} decision(s) cite a commit that no longer resolves in this repository:\n`);
+        for (const f of commitUnresolvable) console.log(`· ${f.id} — ${f.detail}`);
+        console.log(`\nHeal: this is a HUMAN call — \`hunch repair-provenance\` already tries this automatically via the post-merge hook while the commit is still resolvable; if it's already gone, manually correct the decision's provenance or leave it as historical record.\n`);
       }
       console.log(`Hunch never rewrites prose for you; this is a read-only reconciliation report.`);
     } finally {

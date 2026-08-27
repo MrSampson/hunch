@@ -2008,11 +2008,37 @@ export function isAncestor(commit: string, ref: string, cwd: string): boolean {
  *  changed (rename-aware, via commitChanges). Used to find the commit a
  *  squash-merge produced from a set of now-orphaned source-branch commits. */
 export function mergeRangeChanges(oldRef: string, newRef: string, cwd: string): CommitCandidate[] {
-  const shas = gitSafe(["rev-list", `${oldRef}..${newRef}`], cwd).split("\n").filter(Boolean).reverse();
+  const shas = gitSafe(["rev-list", "--abbrev-commit", `${oldRef}..${newRef}`], cwd).split("\n").filter(Boolean).reverse();
   return shas.map((sha) => ({
     sha,
     files: commitChanges(sha, cwd).map((c) => c.after ?? c.before).filter((f): f is string => !!f),
   }));
+}
+
+export type CommitRepairStatus = "orphaned" | "current" | "unresolvable" | "unknown";
+
+/** Classifies `commit` relative to `ref` for squash-merge repair eligibility.
+ *  "orphaned" (exists in this repo, but is not an ancestor of `ref`) is the
+ *  ONLY status planCommitRepair should ever act on. "unresolvable" (the
+ *  commit doesn't exist here at all) is explicitly out of repair scope —
+ *  drift.ts's commit-unresolvable kind is what flags that case, because
+ *  there's no reliable signal left to match a replacement against. "unknown"
+ *  (the git command itself failed to run — timeout, git missing) must never
+ *  be treated as repair-eligible; collapsing "false" and "error" into one
+ *  boolean is exactly the bug this type exists to prevent. */
+export function commitRepairStatus(commit: string, ref: string, cwd: string): CommitRepairStatus {
+  if (!/^[0-9a-f]{7,64}$/i.test(commit)) return "unresolvable";
+  try {
+    execFileSync("git", ["-C", cwd, "rev-parse", "--verify", "--quiet", `${commit}^{commit}`], { stdio: "ignore", timeout: 5_000 });
+  } catch (e) {
+    return typeof (e as { status?: number }).status === "number" ? "unresolvable" : "unknown";
+  }
+  try {
+    execFileSync("git", ["-C", cwd, "merge-base", "--is-ancestor", commit, ref], { stdio: "ignore", timeout: 5_000 });
+    return "current";
+  } catch (e) {
+    return (e as { status?: number }).status === 1 ? "orphaned" : "unknown";
+  }
 }
 
 /** Machine-generated paths that carry no design "why" — lockfiles, build output,
