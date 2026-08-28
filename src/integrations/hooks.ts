@@ -125,3 +125,20 @@ function mergeBlock(invocation: string): string {
 export function installPostMergeHook(root: string, invocation: string): HookInstall {
   return installManagedBlock(root, "post-merge", MERGE_MARK, MERGE_END, mergeBlock(invocation));
 }
+
+/** Read-only diagnostic (used by `hunch doctor`): which of the three managed
+ *  hooks are currently present. Never writes anything — a hook counts as
+ *  installed if its managed marker is present, regardless of whether the
+ *  invocation inside it happens to be stale. */
+export function hookStatus(root: string): { postCommit: boolean; preCommit: boolean; postMerge: boolean } {
+  const dir = hooksDir(root);
+  const abs = isAbsolute(dir) ? dir : join(root, dir);
+  const has = (name: string, mark: string): boolean => {
+    try { return readFileSync(join(abs, name), "utf8").includes(mark); } catch { return false; }
+  };
+  return {
+    postCommit: has("post-commit", MARK),
+    preCommit: has("pre-commit", PRE_MARK),
+    postMerge: has("post-merge", MERGE_MARK),
+  };
+}

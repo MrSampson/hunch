@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-import { installPostCommitHook, installPreCommitHook, installPostMergeHook } from "../src/integrations/hooks.js";
+import { installPostCommitHook, installPreCommitHook, installPostMergeHook, hookStatus } from "../src/integrations/hooks.js";
 
 const PROJECT_ROOT = process.cwd();
 const TSX = join(PROJECT_ROOT, "node_modules/tsx/dist/cli.mjs");
@@ -106,6 +106,87 @@ test("post-merge hook: unchanged action when re-installed identically", () => {
     installPostMergeHook(r, "hunch");
     const result = installPostMergeHook(r, "hunch");
     assert.equal(result.action, "unchanged");
+  } finally { rmSync(r, { recursive: true, force: true }); }
+});
+
+test("hookStatus: read-only, reports nothing installed on a fresh repo and never creates a managed hook file", () => {
+  const r = repo();
+  try {
+    assert.deepEqual(hookStatus(r), { postCommit: false, preCommit: false, postMerge: false });
+    // git itself pre-populates .git/hooks/ with *.sample files on init — that's
+    // not this function's concern. What matters is it never creates any of the
+    // three REAL hook files it's merely checking for.
+    for (const name of ["post-commit", "pre-commit", "post-merge"]) {
+      assert.equal(existsSync(join(r, ".git", "hooks", name)), false, `hookStatus must never create ${name}`);
+    }
+  } finally { rmSync(r, { recursive: true, force: true }); }
+});
+
+test("hookStatus: reports exactly which of the three managed hooks are present", () => {
+  const r = repo();
+  try {
+    installPostCommitHook(r, "hunch");
+    installPostMergeHook(r, "hunch");
+    assert.deepEqual(hookStatus(r), { postCommit: true, preCommit: false, postMerge: true });
+  } finally { rmSync(r, { recursive: true, force: true }); }
+});
+
+test("hunch index installs/upgrades the post-merge hook too, not just gitignore — the upgrade path for repos that never re-run hunch init", () => {
+  const r = repo();
+  try {
+    writeFileSync(join(r, "app.ts"), "export const x = 1;\n");
+    execFileSync("git", ["config", "user.email", "t@t.co"], { cwd: r });
+    execFileSync("git", ["config", "user.name", "T"], { cwd: r });
+    execFileSync("git", ["add", "-A"], { cwd: r });
+    execFileSync("git", ["commit", "-qm", "init"], { cwd: r });
+
+    const run = spawnSync(process.execPath, [TSX, CLI, "index", "--no-auto-commit"], {
+      cwd: r,
+      env: { ...process.env, HUNCH_PRIVATE_DIR: "", HUNCH_SYNTH_PROVIDER: "deterministic" },
+      encoding: "utf8",
+    });
+    assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
+    const hookPath = join(r, ".git", "hooks", "post-merge");
+    assert.match(readFileSync(hookPath, "utf8"), /repair-provenance --from-hook --quiet/);
+  } finally { rmSync(r, { recursive: true, force: true }); }
+});
+
+test("hunch doctor reports missing post-commit/post-merge hooks with a fix hint", () => {
+  const r = repo();
+  try {
+    writeFileSync(join(r, "app.ts"), "export const x = 1;\n");
+    execFileSync("git", ["config", "user.email", "t@t.co"], { cwd: r });
+    execFileSync("git", ["config", "user.name", "T"], { cwd: r });
+    execFileSync("git", ["add", "-A"], { cwd: r });
+    execFileSync("git", ["commit", "-qm", "init"], { cwd: r });
+
+    const run = spawnSync(process.execPath, [TSX, CLI, "doctor"], {
+      cwd: r,
+      env: { ...process.env, HUNCH_PRIVATE_DIR: "", HUNCH_SYNTH_PROVIDER: "deterministic" },
+      encoding: "utf8",
+    });
+    assert.match(`${run.stdout}${run.stderr}`, /hooks:.*⚠.*missing.*post-commit.*post-merge/s);
+  } finally { rmSync(r, { recursive: true, force: true }); }
+});
+
+test("hunch doctor reports hooks installed once post-commit and post-merge are present", () => {
+  const r = repo();
+  try {
+    writeFileSync(join(r, "app.ts"), "export const x = 1;\n");
+    execFileSync("git", ["config", "user.email", "t@t.co"], { cwd: r });
+    execFileSync("git", ["config", "user.name", "T"], { cwd: r });
+    execFileSync("git", ["add", "-A"], { cwd: r });
+    execFileSync("git", ["commit", "-qm", "init"], { cwd: r });
+    installPostCommitHook(r, "hunch");
+    installPostMergeHook(r, "hunch");
+
+    const run = spawnSync(process.execPath, [TSX, CLI, "doctor"], {
+      cwd: r,
+      env: { ...process.env, HUNCH_PRIVATE_DIR: "", HUNCH_SYNTH_PROVIDER: "deterministic" },
+      encoding: "utf8",
+    });
+    assert.match(run.stdout, /hooks:\s+post-commit, post-merge installed/);
+    assert.doesNotMatch(`${run.stdout}${run.stderr}`, /⚠.*missing/);
   } finally { rmSync(r, { recursive: true, force: true }); }
 });
 

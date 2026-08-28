@@ -52,7 +52,7 @@ import type { Runbook } from "../core/types.js";
 import { extractInlineIntent } from "../extractors/comments.js";
 import { renderText, renderMarkdown, renderSarif, renderImpact, reportFailsStrict, type CheckReport, type SarifExtras } from "../core/checkreport.js";
 import { partitionReview, isReviewDraft, READY_MIN_GROUNDED, type ReviewItem } from "../core/reviewqueue.js";
-import { installPostCommitHook, installPreCommitHook, installPostMergeHook } from "../integrations/hooks.js";
+import { installPostCommitHook, installPreCommitHook, installPostMergeHook, hookStatus } from "../integrations/hooks.js";
 import { ensureSharedOverlayPointer } from "../integrations/worktree.js";
 import { flushCapture, flushMemoryHome, flushMemoryHomes, pinSharedRemote, sharedRemoteFor, type MemoryHome } from "../integrations/sync.js";
 import { installMergeDriver } from "../integrations/mergeDriver.js";
@@ -398,6 +398,12 @@ program
     const { store, root } = storeFor();
     store.json.ensureDirs();
     ensureGitignore(root); // keep the derived SQLite index out of git (idempotent)
+    // The post-merge hook only ever got installed by `hunch init`/`hunch
+    // private`/`hunch shared` — a repo that already ran init before this hook
+    // existed never receives it. `hunch index` already self-heals gitignore
+    // the same way; do the same for the hook so an upgrade doesn't require
+    // re-running init by hand.
+    if (isGitRepo(root)) installPostMergeHook(root, resolveInvocation().shell);
     const res = indexRepo(store, root, { requireClean: true });
     const { counts } = store.reindex();
     const correctionSweep = new ConstitutionService(store, root).upgradeCorrections();
@@ -5567,6 +5573,18 @@ program
     const { store, root } = storeFor();
     console.log(`Hunch root: ${root}`);
     console.log(`git repo:   ${isGitRepo(root) ? "yes" : "no"}  ${isGitRepo(root) ? `(HEAD ${headSha(root).slice(0, 8)})` : ""}`);
+    // post-commit/post-merge are the two hooks every setup path installs; a
+    // repo that ran `hunch init` before the post-merge hook existed never
+    // received it, and there was no way to discover that short of noticing a
+    // squash-merge went unrepaired. pre-commit is opt-out (`--no-enforce`),
+    // so its absence is informational only, never a warning.
+    if (isGitRepo(root)) {
+      const hooks = hookStatus(root);
+      const missing = [!hooks.postCommit && "post-commit", !hooks.postMerge && "post-merge"].filter((h): h is string => !!h);
+      console.log(missing.length
+        ? `hooks:      ⚠ missing ${missing.join(", ")} — run \`hunch index\` to install/upgrade (or \`hunch init\` for the full setup)`
+        : `hooks:      post-commit, post-merge installed${hooks.preCommit ? " (+ pre-commit)" : ""}`);
+    }
     // In unified mode the public .hunch directory is only a routing shell.
     // Report the same effective manifest that `hunch migrate` reads and stamps,
     // or every healthy code-only team clone looks permanently out of date.
