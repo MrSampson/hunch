@@ -4973,7 +4973,7 @@ program
   .description("Self-repair: detect a decision's commit provenance going orphaned by a squash-merge, matched by exact related_files overlap against the newly merged commit range — zero guessing beyond that. Detection always queues the match (.hunch/pending-commit-repairs.json, local-only); --apply is required to actually rewrite it, or --only <dec_id>/--drop <dec_id> to act on one queued decision at a time. The post-merge hook runs detection automatically in the background but never passes --apply — the match signal isn't strong enough to trust an unattended write into shared team memory.")
   .option("--apply", "rewrite provenance for every queued and freshly-matched candidate (auto-commits each touched store as a `repair` move)")
   .option("--only <dec_id>", "with --apply, rewrite only this decision id — everything else stays queued untouched")
-  .option("--drop <dec_id>", "remove this decision id from the queue without applying it")
+  .option("--drop <dec_id>", "clear this decision id from the queue for now, without applying it — a later detection may re-queue the same match if it still holds")
   .option("--from-hook", "invoked by the git post-merge hook")
   .option("--quiet", "minimal output")
   .option("--range <old..new>", "commit range to scan for replacement commits (default: ORIG_HEAD..HEAD)")
