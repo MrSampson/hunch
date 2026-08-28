@@ -2028,11 +2028,16 @@ export function mergeRangeChanges(oldRef: string, newRef: string, cwd: string, m
 export function commitsExist(shas: readonly string[], cwd: string): Set<string> | null {
   const resolvable = new Set<string>();
   if (!shas.length) return resolvable;
+  // Same shape guard as commitRepairStatus. Without it, a malformed value
+  // embedding its own newline would count as more input lines than entries
+  // in `shas`, shifting every later sha's output line and misclassifying it.
+  const valid = shas.filter((sha) => /^[0-9a-f]{7,64}$/i.test(sha));
+  if (!valid.length) return resolvable;
   let raw: string;
   try {
     raw = execFileSync("git", ["-C", cwd, "cat-file", "--batch-check"], {
       encoding: "utf8",
-      input: shas.map((sha) => `${sha}^{commit}\n`).join(""),
+      input: valid.map((sha) => `${sha}^{commit}\n`).join(""),
       stdio: ["pipe", "pipe", "ignore"],
       timeout: 10_000,
     });
@@ -2040,8 +2045,8 @@ export function commitsExist(shas: readonly string[], cwd: string): Set<string> 
     return null;
   }
   const lines = raw.split("\n").filter(Boolean);
-  for (let i = 0; i < shas.length && i < lines.length; i++) {
-    if (!lines[i]!.endsWith(" missing")) resolvable.add(shas[i]!);
+  for (let i = 0; i < valid.length && i < lines.length; i++) {
+    if (!lines[i]!.endsWith(" missing")) resolvable.add(valid[i]!);
   }
   return resolvable;
 }

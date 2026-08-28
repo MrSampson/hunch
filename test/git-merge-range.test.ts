@@ -140,6 +140,23 @@ test("commitsExist: batches many shas into one lookup, empty input yields an emp
   } finally { cleanup(); }
 });
 
+test("commitsExist: a malformed multi-line sha can't desync the positional output mapping and misclassify a real commit", () => {
+  const { root, cleanup } = repo();
+  try {
+    writeFileSync(join(root, "a.txt"), "1\n");
+    git(root, "add", "a.txt");
+    git(root, "commit", "-qm", "base");
+    const real = git(root, "rev-parse", "HEAD");
+    // Embeds a newline, so unfiltered input would count as TWO lines sent to
+    // `git cat-file --batch-check`, shifting every later sha's output line by
+    // one and letting a genuinely orphaned commit read back as resolved.
+    const malformed = "not-a-sha\nextra-line";
+
+    const resolved = commitsExist([malformed, real], root);
+    assert.deepEqual(resolved, new Set([real]), "the malformed entry is filtered out, so `real` still lines up with its own output line");
+  } finally { cleanup(); }
+});
+
 test("commitsExist: returns null (not an empty set) when the check itself fails to run — never mistaken for 'nothing resolves'", () => {
   const notARepo = mkdtempSync(join(tmpdir(), "hunch-not-a-repo-"));
   try {
