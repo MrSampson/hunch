@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { pendingEscalations, policyEscalations, type PolicyLite } from "../src/core/escalations.js";
+import { pendingEscalations, policyEscalations, commitRepairEscalations, type PolicyLite } from "../src/core/escalations.js";
 import type { Decision } from "../src/core/types.js";
 
 const D = (over: Partial<Decision> & { id: string }): Decision => ({
@@ -81,4 +81,27 @@ test("pendingEscalations: a superseded decision on the topic does not count (onl
     D({ id: "dec_new", topic: "store.writes" }),
   ];
   assert.deepEqual(pendingEscalations(decs), []);
+});
+
+test("commitRepairEscalations: an empty queue asks nothing", () => {
+  assert.deepEqual(commitRepairEscalations([], []), []);
+});
+
+test("commitRepairEscalations: a queued match surfaces as one inline question naming the decision's title", () => {
+  const decs = [D({ id: "dec_1", title: "Add the feature" })];
+  const items = commitRepairEscalations([{ id: "dec_1", from: "sha_old", to: "sha_new" }], decs);
+  assert.equal(items.length, 1);
+  assert.equal(items[0]!.kind, "commit-repair-pending");
+  assert.equal(items[0]!.topic, "dec_1");
+  assert.deepEqual(items[0]!.decisionIds, ["dec_1"]);
+  assert.match(items[0]!.question, /Add the feature/);
+  assert.match(items[0]!.question, /squash-merged away/);
+  assert.equal(items[0]!.detail, "sha_old → sha_new");
+  assert.match(items[0]!.resolution, /repair-provenance --apply/);
+});
+
+test("commitRepairEscalations: a queued entry whose decision no longer exists still asks, by id", () => {
+  const items = commitRepairEscalations([{ id: "dec_gone", from: "sha_old", to: "sha_new" }], []);
+  assert.equal(items.length, 1);
+  assert.match(items[0]!.question, /dec_gone/);
 });

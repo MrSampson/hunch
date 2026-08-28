@@ -170,6 +170,24 @@ test("repair-provenance --apply picks up a match from the queue even once the ra
   }
 });
 
+test("a queued repair surfaces via `hunch escalations` — the discoverable surface for what the silent hook found", () => {
+  const fixture = squashFixture();
+  try {
+    git(fixture.root, "update-ref", "ORIG_HEAD", fixture.oldRef);
+    const queueRun = runCli(fixture.root, "repair-provenance", "--from-hook", "--quiet");
+    assert.equal(queueRun.status, 0, queueRun.stderr);
+
+    const escRun = runCli(fixture.root, "escalations", "--json");
+    assert.equal(escRun.status, 1, "escalations exits non-zero when something needs a human decision");
+    const items = JSON.parse(escRun.stdout) as { kind: string; decisionIds: string[] }[];
+    const pending = items.find((i) => i.kind === "commit-repair-pending");
+    assert.ok(pending, "the queued repair appears as an escalation");
+    assert.deepEqual(pending!.decisionIds, ["dec_squash_fixture"]);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("repair-provenance --from-hook is silent and exits 0 when there's no ORIG_HEAD to react to", () => {
   const root = mkdtempSync(join(tmpdir(), "hunch-squash-noop-"));
   try {

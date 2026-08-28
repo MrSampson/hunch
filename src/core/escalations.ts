@@ -19,8 +19,9 @@
  */
 import type { Decision } from "./types.js";
 import { topicCollisions } from "./topics.js";
+import type { CommitRewrite } from "./commitrepair.js";
 
-export type EscalationKind = "topic-conflict" | "policy-candidate" | "policy-proposal" | "policy-repaired" | "premise-stale";
+export type EscalationKind = "topic-conflict" | "policy-candidate" | "policy-proposal" | "policy-repaired" | "premise-stale" | "commit-repair-pending";
 
 export interface Escalation {
   kind: EscalationKind;
@@ -50,6 +51,25 @@ export function pendingEscalations(decisions: readonly Decision[]): Escalation[]
     });
   }
   return out;
+}
+
+/** A commit-provenance repair the post-merge hook detected and queued
+ *  (src/core/repairqueue.ts) but never applied — the match signal (related_files
+ *  overlap) isn't strong enough to write unattended, so it's a question for the
+ *  human, exactly like every other entry here, never a silent write. */
+export function commitRepairEscalations(queued: readonly CommitRewrite[], decisions: readonly Decision[]): Escalation[] {
+  const byId = new Map(decisions.map((d) => [d.id, d] as const));
+  return queued.map((r) => {
+    const title = byId.get(r.id)?.title;
+    return {
+      kind: "commit-repair-pending",
+      topic: r.id,
+      decisionIds: [r.id],
+      question: `${r.id}${title ? ` ("${title}")` : ""}'s commit was squash-merged away — apply the detected replacement?`,
+      detail: `${r.from} → ${r.to}`,
+      resolution: `hunch repair-provenance --apply — or leave it queued to decide later`,
+    };
+  });
 }
 
 /** The minimal policy shape the escalation scan needs — a structural subset of
