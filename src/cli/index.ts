@@ -5010,11 +5010,12 @@ program
       const decisions = store.recs("decisions");
 
       // One save path for every queue mutation below — a future change to
-      // queue semantics has exactly one write call to touch, not four
-      // independently-reasoned ones (a real bug: Update 6 added the prune
-      // below, Update 7 hardened it, but a later write site kept the OLD
-      // "clear everything targeted" logic and silently reintroduced the same
-      // failure class on decisions invisible this run).
+      // queue semantics has exactly one write call to touch, not several
+      // independently-reasoned ones. This file has twice shipped the same
+      // failure class from that fragmentation: one write site's "is this
+      // entry resolved" logic gets fixed while a sibling write site quietly
+      // keeps reasoning about the queue differently, deleting an entry the
+      // fixed site would have left alone.
       let queue = readPendingRepairs(root);
       const save = (next: readonly CommitRewrite[]): void => {
         queue = [...next];
@@ -5033,6 +5034,11 @@ program
       // targeting other ids, without risking a false prune. Deferred until
       // after --range validation so a pure usage error changes nothing.
       const deadEntries = deadRewrites(queue, decisions);
+      // Remembered for --only below: targeting an id that was pruned THIS
+      // run is not the same usage error as targeting an id that never
+      // existed — the human's target was real and is now resolved, not
+      // unrecognized.
+      const onlyWasPruned = !!opts.only && deadEntries.some((r) => r.id === opts.only);
       if (deadEntries.length) {
         const deadIds = new Set(deadEntries.map((r) => r.id));
         save(queue.filter((r) => !deadIds.has(r.id)));
@@ -5060,9 +5066,8 @@ program
         }
         if (!opts.apply) return;
       }
-      const rewrites = queue;
 
-      if (!rewrites.length) {
+      if (!queue.length) {
         if (!opts.quiet) console.log("✓ Nothing to repair — no orphaned commit reference matched unambiguously, and nothing queued from an earlier run.");
         return;
       }
@@ -5071,8 +5076,14 @@ program
       // leaving every other queued/matched candidate exactly as it was — the
       // escalation asks a per-decision question, so the answer surface should
       // let a human accept one without also accepting everything else queued.
-      const toApply = opts.only ? rewrites.filter((r) => r.id === opts.only) : rewrites;
+      const toApply = opts.only ? queue.filter((r) => r.id === opts.only) : queue;
       if (opts.only && !toApply.length) {
+        if (onlyWasPruned) {
+          // Not a usage error: the human's target was real, and this run
+          // already resolved it above (see the prune's own message for why).
+          if (!opts.quiet) console.log(`"${opts.only}" was pruned earlier in this run — nothing left to do.`);
+          return;
+        }
         if (!opts.fromHook) fail(`no queued or matched entry for "${opts.only}"`);
         return;
       }
@@ -5084,9 +5095,12 @@ program
       const visibleIds = new Set(decisions.map((d) => d.id));
       if (!opts.apply) {
         if (!opts.quiet) {
-          console.log(`Would repair ${toApply.length} commit reference(s):`);
+          const invisibleCount = toApply.filter((r) => !visibleIds.has(r.id)).length;
+          console.log(invisibleCount
+            ? `Would repair ${toApply.length - invisibleCount} of ${toApply.length} listed:`
+            : `Would repair ${toApply.length} commit reference(s):`);
           for (const r of toApply) console.log(`  ${r.id}  ${r.from} → ${r.to}${visibleIds.has(r.id) ? "" : "  (not visible this run — --apply would leave it queued)"}`);
-          console.log(dim("\nDry run — nothing changed. Re-run with --apply."));
+          console.log(dim("\nDry run — no decision was rewritten. Re-run with --apply."));
         }
         return;
       }
@@ -5109,19 +5123,18 @@ program
       // so it stays queued rather than being swept up just because it was in
       // `toApply`. This also covers --only: toApply is just the one targeted
       // id, so an invisible target is left queued instead of deleted
-      // unresolved — the exact bug this consolidation exists to prevent from
-      // recurring at a fifth write site.
+      // unresolved.
       const resolvedIds = resolvedRewriteIds(toApply, decisions);
-      save(rewrites.filter((r) => !resolvedIds.has(r.id)));
+      save(queue.filter((r) => !resolvedIds.has(r.id)));
       if (!appliedIds.size) {
+        // deadRewrites already pruned any VISIBLE decision that moved on or
+        // was superseded/rejected, so a targeted id that IS visible always
+        // reaches repairDecisionCommit with a matching `from` and is always
+        // healed into a new object (appliedIds.add fires unconditionally for
+        // every visible match) — reaching here is only possible when every
+        // targeted candidate's decision was invisible this run.
         if (!opts.quiet) {
-          // "Moved on" (repairDecisionCommit's own bail) and "not visible this
-          // run" are different answers — only the first means nothing further
-          // to do here. resolvedIds is empty exactly when every targeted
-          // candidate's decision was invisible this run (see above).
-          console.log(resolvedIds.size
-            ? "✓ Nothing to repair — every candidate had already moved on."
-            : "Nothing applied — none of the targeted decision(s) are visible this run (branch checkout, or a private overlay not mounted?). Left queued for a run where they are.");
+          console.log("Nothing applied — none of the targeted decision(s) are visible this run (branch checkout, or a private overlay not mounted?). Left queued for a run where they are — or `hunch repair-provenance --drop <dec_id>` if a decision is gone for good.");
         }
         return;
       }
@@ -5133,7 +5146,7 @@ program
         for (const r of toApply) if (appliedIds.has(r.id)) console.log(`  ${r.id}  ${r.from} → ${r.to}`);
         const stillQueued = toApply.filter((r) => !resolvedIds.has(r.id));
         if (stillQueued.length) {
-          console.log(`\n${stillQueued.length} entr${stillQueued.length === 1 ? "y" : "ies"} not visible this run, left queued: ${stillQueued.map((r) => r.id).join(", ")}`);
+          console.log(`\n${stillQueued.length} entr${stillQueued.length === 1 ? "y" : "ies"} not visible this run, left queued: ${stillQueued.map((r) => r.id).join(", ")} — or \`hunch repair-provenance --drop <dec_id>\` if a decision is gone for good.`);
         }
       }
     } catch (err) {

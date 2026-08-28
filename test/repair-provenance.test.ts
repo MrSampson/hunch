@@ -304,6 +304,24 @@ test("repair-provenance self-prunes a permanently-dead queue entry on every run,
   }
 });
 
+test("repair-provenance --apply --only <id-pruned-this-run> exits 0 with an explanatory message, not a usage error", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    // dec_a is real and queued, but this run's own prune resolves it before
+    // --only ever gets to look for it — that's not the same situation as
+    // targeting an id that never existed.
+    const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
+    decA.commit = "sha_a_moved_on";
+    writeFileSync(fixture.decisionFile("dec_a"), JSON.stringify(decA, null, 2) + "\n");
+
+    const run = runCli(fixture.root, "repair-provenance", "--apply", "--only", "dec_a");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /"dec_a" was pruned earlier in this run/);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("repair-provenance's prune message doesn't claim 'moved on' for a decision that simply has no commit on record", () => {
   const fixture = twoDecisionQueueFixture();
   try {
@@ -424,6 +442,7 @@ test("repair-provenance --apply --only <invisible-id> reports it couldn't see th
     assert.equal(run.status, 0, run.stderr);
     assert.match(run.stdout, /are visible this run/);
     assert.doesNotMatch(run.stdout, /already moved on/, "the decision wasn't seen at all — that's a different, more actionable answer than 'moved on'");
+    assert.match(run.stdout, /--drop <dec_id>/, "names the escape hatch for a decision that's actually gone for good, not just transiently invisible");
   } finally {
     fixture.cleanup();
   }
@@ -436,7 +455,7 @@ test("repair-provenance dry run marks a listed entry whose decision isn't visibl
 
     const run = runCli(fixture.root, "repair-provenance");
     assert.equal(run.status, 0, run.stderr);
-    assert.match(run.stdout, /Would repair 2 commit reference/);
+    assert.match(run.stdout, /Would repair 1 of 2 listed/, "one of the two is annotated not-visible, so the count must not overclaim both are repairable");
     assert.match(run.stdout, /dec_a.*not visible this run/, "dec_a's row is marked — --apply can't actually resolve it");
     assert.doesNotMatch(run.stdout, /dec_b.*not visible this run/, "dec_b IS visible — its row must not be marked");
   } finally {
@@ -453,6 +472,7 @@ test("repair-provenance --apply reports which entries stayed queued unresolved, 
     assert.equal(run.status, 0, run.stderr);
     assert.match(run.stdout, /Repaired 1 commit reference/);
     assert.match(run.stdout, /not visible this run, left queued: dec_a/, "a human reading the success output should learn dec_a is still pending, not silently dropped");
+    assert.match(run.stdout, /--drop <dec_id>/, "names the escape hatch for a decision that's actually gone for good");
   } finally {
     fixture.cleanup();
   }
