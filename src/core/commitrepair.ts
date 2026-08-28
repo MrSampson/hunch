@@ -60,6 +60,16 @@ export function planCommitRepair(
   return { rewrites, records: [...new Set(rewrites.map((r) => r.id))] };
 }
 
+/** Combine a freshly-computed plan's rewrites with anything already queued
+ *  (src/core/repairqueue.ts) from an earlier detection, deduped by decision id.
+ *  A fresh match — computed just now, against the current range — overrides a
+ *  queued one for the same decision; queued entries no longer reachable are
+ *  simply not repeated by the fresh scan. */
+export function mergeRewrites(fresh: readonly CommitRewrite[], queued: readonly CommitRewrite[]): CommitRewrite[] {
+  const freshIds = new Set(fresh.map((r) => r.id));
+  return [...fresh, ...queued.filter((r) => !freshIds.has(r.id))];
+}
+
 /** Pure: rewrite `commit` and its matching `commit:<sha>` evidence entry for one
  *  decision, or return the same reference when the plan doesn't touch it.
  *  If the record moved on since the plan was built (its commit no longer equals

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit } from "../src/core/commitrepair.js";
+import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites } from "../src/core/commitrepair.js";
 import type { Decision } from "../src/core/types.js";
 import type { CommitCandidate, CommitRepairStatus } from "../src/extractors/git.js";
 
@@ -111,4 +111,23 @@ test("repairDecisionCommit: bails atomically when the record's commit moved on s
   });
   const plan = { rewrites: [{ id: "dec_1", from: "sha_old", to: "sha_new" }], records: ["dec_1"] };
   assert.equal(repairDecisionCommit(d, plan), d);
+});
+
+test("mergeRewrites: a fresh match overrides a queued match for the same decision", () => {
+  const fresh = [{ id: "dec_1", from: "sha_old", to: "sha_fresh" }];
+  const queued = [{ id: "dec_1", from: "sha_old", to: "sha_stale" }];
+  assert.deepEqual(mergeRewrites(fresh, queued), [{ id: "dec_1", from: "sha_old", to: "sha_fresh" }]);
+});
+
+test("mergeRewrites: queued-only and fresh-only entries both pass through", () => {
+  const fresh = [{ id: "dec_fresh", from: "a", to: "b" }];
+  const queued = [{ id: "dec_queued", from: "c", to: "d" }];
+  const merged = mergeRewrites(fresh, queued);
+  assert.equal(merged.length, 2);
+  assert.deepEqual(merged.find((r) => r.id === "dec_fresh"), fresh[0]);
+  assert.deepEqual(merged.find((r) => r.id === "dec_queued"), queued[0]);
+});
+
+test("mergeRewrites: empty inputs produce an empty result", () => {
+  assert.deepEqual(mergeRewrites([], []), []);
 });
