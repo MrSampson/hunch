@@ -793,7 +793,11 @@ function stagedMemoryPaths(hunchDir: string, env: NodeJS.ProcessEnv): StagedMemo
 function isDerivedStoreArtifact(relativeName: string): boolean {
   return /^[^/]+\.sqlite[^/]*$/i.test(relativeName)
     || relativeName.split("/").some((segment) => segment.includes(".tmp"))
-    || relativeName === "events.log";
+    || relativeName === "events.log"
+    // The post-merge hook's detected-but-unconfirmed repair queue (repairqueue.ts):
+    // clone-local scratch, never a memory record — must never ride a public flush's
+    // `git add .` or an overlay's force-add allowlist into shared/pushed memory.
+    || relativeName === "pending-commit-repairs.json";
 }
 
 /** Enumerate ordinary JSON files already contained under an overlay. Push-capable
