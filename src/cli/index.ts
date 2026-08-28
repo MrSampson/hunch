@@ -42,7 +42,8 @@ import {
 import { isGitRepo, isGitRepoRoot, sameGitPublication, sameRemoteUrl, canonicalRemoteUrl, repositoryUsesRemote, headSha, isolatedHeadSha, logSince, lastChangeDate, stagedFiles, workingFiles, commitFiles, asOfDate, stagedDiff, workingDiff, commitDiff, rangeFiles, rangeDiff, rangeSubjects, revExists, revParse, commitAndPushHunch, pullHunchStatus, syncExistingHunch, gitUntrackCached, gitCommonDir, hooksDir, isLinkedWorktree, mainWorktreeRoot, gitMemoryLog, memoryMoveDiff, revertMemoryMove, pushCurrentBranch, commitChanges, commitRepairStatus, mergeRangeChanges, type HunchPullStatus } from "../extractors/git.js";
 import { parseMemoryLog, type MemoryMove } from "../core/memorylog.js";
 import { renamesOf, planRepair, repairDecision, repairConstraint, type RepairPlan } from "../core/repair.js";
-import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit } from "../core/commitrepair.js";
+import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites } from "../core/commitrepair.js";
+import { readPendingRepairs, writePendingRepairs } from "../core/repairqueue.js";
 import { planPolicyRepair, repairPolicySpec, type PolicyBindingRewrite } from "../constitution/repairPolicies.js";
 import { writeTeamConfig, ensureTeamOverlay, readTeamConfig, safeGitUrl, safeTeamRef, overlayMatchesTeamRemote, advertisedTeamRemoteContract, boundedTeamGitEnv, cloneValidatedTeamOverlay, explicitTeamRemoteContract, teamRemoteContract } from "../integrations/team.js";
 import { runbookId, decisionId } from "../core/ids.js";
@@ -4618,8 +4619,8 @@ program
 // ---- repair-provenance (squash-merge commit provenance repair) ------------
 program
   .command("repair-provenance")
-  .description("Self-repair: rewrite a decision's commit provenance after its commits were squash-merged away, matched by exact related_files overlap against the newly merged commit range — zero guessing beyond that. Dry-run unless --apply; the post-merge hook applies this automatically in the background.")
-  .option("--apply", "rewrite provenance (auto-commits each touched store as a `repair` move)")
+  .description("Self-repair: detect a decision's commit provenance going orphaned by a squash-merge, matched by exact related_files overlap against the newly merged commit range — zero guessing beyond that. Detection always queues the match (.hunch/pending-commit-repairs.json, local-only); --apply is required to actually rewrite it. The post-merge hook runs detection automatically in the background but never passes --apply — the match signal isn't strong enough to trust an unattended write into shared team memory.")
+  .option("--apply", "rewrite provenance for every queued and freshly-matched candidate (auto-commits each touched store as a `repair` move)")
   .option("--from-hook", "invoked by the git post-merge hook")
   .option("--quiet", "minimal output")
   .option("--range <old..new>", "commit range to scan for replacement commits (default: ORIG_HEAD..HEAD)")
@@ -4628,6 +4629,8 @@ program
     try {
       if (!isGitRepo(root)) { if (!opts.fromHook) fail("repair-provenance needs a git repo."); return; }
 
+      const queued = readPendingRepairs(root);
+
       let oldRef = "ORIG_HEAD";
       let newRef = "HEAD";
       if (opts.range) {
@@ -4635,47 +4638,68 @@ program
         if (parts.length !== 2 || !parts[0] || !parts[1]) { if (!opts.fromHook) fail('--range must look like "old..new"'); return; }
         [oldRef, newRef] = parts as [string, string];
       }
-      if (!revExists(oldRef, root) || !revExists(newRef, root)) {
+
+      const rangeResolves = revExists(oldRef, root) && revExists(newRef, root);
+      if (!rangeResolves && opts.range) {
+        // An explicitly-given range that doesn't resolve is a usage mistake, not
+        // "no merge happened yet" — surface it. (The installed hook never passes
+        // --range, so --from-hook never reaches this branch in practice.)
         if (!opts.fromHook) fail(`range "${oldRef}..${newRef}" does not resolve in this repository`);
         return;
       }
 
-      const candidates = mergeRangeChanges(oldRef, newRef, root);
-      if (!candidates.length) {
-        if (!opts.quiet) console.log("✓ Nothing to repair — the range contains no new commits.");
-        return;
-      }
-
+      const candidates = rangeResolves ? mergeRangeChanges(oldRef, newRef, root) : [];
       const decisions = store.recs("decisions");
-      const orphaned = orphanedCommitDecisions(decisions, (sha) => commitRepairStatus(sha, newRef, root));
-      const plan = planCommitRepair(orphaned, candidates);
-      if (!plan.rewrites.length) {
-        if (!opts.quiet) console.log("✓ Nothing to repair — no orphaned commit reference matched the merged range unambiguously.");
+      const orphaned = candidates.length ? orphanedCommitDecisions(decisions, (sha) => commitRepairStatus(sha, newRef, root)) : [];
+      const freshPlan = candidates.length ? planCommitRepair(orphaned, candidates) : { rewrites: [], records: [] };
+
+      // Detection always queues a fresh match — local-only, never committed, so
+      // it's safe to persist unconditionally. This is what makes running
+      // opportunistically (from the hook) worth anything: the match survives
+      // past this process exiting and past ORIG_HEAD getting overwritten by the
+      // next merge, so a human can confirm it later with `--apply` alone.
+      if (freshPlan.rewrites.length) writePendingRepairs(root, mergeRewrites(freshPlan.rewrites, queued));
+
+      const rewrites = mergeRewrites(freshPlan.rewrites, queued);
+      if (!rewrites.length) {
+        if (!opts.quiet) console.log("✓ Nothing to repair — no orphaned commit reference matched unambiguously, and nothing queued from an earlier run.");
         return;
       }
 
       if (!opts.apply) {
         if (!opts.quiet) {
-          console.log(`Would repair ${plan.rewrites.length} commit reference(s):`);
-          for (const r of plan.rewrites) console.log(`  ${r.id}  ${r.from} → ${r.to}`);
+          console.log(`Would repair ${rewrites.length} commit reference(s):`);
+          for (const r of rewrites) console.log(`  ${r.id}  ${r.from} → ${r.to}`);
           console.log(dim("\nDry run — nothing changed. Re-run with --apply."));
         }
         return;
       }
 
+      const plan = { rewrites, records: [...new Set(rewrites.map((r) => r.id))] };
       const touchedHomes = new Set<MemoryHome>();
+      const appliedIds = new Set<string>();
       for (const d of decisions) {
         const healed = repairDecisionCommit(d, plan);
         if (healed === d) continue;
         const home = decisionMemoryHome(store, d.id);
         store.putWhereItLives("decisions", healed);
         touchedHomes.add(home);
+        appliedIds.add(d.id);
+      }
+      // Every candidate in `rewrites` (fresh + previously queued) is now either
+      // applied or found stale (its decision moved on since it was matched) —
+      // neither case is worth retrying with the same {from, to} pair.
+      writePendingRepairs(root, []);
+      if (!appliedIds.size) {
+        if (!opts.quiet) console.log("✓ Nothing to repair — every candidate had already moved on.");
+        return;
       }
       store.reindex();
-      pumpMemoryHomes(store, root, touchedHomes, `hunch: repair ${plan.rewrites.length} commit reference(s) after squash-merge (${oldRef}..${newRef})`);
+      const rangeLabel = rangeResolves ? `${oldRef}..${newRef}` : "queued";
+      pumpMemoryHomes(store, root, touchedHomes, `hunch: repair ${appliedIds.size} commit reference(s) after squash-merge (${rangeLabel})`);
       if (!opts.quiet) {
-        console.log(`✓ Repaired ${plan.rewrites.length} commit reference(s):`);
-        for (const r of plan.rewrites) console.log(`  ${r.id}  ${r.from} → ${r.to}`);
+        console.log(`✓ Repaired ${appliedIds.size} commit reference(s):`);
+        for (const r of rewrites) if (appliedIds.has(r.id)) console.log(`  ${r.id}  ${r.from} → ${r.to}`);
       }
     } catch (err) {
       if (!opts.fromHook) throw err;
@@ -5063,7 +5087,7 @@ program
       if (commitUnresolvable.length) {
         console.log(`${commitUnresolvable.length} decision(s) cite a commit that no longer resolves in this repository:\n`);
         for (const f of commitUnresolvable) console.log(`· ${f.id} — ${f.detail}`);
-        console.log(`\nHeal: this is a HUMAN call — \`hunch repair-provenance\` already tries this automatically via the post-merge hook while the commit is still resolvable; if it's already gone, manually correct the decision's provenance or leave it as historical record.\n`);
+        console.log(`\nHeal: this is a HUMAN call — check \`hunch repair-provenance\` for a queued match (the post-merge hook detects these automatically while the commit is still resolvable, but never applies one unattended); run \`hunch repair-provenance --apply\` to confirm it, or if the commit is already gone, manually correct the decision's provenance or leave it as historical record.\n`);
       }
       console.log(`Hunch never rewrites prose for you; this is a read-only reconciliation report.`);
     } finally {

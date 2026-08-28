@@ -91,7 +91,10 @@ function squashFixture(): { root: string; decisionFile: string; oldRef: string; 
   return { root, decisionFile, oldRef: origHead, newRef: newHead, origCommit, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
-test("repair-provenance --apply rewrites commit + evidence to the squash-merge commit", () => {
+const queueFile = (root: string): string => join(root, ".hunch", "pending-commit-repairs.json");
+const readQueue = (root: string): unknown[] => JSON.parse(readFileSync(queueFile(root), "utf8"));
+
+test("repair-provenance --range --apply rewrites commit + evidence directly, and leaves the queue empty", () => {
   const fixture = squashFixture();
   try {
     const run = runCli(fixture.root, "repair-provenance", "--range", `${fixture.oldRef}..${fixture.newRef}`, "--apply");
@@ -102,12 +105,13 @@ test("repair-provenance --apply rewrites commit + evidence to the squash-merge c
     assert.equal(repaired.commit, shortNewRef);
     assert.deepEqual(repaired.provenance.evidence, [`commit:${shortNewRef}`]);
     assert.match(git(fixture.root, "log", "-1", "--format=%s"), /^hunch: repair 1 commit reference\(s\) after squash-merge/);
+    assert.deepEqual(readQueue(fixture.root), [], "every candidate this run applied or went stale — queue clears");
   } finally {
     fixture.cleanup();
   }
 });
 
-test("repair-provenance dry run (no --apply) reports the plan but changes nothing", () => {
+test("repair-provenance dry run (no --apply) reports the plan, queues it, and changes nothing", () => {
   const fixture = squashFixture();
   try {
     const before = readFileSync(fixture.decisionFile, "utf8");
@@ -115,23 +119,52 @@ test("repair-provenance dry run (no --apply) reports the plan but changes nothin
     assert.equal(run.status, 0, run.stderr);
     assert.match(run.stdout, /Would repair 1 commit reference/);
     assert.equal(readFileSync(fixture.decisionFile, "utf8"), before);
+    const queue = readQueue(fixture.root) as { id: string; from: string; to: string }[];
+    assert.equal(queue.length, 1);
+    assert.equal(queue[0]!.id, "dec_squash_fixture");
   } finally {
     fixture.cleanup();
   }
 });
 
-test("repair-provenance --from-hook --apply (no --range) repairs via the real default ORIG_HEAD..HEAD, exactly as the installed hook invokes it", () => {
+test("repair-provenance --from-hook (no --apply, matches installed hook exactly) detects and QUEUES, never writes the decision", () => {
   const fixture = squashFixture();
   try {
     // ORIG_HEAD is what a real merge/reset/rebase leaves behind; set it directly
     // so this exercises the hook's actual flags with no --range override.
     git(fixture.root, "update-ref", "ORIG_HEAD", fixture.oldRef);
-    const run = runCli(fixture.root, "repair-provenance", "--from-hook", "--quiet", "--apply");
+    const before = readFileSync(fixture.decisionFile, "utf8");
+    const run = runCli(fixture.root, "repair-provenance", "--from-hook", "--quiet");
     assert.equal(run.status, 0, run.stderr);
-    assert.equal(run.stdout.trim(), "", "quiet mode prints nothing on success");
+    assert.equal(run.stdout.trim(), "", "quiet mode prints nothing");
+    assert.equal(readFileSync(fixture.decisionFile, "utf8"), before, "the hook never writes the decision — detect only");
+    assert.equal(git(fixture.root, "status", "--porcelain"), "", "no auto-commit from a detect-only run");
+    const queue = readQueue(fixture.root) as { id: string; from: string; to: string }[];
+    assert.equal(queue.length, 1);
+    assert.equal(queue[0]!.id, "dec_squash_fixture");
+    assert.equal(queue[0]!.to, git(fixture.root, "rev-parse", "--short", fixture.newRef));
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --apply picks up a match from the queue even once the range that found it no longer resolves", () => {
+  const fixture = squashFixture();
+  try {
+    git(fixture.root, "update-ref", "ORIG_HEAD", fixture.oldRef);
+    const queueRun = runCli(fixture.root, "repair-provenance", "--from-hook", "--quiet");
+    assert.equal(queueRun.status, 0, queueRun.stderr);
+    assert.equal(readQueue(fixture.root).length, 1, "sanity: the match was queued");
+
+    // Prove the queue — not a re-resolved range — supplies the match: remove
+    // ORIG_HEAD entirely before applying.
+    git(fixture.root, "update-ref", "-d", "ORIG_HEAD");
+
+    const applyRun = runCli(fixture.root, "repair-provenance", "--quiet", "--apply");
+    assert.equal(applyRun.status, 0, applyRun.stderr);
     const repaired = JSON.parse(readFileSync(fixture.decisionFile, "utf8")) as Decision;
-    assert.notEqual(repaired.commit, fixture.origCommit, "commit was rewritten away from the orphaned sha");
     assert.equal(repaired.commit, git(fixture.root, "rev-parse", "--short", fixture.newRef));
+    assert.deepEqual(readQueue(fixture.root), [], "applied entry is cleared from the queue");
   } finally {
     fixture.cleanup();
   }
