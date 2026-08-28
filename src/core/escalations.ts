@@ -20,7 +20,7 @@
  */
 import type { Decision } from "./types.js";
 import { topicCollisions } from "./topics.js";
-import type { CommitRewrite } from "./commitrepair.js";
+import { liveRewrites, type CommitRewrite } from "./commitrepair.js";
 import { importedAdrReviewHash, importedAdrSourceHash, pendingImportedAdrReviews } from "./importReview.js";
 
 export type EscalationKind = "topic-conflict" | "imported-adr-review" | "policy-candidate" | "policy-proposal" | "policy-repaired" | "premise-stale" | "commit-repair-pending";
@@ -78,21 +78,26 @@ export function pendingEscalations(decisions: readonly Decision[]): Escalation[]
 /** A commit-provenance repair the post-merge hook detected and queued
  *  (src/core/repairqueue.ts) but never applied — the match signal (related_files
  *  overlap) isn't strong enough to write unattended, so it's a question for the
- *  human, exactly like every other entry here, never a silent write. */
-export function commitRepairEscalations(queued: readonly CommitRewrite[], decisions: readonly Decision[]): Escalation[] {
+ *  human, exactly like every other entry here, never a silent write.
+ *
+ *  `decisions` is the caller's VISIBLE scope (supplies the title only) —
+ *  MCP/SessionStart pass store.advisoryRecs(), which is public-only in
+ *  private mode. `live` is the scope liveRewrites checks the repair against;
+ *  it defaults to `decisions` but callers on an advisory scope must pass the
+ *  FULL store (store.recs()) here, since repair-provenance itself reads the
+ *  full store — an overlay decision's repair is fully answerable even where
+ *  its title isn't visible, and must not go silent just because the title is
+ *  private. */
+export function commitRepairEscalations(queued: readonly CommitRewrite[], decisions: readonly Decision[], live: readonly Decision[] = decisions): Escalation[] {
   const byId = new Map(decisions.map((d) => [d.id, d] as const));
-  return queued
-    // A queued entry whose decision is gone, or whose commit already moved on,
-    // is not a question anymore — repairDecisionCommit's own stale-plan bail
-    // would refuse to apply it, so asking would be permanently unanswerable.
-    .filter((r) => byId.get(r.id)?.commit === r.from)
+  return liveRewrites(queued, live)
     .map((r) => {
-      const title = byId.get(r.id)!.title;
+      const title = byId.get(r.id)?.title;
       return {
         kind: "commit-repair-pending",
         topic: r.id,
         decisionIds: [r.id],
-        question: `${r.id} ("${title}")'s commit is no longer reachable from HEAD (likely squash-merged away), and one newly-merged commit touches all its related files — apply the proposed replacement?`,
+        question: `${r.id}${title ? ` ("${title}")` : ""}'s commit is no longer reachable from HEAD (likely squash-merged away), and one newly-merged commit touches all its related files — apply the proposed replacement?`,
         detail: `${r.from} → ${r.to}`,
         resolution: `hunch repair-provenance --apply --only ${r.id} to accept just this one, --drop ${r.id} to clear it from the queue for now (a later detection may re-queue the same match if it still holds), or leave it queued to decide later`,
       };

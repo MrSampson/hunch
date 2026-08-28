@@ -283,6 +283,27 @@ test("repair-provenance --apply --only <id> applies just that decision, leaving 
   }
 });
 
+test("repair-provenance self-prunes a permanently-dead queue entry on every run, even when --only targets a different id", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    // dec_a's decision moved on since the entry was queued — the queue's
+    // "sha_a_old" no longer matches, so repairDecisionCommit would refuse
+    // this entry forever. Without self-pruning it would sit in the queue
+    // past any number of --only runs targeting other entries.
+    const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
+    decA.commit = "sha_a_moved_on";
+    writeFileSync(fixture.decisionFile("dec_a"), JSON.stringify(decA, null, 2) + "\n");
+
+    const run = runCli(fixture.root, "repair-provenance", "--apply", "--only", "dec_b", "--quiet");
+    assert.equal(run.status, 0, run.stderr);
+
+    const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string }[];
+    assert.deepEqual(queue, [], "dec_a's dead entry is pruned on read, not left behind just because --only targeted dec_b");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("repair-provenance --only <id-not-present> reports nothing to apply and changes nothing", () => {
   const fixture = twoDecisionQueueFixture();
   try {

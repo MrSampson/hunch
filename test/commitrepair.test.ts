@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites } from "../src/core/commitrepair.js";
+import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites, liveRewrites } from "../src/core/commitrepair.js";
 import type { Decision } from "../src/core/types.js";
 import type { CommitCandidate, CommitRepairStatus } from "../src/extractors/git.js";
 
@@ -130,4 +130,29 @@ test("mergeRewrites: queued-only and fresh-only entries both pass through", () =
 
 test("mergeRewrites: empty inputs produce an empty result", () => {
   assert.deepEqual(mergeRewrites([], []), []);
+});
+
+test("liveRewrites: drops an entry whose decision no longer exists or whose commit already moved on", () => {
+  const decisions = [
+    D({ id: "dec_current", commit: "sha_old" }),
+    D({ id: "dec_moved_on", commit: "sha_moved" }),
+  ];
+  const queued = [
+    { id: "dec_current", from: "sha_old", to: "sha_new" },
+    { id: "dec_moved_on", from: "sha_old", to: "sha_new" }, // stale — commit no longer matches
+    { id: "dec_gone", from: "sha_old", to: "sha_new" }, // no such decision
+  ];
+  assert.deepEqual(liveRewrites(queued, decisions), [{ id: "dec_current", from: "sha_old", to: "sha_new" }]);
+});
+
+test("liveRewrites: excludes superseded/rejected decisions, same exclusion as orphanedCommitDecisions", () => {
+  const decisions = [
+    D({ id: "dec_superseded", commit: "sha_old", status: "superseded" }),
+    D({ id: "dec_rejected", commit: "sha_old", status: "rejected" }),
+  ];
+  const queued = [
+    { id: "dec_superseded", from: "sha_old", to: "sha_new" },
+    { id: "dec_rejected", from: "sha_old", to: "sha_new" },
+  ];
+  assert.deepEqual(liveRewrites(queued, decisions), []);
 });

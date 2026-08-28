@@ -115,3 +115,19 @@ test("commitRepairEscalations: a queued entry whose decision's commit already mo
   const items = commitRepairEscalations([{ id: "dec_1", from: "sha_old", to: "sha_new" }], decs);
   assert.deepEqual(items, []);
 });
+
+test("commitRepairEscalations: a decision invisible on the advisory scope (private overlay) still asks — liveness checked against the full store, not the visible one", () => {
+  const full = [D({ id: "dec_private", title: "Private decision", commit: "sha_old" })];
+  const visible: Decision[] = []; // e.g. store.advisoryRecs() in private mode never sees an overlay record
+  const items = commitRepairEscalations([{ id: "dec_private", from: "sha_old", to: "sha_new" }], visible, full);
+  assert.equal(items.length, 1, "the repair is fully answerable via repair-provenance, which reads the full store — the question must not go silent");
+  assert.equal(items[0]!.decisionIds[0], "dec_private");
+  assert.doesNotMatch(items[0]!.question, /Private decision/, "the visible (advisory) scope doesn't have this decision — never disclose its title from the full-store lookup");
+});
+
+test("commitRepairEscalations: without a third argument, liveness still defaults to the visible decisions list (backward compatible)", () => {
+  const decs = [D({ id: "dec_1", title: "Add the feature", commit: "sha_old" })];
+  const items = commitRepairEscalations([{ id: "dec_1", from: "sha_old", to: "sha_new" }], decs);
+  assert.equal(items.length, 1);
+  assert.match(items[0]!.question, /Add the feature/);
+});

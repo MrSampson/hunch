@@ -42,7 +42,7 @@ import {
 import { isGitRepo, isGitRepoRoot, sameGitPublication, sameRemoteUrl, canonicalRemoteUrl, repositoryUsesRemote, headSha, isolatedHeadSha, logSince, lastChangeDate, firstCommitForFile, stagedFiles, workingFiles, commitFiles, asOfDate, stagedDiff, workingDiff, commitDiff, rangeFiles, rangeDiff, rangeSubjects, revExists, revParse, commitAndPushHunch, pullHunchStatus, syncExistingHunch, gitUntrackCached, gitCommonDir, hooksDir, isLinkedWorktree, mainWorktreeRoot, gitMemoryLog, memoryMoveDiff, revertMemoryMove, pushCurrentBranch, commitChanges, commitRepairStatus, mergeRangeChanges, type HunchPullStatus } from "../extractors/git.js";
 import { parseMemoryLog, type MemoryMove } from "../core/memorylog.js";
 import { renamesOf, planRepair, repairDecision, repairConstraint, type RepairPlan } from "../core/repair.js";
-import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites } from "../core/commitrepair.js";
+import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites, liveRewrites } from "../core/commitrepair.js";
 import { readPendingRepairs, writePendingRepairs } from "../core/repairqueue.js";
 import { planPolicyRepair, repairPolicySpec, type PolicyBindingRewrite } from "../constitution/repairPolicies.js";
 import { writeTeamConfig, ensureTeamOverlay, readTeamConfig, safeGitUrl, safeTeamRef, overlayMatchesTeamRemote, advertisedTeamRemoteContract, boundedTeamGitEnv, cloneValidatedTeamOverlay, explicitTeamRemoteContract, teamRemoteContract } from "../integrations/team.js";
@@ -4202,7 +4202,12 @@ program
           if (pendingReview > 0) L.push(`${pendingReview} legacy un-vouched draft(s) — adopt as advisory memory with \`hunch adopt-drafts\` (new captures auto-trust).`);
           const escalations = pendingEscalations(decisions);
           escalations.push(...premiseEscalations(decisions, { now: new Date().toISOString(), exists: (p) => existsSync(join(paths.root, p)) }));
-          escalations.push(...commitRepairEscalations(readPendingRepairs(paths.root), decisions));
+          // liveness checked against the full store even in private mode — a
+          // private-overlay decision's repair is fully answerable via
+          // `hunch repair-provenance` (which reads the full store), so it
+          // must not go silently unanswerable just because its title stays
+          // out of session transcripts. Only the id and commit shas surface.
+          escalations.push(...commitRepairEscalations(readPendingRepairs(paths.root), decisions, s.recs("decisions")));
           try {
             // Constitution human moments ride the same line; a broken policy store
             // must never take session-start orientation down (fail open). Public
@@ -4982,7 +4987,16 @@ program
     try {
       if (!isGitRepo(root)) { if (!opts.fromHook) fail("repair-provenance needs a git repo."); return; }
 
-      const queued = readPendingRepairs(root);
+      const decisions = store.recs("decisions");
+      // A queue entry liveRewrites rejects (decision gone, commit moved on,
+      // or since superseded/rejected) is permanently dead — repairDecisionCommit
+      // would refuse it forever. Prune it here, on every run, so the queue
+      // can't accumulate a dead entry that outlives any number of --only
+      // runs targeting other ids, and so this command's own dry-run/apply
+      // output can never disagree with what `hunch escalations` still asks.
+      const queuedRaw = readPendingRepairs(root);
+      const queued = liveRewrites(queuedRaw, decisions);
+      if (queued.length !== queuedRaw.length) writePendingRepairs(root, queued);
 
       let oldRef = "ORIG_HEAD";
       let newRef = "HEAD";
@@ -5002,7 +5016,6 @@ program
       }
 
       const candidates = rangeResolves ? mergeRangeChanges(oldRef, newRef, root) : [];
-      const decisions = store.recs("decisions");
       const orphaned = candidates.length ? orphanedCommitDecisions(decisions, (sha) => commitRepairStatus(sha, newRef, root)) : [];
       const freshPlan = candidates.length ? planCommitRepair(orphaned, candidates) : { rewrites: [], records: [] };
 
@@ -5587,12 +5600,10 @@ program
       // post-commit install (it never hooks an un-hooked repo — see
       // isGitRepo(root) && hookStatus(root).postCommit above) — so the fix
       // hint must not point there when post-commit itself is missing.
-      const hint = !missing.length
-        ? `hooks:      post-commit, post-merge installed${hooks.preCommit ? " (+ pre-commit)" : ""}`
-        : !hooks.postCommit
-          ? `hooks:      ⚠ missing ${missing.join(", ")} — run \`hunch init\` for the full setup`
-          : `hooks:      ⚠ missing ${missing.join(", ")} — run \`hunch index\` to install it`;
-      console.log(hint);
+      const fix = !hooks.postCommit ? "run `hunch init` for the full setup" : "run `hunch index` to install it";
+      console.log(`hooks:      ${missing.length
+        ? `⚠ missing ${missing.join(", ")} — ${fix}`
+        : `post-commit, post-merge installed${hooks.preCommit ? " (+ pre-commit)" : ""}`}`);
     }
     // In unified mode the public .hunch directory is only a routing shell.
     // Report the same effective manifest that `hunch migrate` reads and stamps,

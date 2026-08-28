@@ -60,6 +60,22 @@ export function planCommitRepair(
   return { rewrites, records: [...new Set(rewrites.map((r) => r.id))] };
 }
 
+/** Whether a queued rewrite is still worth acting on: the decision it names
+ *  still exists, still cites the commit the entry expects to replace (a
+ *  decision that already moved on would make repairDecisionCommit's own
+ *  stale-plan bail refuse it), and hasn't since been superseded/rejected —
+ *  same exclusion as orphanedCommitDecisions, since repairing dead history's
+ *  provenance isn't worth asking about. The single predicate every consumer
+ *  (the escalation surface, repair-provenance's own dry-run/apply/queue
+ *  pruning) shares, so they can never disagree about the same entry. */
+export function liveRewrites(queued: readonly CommitRewrite[], decisions: readonly Decision[]): CommitRewrite[] {
+  const byId = new Map(decisions.map((d) => [d.id, d] as const));
+  return queued.filter((r) => {
+    const d = byId.get(r.id);
+    return !!d && d.commit === r.from && d.status !== "superseded" && d.status !== "rejected";
+  });
+}
+
 /** Combine a freshly-computed plan's rewrites with anything already queued
  *  (src/core/repairqueue.ts) from an earlier detection, deduped by decision id.
  *  A fresh match — computed just now, against the current range — overrides a

@@ -1094,7 +1094,11 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
       if (pendingReview > 0) L.push("", `${pendingReview} legacy un-vouched draft(s) — \`hunch adopt-drafts\` auto-trusts them as advisory (new captures land trusted automatically).`);
       const escalations = pendingEscalations(store.advisoryRecs("decisions"));
       escalations.push(...premiseEscalations(store.advisoryRecs("decisions"), { now: new Date().toISOString(), exists: (p) => existsSync(join(root, p)) }));
-      escalations.push(...commitRepairEscalations(readPendingRepairs(root), store.advisoryRecs("decisions")));
+      // liveness checked against the full store (repair-provenance reads the
+      // full store too) even though the title stays scoped to advisoryRecs —
+      // an overlay decision's repair is fully answerable, so it must not go
+      // silent here just because its title is private.
+      escalations.push(...commitRepairEscalations(readPendingRepairs(root), store.advisoryRecs("decisions"), store.recs("decisions")));
       if (escalations.length) {
         L.push("", `⚖ ${escalations.length} decision(s) need the human's call — ASK inline (never queue): ${escalations.map((e) => e.question).join(" · ")}`);
       }
@@ -1114,7 +1118,7 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
     {
       title: "Decisions the human must make now (ask inline, not a queue)",
       description:
-        "The rare decisions the graph cannot resolve on its own — surfaced so you ASK THE USER in the prompt at the moment, then act. Auto-captured memory is trusted automatically and never appears here; this returns topic conflicts (>1 live decision for one topic), premise-stale decisions (a live decision whose recorded REASON no longer holds — its authority is unchanged until the human re-attests, supersedes, or retires), one exact imported ADR at a time awaiting approve/decline, a queued commit-provenance repair (the post-merge hook detected a decision's commit was squash-merged away but never applies the fix unattended — apply with `hunch repair-provenance --apply` or leave it queued), and Constitution human moments (candidate policies awaiting review, proposed policies awaiting an activation decision). Normally empty. Raise each question with the user; do NOT decide it for them — an entry is a question, silence is never approval. Reads the public store, or the unified overlay when the repo is in shared mode (where the overlay IS the store) — never private-mode overlay records.",
+        "The rare decisions the graph cannot resolve on its own — surfaced so you ASK THE USER in the prompt at the moment, then act. Auto-captured memory is trusted automatically and never appears here; this returns topic conflicts (>1 live decision for one topic), premise-stale decisions (a live decision whose recorded REASON no longer holds — its authority is unchanged until the human re-attests, supersedes, or retires), one exact imported ADR at a time awaiting approve/decline, a queued commit-provenance repair (the post-merge hook detected a decision's commit was squash-merged away but never applies the fix unattended — apply with `hunch repair-provenance --apply` or leave it queued), and Constitution human moments (candidate policies awaiting review, proposed policies awaiting an activation decision). Normally empty. Raise each question with the user; do NOT decide it for them — an entry is a question, silence is never approval. Reads the public store, or the unified overlay when the repo is in shared mode (where the overlay IS the store) — never private-mode overlay records, EXCEPT a queued commit-repair's liveness is checked against the full store (so a private-overlay decision's fully-answerable repair doesn't go silently unanswerable); only its id and the commit shas ever surface, never its title.",
       inputSchema: {},
     },
     async (): Promise<ToolResult> => {
@@ -1122,7 +1126,8 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
       // Premise decay: a live decision whose recorded reason died. Question-framed
       // like every entry here — authority never changes until the human answers.
       items.push(...premiseEscalations(store.advisoryRecs("decisions"), { now: new Date().toISOString(), exists: (p) => existsSync(join(root, p)) }));
-      items.push(...commitRepairEscalations(readPendingRepairs(root), store.advisoryRecs("decisions")));
+      // See the sibling hunch_now handler above for why `live` is the full store.
+      items.push(...commitRepairEscalations(readPendingRepairs(root), store.advisoryRecs("decisions"), store.recs("decisions")));
       try {
         items.push(...policyEscalations(new ConstitutionService(store, root).list({ publicOnly: true }).map((p) => ({ ...p, last_action: p.audit.at(-1)?.action ?? null }))));
       } catch { /* constitution unavailable — memory escalations still surface */ }
