@@ -96,12 +96,18 @@ docs/superpowers/
 # private GTM/launch playbooks — keep local, never publish
 blog/LAUNCH.md
 blog/*.private.md
+# Private outreach research and contact state. Public documentation and the
+# approval-gated tooling are tracked; names, destinations and notes are not.
+.outreach/
 .env
 .env.*
 *.local.json
 api/.env
 
 bench/results/
+# Raw external-run transcripts are local working evidence. Named calibration,
+# preregistration, prediction, and verdict artifacts remain reviewable files.
+bench/external/results/????-??-??T??-??-??-???Z*.json
 
 # Constitution replay: disposable worktrees and derived snapshot graphs.
 .hunch-cache/

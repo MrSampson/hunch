@@ -22,9 +22,30 @@ import { revParse, asOfDate, revExists, lastChangeDate, rangeFiles, rangeDiff, c
 import { flushCapture, flushMemoryHome, pinSharedRemote } from "../integrations/sync.js";
 import { advertisedTeamRemoteContract, ensureTeamOverlay, overlayMatchesTeamRemote, readTeamConfig, teamRemoteContract, teamSharedRef } from "../integrations/team.js";
 import { formatStructure } from "../core/format.js";
-import { buildDeliveryEnvelope, type DeliveryEnvelope } from "../core/delivery.js";
+import { diagnoseIssueCorrectionStage, formatCorrectionStageDiagnostic } from "../core/correctionStage.js";
+import {
+  compileVerifiedEvidenceMap,
+  EvidenceExecutionSchema,
+  EvidenceInterventionSchema,
+  EvidenceProbeSchema,
+  formatVerifiedEvidenceMap,
+  VerifiedEvidenceReceiptSchema,
+} from "../core/evidenceMap.js";
+import { collectCorrectionStageSources } from "../extractors/correctionSources.js";
+import {
+  buildDeliveryEnvelope,
+  DELIVERY_PROFILE_POLICY_VERSION,
+  DELIVERY_PROFILES,
+  type DeliveryEnvelope,
+} from "../core/delivery.js";
+import {
+  CHANGE_IDENTITY_ALGORITHM,
+  CHANGE_IDENTITY_SCHEMA_VERSION,
+  deriveChangeIdentity,
+} from "../core/changeIdentity.js";
+import { armExecutionObligations, loadPipelineState, savePipelineState } from "../core/pipeline.js";
 import { recordServed } from "../core/served.js";
-import type { Runbook } from "../core/types.js";
+import { EdgeSchema, ResourceSchema, type Runbook } from "../core/types.js";
 import { compareCandidates } from "../core/compare.js";
 import { checkConformance } from "../core/conformance.js";
 import { ConstitutionService, policyEvaluationEnvelope } from "../constitution/service.js";
@@ -39,6 +60,7 @@ import { liveForTopic, historyForTopic, rejectedForTopic, captureConflicts } fro
 import { pendingEscalations, policyEscalations, type Escalation } from "../core/escalations.js";
 import { scanRecord, publicationWarning, loadVocabulary } from "../core/publication.js";
 import { premiseEscalations } from "../core/premises.js";
+import { applyImportedAdrReview, pendingImportedAdrReviews } from "../core/importReview.js";
 import { issueCaptureToken as issueToken, consumeCaptureToken as consumeToken } from "../core/capturetoken.js";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -151,36 +173,125 @@ const SEV_BUG: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 
 const more = (total: number, cap: number, hint = ""): string =>
   total > cap ? `\n  …(+${total - cap} more${hint ? ` — ${hint}` : ""})` : "";
 
+const EXECUTION_OBLIGATION_SCHEMA = z.object({
+  id: z.string(),
+  origin: z.enum(["memory", "episode", "manual"]),
+  category: z.enum(["evidence", "behavior", "types", "serialization", "compatibility", "other"]),
+  phase: z.enum(["session", "after-edit"]),
+  description: z.string(),
+  command_alternatives: z.array(z.array(z.string())),
+  expected: z.object({
+    success: z.boolean(),
+    output_includes: z.array(z.string()).optional(),
+    output_excludes: z.array(z.string()).optional(),
+  }),
+});
+
+const LANDSCAPE_SELECTION_RECEIPT_SCHEMA = z.object({
+  selectionReason: z.enum(["exact-target", "task-match", "orientation-root", "graph-neighbor", "graph-connection"]),
+  selectionRank: z.number().int().positive(),
+  rank: z.number().int().positive(),
+  deliveryReason: z.literal("ranked"),
+  required: z.literal(false),
+  blocking: z.literal(false),
+  provenanceStatus: z.literal("current"),
+  tokenCost: z.number().int().positive(),
+});
+
+const LANDSCAPE_FRAGMENT_SCHEMA = z.object({
+  schema: z.literal("hunch.landscape-fragment/1"),
+  authority: z.literal("human_confirmed"),
+  target: z.string(),
+  resources: z.array(LANDSCAPE_SELECTION_RECEIPT_SCHEMA.extend({ record: ResourceSchema })),
+  relationships: z.array(LANDSCAPE_SELECTION_RECEIPT_SCHEMA.extend({
+    selectionReason: z.literal("graph-connection"),
+    record: EdgeSchema,
+  })),
+  omitted: z.array(z.object({
+    kind: z.enum(["resources", "relationships"]),
+    recordId: z.string(),
+    reason: z.enum(["budget", "stale-provenance", "endpoint-not-delivered", "landscape-cap"]),
+    detail: z.string(),
+  })),
+  reviewIds: z.array(z.string()),
+  discoveryHashes: z.array(z.string()),
+  sourceRevisions: z.array(z.string()),
+  fragmentHash: z.string(),
+});
+
 /** Public MCP shape for the canonical delivery envelope. Keeping the schema on
  *  the tool means orchestrators can consume receipt facts without scraping the
  *  backward-compatible text block. */
 const DELIVERY_OUTPUT_SCHEMA = z.object({
+  schema_version: z.literal("hunch.delivery-envelope/1"),
+  profile: z.enum(DELIVERY_PROFILES),
+  ranking_policy: z.literal(DELIVERY_PROFILE_POLICY_VERSION),
+  receipt_id: z.string().regex(/^hdr_[a-f0-9]{24}$/),
   text: z.string(),
   delivered: z.array(z.object({
-    kind: z.enum(["constraints", "decisions", "bugs", "findings"]),
+    kind: z.enum(["constraints", "decisions", "bugs", "findings", "resources", "relationships"]),
     record_id: z.string(),
     rank: z.number().int().positive(),
     delivery_reason: z.enum(["ranked", "blocking-reserved"]),
     provenance_status: z.enum(["current", "unverified", "stale"]),
     token_cost: z.number().int().nonnegative(),
   })),
+  hypotheses: z.array(z.object({
+    kind: z.literal("decision"),
+    record_id: z.string(),
+    rank: z.number().int().positive(),
+    why: z.string(),
+    where: z.array(z.string()),
+    historical_pattern: z.string(),
+    verify: z.string(),
+    disprove: z.string(),
+    obligations: z.array(EXECUTION_OBLIGATION_SCHEMA),
+  })),
+  obligations: z.array(EXECUTION_OBLIGATION_SCHEMA),
   supplements: z.array(z.object({
     id: z.string(),
     kind: z.string(),
     delivered: z.boolean(),
-    reason: z.enum(["supplemental", "budget", "empty"]),
+    reason: z.enum(["supplemental", "budget", "empty", "abstained"]),
     rank: z.number().int().positive(),
     token_cost: z.number().int().nonnegative(),
   })),
   omitted: z.array(z.object({
-    kind: z.enum(["constraints", "decisions", "bugs", "findings"]),
+    kind: z.enum(["constraints", "decisions", "bugs", "findings", "resources", "relationships"]),
     record_id: z.string(),
-    reason: z.enum(["budget", "stale-provenance", "retired"]),
+    reason: z.enum(["budget", "stale-provenance", "retired", "actionability-cap", "endpoint-not-delivered", "landscape-cap", "profile-cap", "low-confidence", "insufficient-context", "low-relevance"]),
     detail: z.string(),
   })),
+  landscape: LANDSCAPE_FRAGMENT_SCHEMA.nullable(),
   budget_tokens: z.number().int().nonnegative(),
   used_chars: z.number().int().nonnegative(),
+  accounted_chars: z.number().int().nonnegative(),
   blocking_overflow: z.boolean(),
+  abstention: z.object({
+    active: z.boolean(),
+    withheld: z.number().int().nonnegative(),
+    reasons: z.object({
+      "low-confidence": z.number().int().nonnegative(),
+      "insufficient-context": z.number().int().nonnegative(),
+      "low-relevance": z.number().int().nonnegative(),
+    }),
+    retry_hint: z.string().nullable(),
+  }),
+});
+
+const CHANGE_IDENTITY_OUTPUT_SCHEMA = z.object({
+  schema: z.literal(CHANGE_IDENTITY_SCHEMA_VERSION),
+  algorithm: z.literal(CHANGE_IDENTITY_ALGORITHM),
+  change_id: z.string().regex(/^hchg_[a-f0-9]{24}$/),
+  base_revision: z.string().regex(/^[a-f0-9]{40,64}$/),
+  head_revision: z.string().regex(/^[a-f0-9]{40,64}$/),
+  base_tree: z.string().regex(/^[a-f0-9]{40,64}$/),
+  head_tree: z.string().regex(/^[a-f0-9]{40,64}$/),
+  delta_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  patch_id: z.string().regex(/^[a-f0-9]{40,64}$/).nullable(),
+  file_count: z.number().int().positive().max(16_384),
+  paths_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  content_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
 });
 
 /** Return the same human-readable brief older clients consume plus the exact
@@ -196,6 +307,10 @@ function deliveredContext(
   // advertised MCP contract, the SDK will reject the call and the local ledger
   // must not claim that response was served.
   const structuredContent = DELIVERY_OUTPUT_SCHEMA.parse(envelope);
+  if (sessionId) {
+    const state = armExecutionObligations(loadPipelineState(sessionId), structuredContent.obligations, { replaceOrigin: "memory" });
+    savePipelineState(sessionId, state);
+  }
   recordServed(root, structuredContent.delivered.map((item) => ({
     event: "served",
     kind: item.kind,
@@ -206,6 +321,8 @@ function deliveredContext(
     delivery_reason: item.delivery_reason,
     provenance_status: item.provenance_status,
     token_cost: item.token_cost,
+    delivery_profile: structuredContent.profile,
+    ranking_policy: structuredContent.ranking_policy,
   })));
   return {
     content: [{ type: "text", text: structuredContent.text }],
@@ -805,6 +922,36 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
     },
   );
 
+  // -- hunch_change_identity (squash-stable exact delta identity) ------------
+  server.registerTool(
+    "hunch_change_identity",
+    {
+      title: "Derive an exact squash-stable change identity",
+      description:
+        "Content-address the exact Git tree delta between two revisions. Commit messages, authors and squash metadata do not affect the identity; whitespace, paths, modes and blob bytes do. Read-only and deterministic.",
+      inputSchema: {
+        base_ref: z.string().min(1).max(1_024).describe("Base commit or ref for the exact tree transition."),
+        head_ref: z.string().min(1).max(1_024).optional().describe("Head commit or ref (default HEAD)."),
+        cwd: cwdHintField,
+      },
+      outputSchema: CHANGE_IDENTITY_OUTPUT_SCHEMA,
+    },
+    async ({ base_ref, head_ref }): Promise<ToolResult> => {
+      try {
+        const identity = CHANGE_IDENTITY_OUTPUT_SCHEMA.parse(deriveChangeIdentity(root, base_ref, head_ref ?? "HEAD"));
+        return {
+          content: [{
+            type: "text",
+            text: `${identity.change_id} — ${identity.file_count} exact file delta(s), ${identity.delta_hash}; sealed ${identity.content_hash}`,
+          }],
+          structuredContent: identity,
+        };
+      } catch (error) {
+        return err((error as Error).message);
+      }
+    },
+  );
+
   // -- hunch_context (surgical retrieval) -----------------------------------
   server.registerTool(
     "hunch_context",
@@ -815,11 +962,12 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
       inputSchema: {
         target: z.string().describe("A file path, symbol, or task phrase you're about to work on."),
         budget_tokens: z.number().optional().describe("Rough token budget for the brief (default 1500)."),
+        profile: z.enum(DELIVERY_PROFILES).optional().describe("Delivery role: builder (default), reviewer, or architect. Changes non-blocking order only."),
         as_of: z.string().optional().describe("Time-travel ref (commit/tag/branch): assemble the slice as it stood then."),
       },
       outputSchema: DELIVERY_OUTPUT_SCHEMA,
     },
-    async ({ target, budget_tokens, as_of }, extra): Promise<ToolResult> => {
+    async ({ target, budget_tokens, profile, as_of }, extra): Promise<ToolResult> => {
       const asOf = as_of ? asOfDate(as_of, root) : undefined;
       if (as_of && !asOf) return err(`Could not resolve as_of "${as_of}" to a commit.`);
       const ctx = store.assembleContext(target, budget_tokens ?? 1500, { asOf });
@@ -829,11 +977,19 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
         components: store.recs("components"),
         decisionCorpus: store.recs("decisions"),
         historical: !!asOf,
+        profile: profile ?? "builder",
       };
       // Task-phrase input ("improve retrieval ranking") resolves no file/symbol and
       // used to return an empty brief while the graph held the answer — fall back to
       // FTS so the assistant always leaves with the closest matches, not a shrug.
-      const empty = !ctx.constraints.length && !ctx.decisions.length && !ctx.bugs.length && !ctx.blast_radius.length;
+      const empty =
+        !ctx.constraints.length &&
+        !ctx.decisions.length &&
+        !ctx.bugs.length &&
+        !ctx.blast_radius.length &&
+        !ctx.findings.length &&
+        !ctx.landscape?.resources.length &&
+        !ctx.landscape?.relationships.length;
       if (empty && !asOf) {
         const hits = store.search(target, 8);
         if (hits.length) {
@@ -864,6 +1020,55 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
     },
   );
 
+  // -- hunch_shortlist (bounded correction-stage diagnostic) ----------------
+  server.registerTool(
+    "hunch_shortlist",
+    {
+      title: "Shortlist the likely correction stage and declarations",
+      description:
+        "Experimental, deterministic, read-only repository-adaptive diagnostic for a schema/validation issue or reproduction. Preserves a flat top five, adds a transfer-tested hierarchical inspection view, and emits an efficiency-tested advisory progressive inspection queue capped at eleven declarations with deterministic receipts. Optional authenticated same-claim evidence is annotated but cannot reorder candidates because fresh transfer rejected that mechanism. It never claims an exact implementation owner or per-case confidence and does not edit, gate, or capture memory.",
+      inputSchema: {
+        issue: z.string().min(1).max(100_000).describe("Issue report or reproduction prose, including observed and expected behavior when available."),
+        limit: z.number().int().min(1).max(5).optional().describe("Candidate count, capped at five (default 5)."),
+        evidence: VerifiedEvidenceReceiptSchema.optional().describe("Optional verified evidence for this exact issue claim. It is reported and attached to candidates but cannot change ranking."),
+        cwd: cwdHintField,
+      },
+    },
+    async ({ issue, limit, evidence }): Promise<ToolResult> => {
+      try {
+        const collection = collectCorrectionStageSources(root, issue);
+        const diagnostic = diagnoseIssueCorrectionStage(issue, collection.sources, limit ?? 5, evidence);
+        return ok(`${formatCorrectionStageDiagnostic(diagnostic)}\nScan: ${collection.files_read} source file(s), ${collection.files_skipped} skipped by safety/budget limits.`);
+      } catch (error) {
+        return err(`Could not build the correction-stage shortlist: ${(error as Error).message}`);
+      }
+    },
+  );
+
+  // -- hunch_evidence_map (verified behavioral receipt compiler) ------------
+  server.registerTool(
+    "hunch_evidence_map",
+    {
+      title: "Compile a verified behavioral evidence map",
+      description:
+        "Compile supplied red-target/green-control, execution, and intervention observations into a bounded read-only evidence map. Useful for bugs, regressions, design invariants, and any other testable behavior. This tool executes no code, mutates nothing, and never converts behavioral influence into an exact correction-owner claim.",
+      inputSchema: {
+        version: z.literal(1).describe("Receipt schema version; currently 1."),
+        claim: z.string().trim().min(1).max(100_000).describe("The behavior or invariant being tested."),
+        probe: EvidenceProbeSchema,
+        execution: z.array(EvidenceExecutionSchema).max(500).optional(),
+        interventions: z.array(EvidenceInterventionSchema).max(500).optional(),
+      },
+    },
+    async (receipt): Promise<ToolResult> => {
+      try {
+        return ok(formatVerifiedEvidenceMap(compileVerifiedEvidenceMap(receipt)));
+      } catch (error) {
+        return err(`Could not compile the verified evidence map: ${(error as Error).message}`);
+      }
+    },
+  );
+
   // -- hunch_now (the hot view: recent activity + roadmap) --------------------
   // PUBLIC store only, per dec_29eff08c69's jurisdiction rule: an assistant may
   // paste this anywhere, so it must be publishable by construction. Union view
@@ -873,7 +1078,7 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
     {
       title: "Recent activity + the roadmap (the hot view)",
       description:
-        "What just happened and what's next, straight from the graph: the last N decisions (any status — a supersession IS activity) and the ROADMAP (every live human-vouched PROPOSED decision). Call at session start to orient, or before planning what to work on. Same data as the wiki's now.md. Public store only.",
+        "What just happened and what's next, straight from the graph: the last N decisions, the ROADMAP, and any inline human question such as an imported ADR awaiting explicit approve/decline. Call at session start to orient, or before planning what to work on. Same data as the wiki's now.md. Public store only.",
       inputSchema: {
         recent_limit: z.number().optional().describe("How many recent decisions to include (default 10)."),
       },
@@ -907,7 +1112,7 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
     {
       title: "Decisions the human must make now (ask inline, not a queue)",
       description:
-        "The rare decisions the graph cannot resolve on its own — surfaced so you ASK THE USER in the prompt at the moment, then act. Auto-captured memory is trusted automatically and never appears here; this returns topic conflicts (>1 live decision for one topic), premise-stale decisions (a live decision whose recorded REASON no longer holds — its authority is unchanged until the human re-attests, supersedes, or retires), and Constitution human moments (candidate policies awaiting review, proposed policies awaiting an activation decision). Normally empty. Raise each question with the user; do NOT decide it for them — an entry is a question, never an approval. Reads the public store, or the unified overlay when the repo is in shared mode (where the overlay IS the store) — never private-mode overlay records.",
+        "The rare decisions the graph cannot resolve on its own — surfaced so you ASK THE USER in the prompt at the moment, then act. This includes one exact imported ADR at a time awaiting approve/decline, topic conflicts, premise-stale decisions, and Constitution human moments. Normally empty. Raise each question with the user; do NOT decide it for them — an entry is a question, silence is never approval. Reads the public store, or the unified overlay when the repo is in shared mode (where the overlay IS the store) — never private-mode overlay records.",
       inputSchema: {},
     },
     async (): Promise<ToolResult> => {
@@ -926,6 +1131,51 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
         L.push(`   → ${e.resolution}`, "");
       }
       return ok(L.join("\n"));
+    },
+  );
+
+  // -- hunch_review_imported_adr (the chat-native countersign) --------------
+  server.registerTool(
+    "hunch_review_imported_adr",
+    {
+      title: "Apply the human's exact imported-ADR answer",
+      description:
+        "Use ONLY after the human explicitly answers the currently surfaced imported-ADR question with approve or decline in this conversation. Never infer approval from silence, continued work, a generic earlier sign-off, or the ADR file's own status. The source and review hashes bind the answer to both the exact bytes and mapped meaning shown. Approve grants human-confirmed authority; decline records review but keeps the ADR advisory.",
+      inputSchema: {
+        decision_id: z.string().regex(/^dec_[A-Za-z0-9_-]+$/),
+        expected_source_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+        expected_review_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/).describe("Mapped-decision hash printed with the question; catches importer-semantic changes even when source bytes are unchanged."),
+        disposition: z.enum(["approve", "decline"]),
+        reviewed_by: z.string().min(1).max(128).optional().describe("Credential-free reviewer label; defaults to human:interactive-chat for a direct answer in this chat."),
+        cwd: cwdHintField,
+      },
+    },
+    async ({ decision_id, expected_source_hash, expected_review_hash, disposition, reviewed_by }): Promise<ToolResult> => {
+      try {
+        const decision = store.advisoryRecs("decisions").find((candidate) => candidate.id === decision_id);
+        if (!decision) return err(`Imported ADR ${decision_id} is not present in the current advisory memory home.`);
+        const reviewed = applyImportedAdrReview(decision, {
+          disposition,
+          expectedSourceHash: expected_source_hash,
+          expectedReviewHash: expected_review_hash,
+          reviewer: reviewed_by ?? "human:interactive-chat",
+        });
+        const home = store.captureHome(false);
+        store.putCapture("decisions", reviewed, home === "private");
+        store.reindex();
+        if (home === "public" && !store.autoCommit) refreshExistingGrounding(root, store);
+        const flush = flushCapture(store, hunchPaths(root).hunch, home === "private", `hunch: ${disposition} imported ADR ${decision_id}`, startupTeamRoute ?? undefined);
+        const remaining = pendingImportedAdrReviews(store.advisoryRecs("decisions"));
+        const outcome = disposition === "approve"
+          ? `${decision_id} is now human-confirmed authority for ${expected_source_hash}.`
+          : `${decision_id} was reviewed for ${expected_source_hash} and remains advisory.`;
+        const next = remaining.length
+          ? ` ${remaining.length} imported live ADR(s) remain; call hunch_escalations and ask the next question separately.`
+          : " No imported ADR review questions remain.";
+        return ok(`✓ ${outcome}${flushNote(flush, home, store.mode)}${next}`);
+      } catch (error) {
+        return err(`Could not apply the imported-ADR answer: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   );
 

@@ -2,7 +2,7 @@
 
 Practical recipes for running Hunch day to day. Each recipe is copy-paste-able and states what you should observe when it works.
 
-> **Languages:** deep code-structure parsing covers TypeScript, JavaScript, Python, Go, YAML, and
+> **Languages:** deep code-structure parsing covers TypeScript, JavaScript, Python, Go, PHP, YAML, and
 > chart-scoped Helm templates (one `LanguageSpec` registry entry per language). The "why" layer — decisions, bugs,
 > rules — works for any language, since it reads your commits and diffs.
 
@@ -217,7 +217,8 @@ immediately, and renames heal their own bindings:
 hunch log                    # every memory move: capture · adopt · supersede · prune · repair
 hunch log --diff <sha>       # what one move changed
 hunch revert-move <sha>      # undo one move (local git revert, never pushed)
-hunch escalations            # the decisions only YOU can make — normally empty
+hunch escalations            # questions only YOU can answer — includes one imported ADR at a time
+hunch review                 # answer that ADR with hash-bound approve/decline commands
 hunch adopt-drafts           # one-time: clear a legacy draft backlog into advisory memory
 hunch push                   # the one deliberate outward step (memory auto-commits locally)
 ```
@@ -227,8 +228,9 @@ the bindings healed themselves; nothing went stale. In VS Code, the **Hunch Memo
 panel is the same spine with click-to-diff, one-click revert, and the inline
 activate / demote / withdraw / retire authority actions.
 
-**Rule of the loop:** advisory is automatic; *blocking* is always one explicit human
-click, and a repaired rule asks once for a fresh proof before it can block again.
+**Rule of the loop:** advisory is automatic; authority always requires an explicit human answer.
+Imported ADRs are asked inline, silence never approves, and changed source text invalidates the old
+answer. A repaired rule asks once for a fresh proof before it can block again.
 
 ---
 

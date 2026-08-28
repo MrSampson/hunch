@@ -1,5 +1,167 @@
 # Changelog
 
+## Unreleased
+
+## 1.20.0-rc.6 — 2026-08-28
+
+### Delivery adapts to the work without changing authority
+
+Hunch now seals `builder`, `reviewer`, and `architect` delivery profiles into every native receipt.
+Profiles only reorder and cap nonblocking material; blocking constraints remain first and mandatory,
+and provenance, currentness, abstention, and authority rules are identical across roles. The CLI,
+MCP surface, hooks, and Hunch Memory bridge share the same versioned policy.
+
+### Outcomes bind to the exact tree change
+
+The new `hunch.change-identity/1` receipt hashes Git's raw tree delta, including paths, modes,
+whitespace, and binary changes, while ignoring commit messages, authors, and squash metadata.
+Usefulness observations may carry that independently validated receipt, giving downstream outcome
+analysis an exact change boundary without granting ranking, promotion, or execution authority.
+
+## 1.20.0-rc.5 — 2026-08-28
+
+### Outcome evidence can return without silently becoming authority
+
+Hunch now owns the strict, content-addressed `hunch.usefulness-observation/1` contract. One terminal
+episode, exact Hunch Memory receipt, and delivered record identity produce one deterministic key;
+changed content under that key conflicts instead of becoming a second observation. The seal binds
+the episode, provider-native receipt hash, graph/source revision, record revision/content hash,
+bounded evidence references, and retention window while excluding transcripts and provider output.
+
+Every usefulness signal declares zero ranking, promotion, policy, or enforcement effect. Only
+contradiction and staleness can be converted into a new open advisory Finding, so outcome evidence
+creates review work without rewriting trusted knowledge. The contract is independently exercised
+through Hunch Memory's store-scoped issuance proof before that service enables its intake capability.
+
+### Infection evidence is signed and the next validation is blind
+
+The pinned Infection audit now has one content-bound final receipt covering the real ADR corpus,
+PHP graph, retrieval order, behavioral probes, Git-history participation, and explicit remaining
+limitations. The 13-record corpus is human-signed, all 10 live imported ADRs carry hash-bound human
+approval, and the 3 historical records remain historical. Corpus templates are also excluded
+without the former false "malformed filename" warning.
+
+The roadmap now requires the next Infection checkpoint to run on a fresh real Issue/PR whose target
+and expected answer were not used to build the feature. This separates implementation fixtures from
+transfer evidence and prevents a polished replay from being presented as independent validation.
+
+## 1.20.0-rc.4 — 2026-08-27
+
+### PHP repositories enter the production graph
+
+PHP now uses the existing native Tree-sitter graph pipeline instead of a parallel index. Hunch
+extracts namespaces, classes, interfaces, traits, enums, functions and methods; resolves safe
+Composer PSR-4 identities, namespace imports, includes, conservative calls and type relationships;
+and reports per-language eligible, parsed and skipped coverage. Type relationships now participate
+in path and impact queries, whose bounded BFS avoids the exponential simple-path enumeration exposed
+by Infection's 45,792-edge graph. The correction-source scan also includes production PHP while
+keeping exact-owner claims disabled.
+
+Pinned acceptance receipts cover Infection (1,822/1,823 PHP files parsed, with one tracked external
+symlink rejected) and Composer (622/622), including graph behavior and explicit uncertainty.
+
+### ADR import preserves corpus lifecycle and provenance
+
+ADR import now handles nested Markdown sections, safe `@` filenames, reference links, prose
+alternatives and explicit successor references without confusing issue numbers for ADRs. Corpus
+templates are excluded, source bytes and first-introduction commits are recorded, and successor
+dates close historical validity windows deterministically. The complete 13-record Infection receipt
+is checked in and intentionally remains pending human sign-off.
+
+Imported live ADRs now enter the graph as advisory memory and surface as plain approve/decline
+questions during normal assistant sessions, one at a time. The answer is bound to both the exact
+source bytes and the complete mapped decision meaning: approve adds human-confirmed authority,
+decline records review while keeping the memory advisory, silence changes nothing, and changed
+source or importer semantics reopen the question. CLI and MCP use the same review state.
+
+## 1.20.0-rc.3 — 2026-08-27
+
+### Exact graph snapshots no longer rewrite dense indexes once per record
+
+Snapshot producers can now replace one routed capture kind in a validated bulk operation while
+preserving Hunch's single-home collision rules. This removes quadratic JSON work for array-backed
+symbols and edges without weakening immutable-source scanning, atomic writes, shared-store routing,
+or fail-closed currentness. On the 667-file ORC production tree, the Hunch Memory pilot derived and
+persisted 5,247 symbols plus 16,051 edges in 28.1 seconds locally; the previous production path
+spent about 55 minutes repeatedly rewriting those arrays.
+
+## 1.20.0-rc.2 — 2026-08-27
+
+### The release candidate reports what actually happened
+
+When the selected synthesis provider exits successfully without returning a draft, Hunch can fall
+back to its deterministic local synthesis. The result now names that fallback as the provider that
+actually produced the draft instead of incorrectly crediting the silent provider. The release also
+removes a dependency-audit exception automatically once its formerly vulnerable package is no
+longer present, so an obsolete allowlist cannot linger unnoticed.
+
+The reviewed engineering-landscape transport introduced in rc.1 is otherwise unchanged.
+
+## 1.20.0-rc.1 — 2026-08-26
+
+### Reviewed engineering landscapes become a transportable contract
+
+Hunch can now discover bounded, credential-free landscape candidates from an exact Git revision,
+show them for review, and adopt only an explicit human-confirmed fragment. Replaying the same
+fragment is idempotent; changed content requires a new review; candidate, stale and retired records
+never become delivery authority. Reuse compares the complete reviewed record with the
+candidate-derived value, so copied review metadata cannot hide changed resource bytes.
+Bounded selection now reserves a reviewed repository-root slot when one exists and records the
+displaced task match as an omission, allowing consumers to bind source identity without increasing
+the selection cap. The later hard token budget remains authoritative and may still omit items.
+
+`hunch.delivery-envelope/1` now carries a deterministic, token-budgeted
+`hunch.landscape-fragment/1` with exact resources, relationships, review/discovery provenance,
+currentness and a content-addressed `hdr_*` receipt. The exported validator recomputes the native
+receipt and fragment hashes and rejects altered scope, ranks, selections, omissions, evidence or
+budget accounting. It also proves a unique one-to-one mapping from every landscape record to its
+exact delivery rank, reason, provenance status and token charge. CLI and MCP review/adopt surfaces
+use the same contract.
+
+This release candidate is the first package version that Hunch Memory can feature-detect for the
+reviewed landscape transport. Hunch still owns durable reviewed structure; Memory only transports
+one authenticated store's native envelope; ORC/Nuryel validates and freezes it before use. No layer
+may turn discovery candidates or provider prose into authority.
+
+## 1.19.0 — 2026-08-26
+
+### The release evidence is visible where people install
+
+The GitHub and npm README now put the preregistered correction-search results near the install path:
+changed-declaration coverage moved from 3/12 to 6/12, correct-file coverage from 8/12 to 10/12,
+and the progressive plan retained the same five hits while inspecting 41.9% fewer declarations.
+The copy keeps the evidence boundary explicit: these are narrow transfer results, evidence remains
+annotation-only, and Hunch does not claim universal 2× accuracy or an exact correction owner.
+
+The public site now carries the same measured release card, the stable installation path, and
+localized v1.19 release/changelog surfaces. Version 1.19.0 promotes the tested rc.1 implementation
+to npm's `latest` channel without changing its frozen algorithms or experiment receipts.
+
+## 1.19.0-rc.1 — 2026-08-25
+
+### Evidence-bounded correction search
+
+`hunch shortlist` now preserves its flat top five while adding repository-adaptive correction-stage
+ranking, file-anchored semantic declaration families, and a bounded progressive inspection queue.
+On a preregistered 12-case transfer, the supplemental cluster view found 6/12 changed declarations
+versus 3/12 for the flat shortlist (+25 percentage points) and raised correct-file coverage from
+8/12 to 10/12. On a separate 12-case transfer, the progressive queue retained all 5 full-cluster
+hits with zero losses while reducing mean inspection from 18.9 declarations to 11 (41.9% less).
+
+`hunch evidence-map` compiles authenticated red/green probe, execution, and intervention receipts
+into a read-only map. Fresh transfers did not establish execution or intervention influence as a
+reliable exact-owner signal, so evidence remains annotation-only: it cannot reorder the shortlist,
+and exact-owner and per-case confidence output remain disabled. The preregistrations, frozen
+predictions, positive receipts, and rejected follow-ups are retained under `bench/external/results`.
+
+### Reasoning that must meet evidence
+
+Delivery now abstains from low-confidence or task-irrelevant memory and emits at most two testable
+hypotheses. The agent pipeline can compile bounded executable obligations across runtime, static,
+serialization, and compatibility contracts, normalize tool outcomes, require a real pre-edit
+baseline, and track proof closure after edits. These controls fail open when no valid proof plan is
+provided and do not turn advisory memory into blocking authority.
+
 ## 1.18.1 — 2026-08-22
 
 ### Deprecated ADRs no longer invent successors

@@ -1,6 +1,6 @@
 {
   "name": "@davesheffer/hunch",
-  "version": "1.18.1",
+  "version": "1.20.0-rc.6",
   "mcpName": "io.github.davesheffer/hunch",
   "license": "Apache-2.0",
   "author": "Dave Sheffer <dave.sheffer1@gmail.com>",
@@ -58,7 +58,7 @@
     "build": "npm run clean && tsc -p tsconfig.json",
     "dev": "tsx src/cli/index.ts",
     "hunch": "tsx src/cli/index.ts",
-    "test": "tsx --test --test-concurrency=2 test/*.test.ts",
+    "test": "tsx --test --test-concurrency=4 test/*.test.ts",
     "test:e2e:md1": "tsx --test test/md1-e2e.test.ts",
     "test:e2e:team-matrix": "tsx --test test/team-matrix-e2e.test.ts",
     "verify:matrix": "node tooling/matrix-release-verification.mjs",
@@ -68,6 +68,7 @@
     "site:proof": "npm run build && node tooling/generate-public-proof.mjs",
     "bench:md1": "node tooling/md1-benchmark.mjs",
     "research:competitors": "node tooling/competitive-watch.mjs",
+    "outreach": "node tooling/outreach-pipeline.mjs",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
@@ -76,6 +77,7 @@
     "commander": "^15.0.0",
     "tree-sitter": "0.21.1",
     "tree-sitter-go": "^0.23.4",
+    "tree-sitter-php": "0.23.12",
     "tree-sitter-python": "0.23.4",
     "tree-sitter-typescript": "^0.23.2",
     "zod": "^4.4.3"

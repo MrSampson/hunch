@@ -48,6 +48,7 @@ tenant/project identity and eligibility scope
 ORC Run/Stage/attempt identity
 OutcomeContract version/hash
 exact starting and terminal revisions/state references
+optional exact `hunch.change-identity/1` when a branch may land through squash
 Hunch graph revision and native delivery receipt
 exact delivered record IDs
 resolved strategy/runtime/policy references
@@ -124,6 +125,31 @@ replay support appropriate to the claim.
 
 OEL-0 through OEL-3 are the first valuable slice. Later ranking or policy changes must pass Hunch's
 normal deterministic evaluation and authority gates.
+
+OEL-0 through OEL-3 are implemented across the service boundary. The Hunch-owned contract is
+`hunch.usefulness-observation/1`: one episode/receipt/record identity has one deterministic key, and
+different content under that key is a visible conflict. The seal binds the exact episode, current
+Hunch Memory receipt, graph/source revision, record revision/content hash and bounded external
+evidence references while excluding transcripts and provider output.
+
+`hunch.change-identity/1` is now the optional squash-stable binding for an episode's exact code
+change. It hashes Git's raw tree delta—paths, file modes and blob identities—so commit messages,
+authors and squash metadata do not change the ID, while whitespace-only, binary, rename/path and
+mode changes remain distinct. Git's looser stable patch ID is carried only for interoperability;
+it is never the Hunch authority. `hunch change-id` and `hunch_change_identity` expose the same
+sealed contract. When present on a usefulness observation, it changes the observation content seal
+but not the episode/receipt/record idempotency key, so conflicting change attribution fails visibly.
+
+Hunch Memory now resolves the authenticated store, proves the named issuance, validates and
+idempotently retains the observation, and reports privacy-safe aggregate coverage without exposing
+episode, receipt, record or evidence identifiers. ORC derives observations only from eligible
+terminal outcomes and delivers them through the exact project connection. Missing connections,
+unbound stores and delivery failures remain explicit operational states.
+
+Every observation still has zero behavioral, ranking, promotion or authority effect. Only
+`contradicted` and `stale` can become new open advisory Findings, and that conversion does not change
+trusted knowledge. OEL-4 ranking and replay experiments remain gated on a meaningful aggregate
+coverage baseline and the normal deterministic evaluation and authority checks.
 
 ## Non-goals
 
