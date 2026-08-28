@@ -149,7 +149,11 @@ test("commitsExist: a malformed multi-line sha can't desync the positional outpu
     const real = git(root, "rev-parse", "HEAD");
     // Embeds a newline, so unfiltered input would count as TWO lines sent to
     // `git cat-file --batch-check`, shifting every later sha's output line by
-    // one and letting a genuinely orphaned commit read back as resolved.
+    // one. With `real` next in line, that shift reads `real` against the
+    // malformed entry's OWN "missing" line — a false negative that would
+    // flag a genuinely resolvable commit as unresolvable (and, depending on
+    // what a later entry's line shifts into, could just as easily misread a
+    // truly orphaned commit as resolved instead — the shift can go either way).
     const malformed = "not-a-sha\nextra-line";
 
     const resolved = commitsExist([malformed, real], root);
