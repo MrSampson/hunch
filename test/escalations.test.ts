@@ -95,7 +95,9 @@ test("commitRepairEscalations: a queued match surfaces as one inline question na
   assert.equal(items[0]!.topic, "dec_1");
   assert.deepEqual(items[0]!.decisionIds, ["dec_1"]);
   assert.match(items[0]!.question, /Add the feature/);
-  assert.match(items[0]!.question, /squash-merged away/);
+  assert.match(items[0]!.question, /no longer reachable from HEAD/, "states the actual evidence, not a stated conclusion");
+  assert.match(items[0]!.question, /likely squash-merged away/, "still names the likely explanation, just not as asserted fact");
+  assert.match(items[0]!.question, /one newly-merged commit touches all its related files/);
   assert.equal(items[0]!.detail, "sha_old → sha_new");
   assert.match(items[0]!.resolution, /repair-provenance --apply/);
 });

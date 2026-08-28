@@ -87,7 +87,7 @@ export function commitRepairEscalations(queued: readonly CommitRewrite[], decisi
       kind: "commit-repair-pending",
       topic: r.id,
       decisionIds: [r.id],
-      question: `${r.id}${title ? ` ("${title}")` : ""}'s commit was squash-merged away — apply the detected replacement?`,
+      question: `${r.id}${title ? ` ("${title}")` : ""}'s commit is no longer reachable from HEAD (likely squash-merged away), and one newly-merged commit touches all its related files — apply the proposed replacement?`,
       detail: `${r.from} → ${r.to}`,
       resolution: `hunch repair-provenance --apply — or leave it queued to decide later`,
     };
