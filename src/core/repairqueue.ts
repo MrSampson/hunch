@@ -22,9 +22,16 @@ function isCommitRewrite(value: unknown): value is CommitRewrite {
   const { id, from, to } = value as CommitRewrite;
   // Non-empty, and to !== from — an empty target is never a useful rewrite,
   // and a no-op entry would apply "successfully" while accomplishing nothing.
-  // Not a hex-shape check: from/to are opaque strings elsewhere in this
-  // codebase's test fixtures, and git-facing lookups (commitRepairStatus,
-  // commitsExist) already validate shape where it actually matters.
+  // Deliberately NOT a hex-shape check: from/to are opaque strings elsewhere
+  // in this codebase's test fixtures, and repairDecisionCommit's own
+  // `d.commit === mine.from` guard already makes a garbage `from` inert (it
+  // can never match a real decision). A garbage `to`, however, is NOT
+  // validated anywhere on the path that matters most — applying a queued
+  // entry with no fresh range to resolve against (the normal "confirm a
+  // match from an earlier run" case) never calls commitRepairStatus or
+  // commitsExist at all, so an untrustworthy `to` would be written straight
+  // into a decision's commit field and evidence. That gap is real and is
+  // tracked separately, not closed here.
   return typeof id === "string" && !!id
     && typeof from === "string" && !!from
     && typeof to === "string" && !!to

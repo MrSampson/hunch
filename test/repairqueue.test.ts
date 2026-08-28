@@ -65,6 +65,17 @@ test("readPendingRepairs: filters out an entry with an empty to/from — never a
   } finally { cleanup(); }
 });
 
+test("readPendingRepairs: filters out an entry with an empty id", () => {
+  const { root, cleanup } = tmpRoot();
+  try {
+    writeFileSync(
+      join(root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([{ id: "", from: "a", to: "b" }, { id: "dec_ok", from: "a", to: "b" }]),
+    );
+    assert.deepEqual(readPendingRepairs(root), [{ id: "dec_ok", from: "a", to: "b" }]);
+  } finally { cleanup(); }
+});
+
 test("readPendingRepairs: filters out a no-op entry (to === from) — applying it would accomplish nothing", () => {
   const { root, cleanup } = tmpRoot();
   try {
