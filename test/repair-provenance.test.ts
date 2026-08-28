@@ -188,6 +188,114 @@ test("a queued repair surfaces via `hunch escalations` — the discoverable surf
   }
 });
 
+/** Two independent decisions, each with a queued repair, seeded directly (no
+ *  real squash-merge needed — that matching path is covered elsewhere). Lets
+ *  --only/--drop tests act on one entry and assert the other is untouched. */
+function twoDecisionQueueFixture(): { root: string; decisionFile: (id: string) => string; cleanup(): void } {
+  const root = mkdtempSync(join(tmpdir(), "hunch-squash-two-"));
+  git(root, "init", "-q", "-b", "main");
+  git(root, "config", "user.email", "test@example.com");
+  git(root, "config", "user.name", "Test Human");
+  ensureGitignore(root);
+  writeFileSync(join(root, "a.txt"), "x\n");
+  git(root, "add", "-A");
+  git(root, "commit", "-qm", "init");
+
+  const mkDecision = (id: string, commit: string): Decision => ({
+    id,
+    title: `Decision ${id}`,
+    topic: null,
+    status: "accepted",
+    context: "",
+    decision: `Decision ${id}.`,
+    consequences: [],
+    alternatives_rejected: [],
+    rejected_tripwires: [],
+    related_components: [],
+    related_files: [`src/${id}.ts`],
+    supersedes: null,
+    superseded_by: null,
+    caused_by_bug: null,
+    commit,
+    valid_from: "2026-01-01T00:00:00.000Z",
+    valid_to: null,
+    retired: { symbols: [], deps: [] },
+    provenance: { source: "human_confirmed", confidence: 1, evidence: [`commit:${commit}`], last_verified: "2026-01-01T00:00:00.000Z" },
+    date: "2026-01-01T00:00:00.000Z",
+  });
+
+  const store = new HunchStore(hunchPaths(root));
+  store.json.put("decisions", mkDecision("dec_a", "sha_a_old"));
+  store.json.put("decisions", mkDecision("dec_b", "sha_b_old"));
+  store.reindex();
+  store.close();
+  git(root, "add", ".hunch");
+  git(root, "commit", "-qm", "hunch: record dec_a and dec_b");
+
+  writeFileSync(
+    join(root, ".hunch", "pending-commit-repairs.json"),
+    JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: "sha_a_new" }, { id: "dec_b", from: "sha_b_old", to: "sha_b_new" }], null, 2) + "\n",
+  );
+
+  return {
+    root,
+    decisionFile: (id: string) => join(root, ".hunch/decisions", `${id}.json`),
+    cleanup: () => rmSync(root, { recursive: true, force: true }),
+  };
+}
+
+test("repair-provenance --drop removes one queued entry without applying anything", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    const headBefore = git(fixture.root, "rev-parse", "HEAD");
+    const run = runCli(fixture.root, "repair-provenance", "--drop", "dec_a", "--quiet");
+    assert.equal(run.status, 0, run.stderr);
+
+    const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string }[];
+    assert.deepEqual(queue.map((r) => r.id), ["dec_b"], "only the dropped entry is removed");
+
+    const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
+    const decB = JSON.parse(readFileSync(fixture.decisionFile("dec_b"), "utf8")) as Decision;
+    assert.equal(decA.commit, "sha_a_old", "dropping never applies a rewrite");
+    assert.equal(decB.commit, "sha_b_old", "the untargeted decision is untouched");
+    assert.equal(git(fixture.root, "rev-parse", "HEAD"), headBefore, "no commit was made");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --apply --only <id> applies just that decision, leaving the other queued", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    const run = runCli(fixture.root, "repair-provenance", "--apply", "--only", "dec_b", "--quiet");
+    assert.equal(run.status, 0, run.stderr);
+
+    const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
+    const decB = JSON.parse(readFileSync(fixture.decisionFile("dec_b"), "utf8")) as Decision;
+    assert.equal(decA.commit, "sha_a_old", "the untargeted decision is never applied");
+    assert.equal(decB.commit, "sha_b_new", "the targeted decision is applied");
+
+    const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string }[];
+    assert.deepEqual(queue.map((r) => r.id), ["dec_a"], "only the applied entry is cleared from the queue");
+    assert.match(git(fixture.root, "log", "-1", "--format=%s"), /^hunch: repair 1 commit reference\(s\)/);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --only <id-not-present> reports nothing to apply and changes nothing", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    const run = runCli(fixture.root, "repair-provenance", "--apply", "--only", "dec_missing");
+    assert.notEqual(run.status, 0);
+    assert.match(`${run.stdout}${run.stderr}`, /no queued or matched entry for "dec_missing"/);
+    const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
+    assert.equal(decA.commit, "sha_a_old");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("repair-provenance --from-hook is silent and exits 0 when there's no ORIG_HEAD to react to", () => {
   const root = mkdtempSync(join(tmpdir(), "hunch-squash-noop-"));
   try {

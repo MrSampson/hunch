@@ -4962,12 +4962,14 @@ program
 // ---- repair-provenance (squash-merge commit provenance repair) ------------
 program
   .command("repair-provenance")
-  .description("Self-repair: detect a decision's commit provenance going orphaned by a squash-merge, matched by exact related_files overlap against the newly merged commit range — zero guessing beyond that. Detection always queues the match (.hunch/pending-commit-repairs.json, local-only); --apply is required to actually rewrite it. The post-merge hook runs detection automatically in the background but never passes --apply — the match signal isn't strong enough to trust an unattended write into shared team memory.")
+  .description("Self-repair: detect a decision's commit provenance going orphaned by a squash-merge, matched by exact related_files overlap against the newly merged commit range — zero guessing beyond that. Detection always queues the match (.hunch/pending-commit-repairs.json, local-only); --apply is required to actually rewrite it, or --only <dec_id>/--drop <dec_id> to act on one queued decision at a time. The post-merge hook runs detection automatically in the background but never passes --apply — the match signal isn't strong enough to trust an unattended write into shared team memory.")
   .option("--apply", "rewrite provenance for every queued and freshly-matched candidate (auto-commits each touched store as a `repair` move)")
+  .option("--only <dec_id>", "with --apply, rewrite only this decision id — everything else stays queued untouched")
+  .option("--drop <dec_id>", "remove this decision id from the queue without applying it")
   .option("--from-hook", "invoked by the git post-merge hook")
   .option("--quiet", "minimal output")
   .option("--range <old..new>", "commit range to scan for replacement commits (default: ORIG_HEAD..HEAD)")
-  .action((opts: { apply?: boolean; fromHook?: boolean; quiet?: boolean; range?: string }) => {
+  .action((opts: { apply?: boolean; only?: string; drop?: string; fromHook?: boolean; quiet?: boolean; range?: string }) => {
     const { store, root } = storeFor();
     try {
       if (!isGitRepo(root)) { if (!opts.fromHook) fail("repair-provenance needs a git repo."); return; }
@@ -5001,24 +5003,46 @@ program
       // opportunistically (from the hook) worth anything: the match survives
       // past this process exiting and past ORIG_HEAD getting overwritten by the
       // next merge, so a human can confirm it later with `--apply` alone.
-      const rewrites = mergeRewrites(freshPlan.rewrites, queued);
+      let rewrites = mergeRewrites(freshPlan.rewrites, queued);
       if (freshPlan.rewrites.length) writePendingRepairs(root, rewrites);
+
+      if (opts.drop) {
+        const before = rewrites.length;
+        rewrites = rewrites.filter((r) => r.id !== opts.drop);
+        writePendingRepairs(root, rewrites);
+        if (!opts.quiet) {
+          console.log(rewrites.length === before
+            ? `Nothing queued or matched for "${opts.drop}" to drop.`
+            : `Dropped "${opts.drop}" from the queue.`);
+        }
+        if (!opts.apply) return;
+      }
 
       if (!rewrites.length) {
         if (!opts.quiet) console.log("✓ Nothing to repair — no orphaned commit reference matched unambiguously, and nothing queued from an earlier run.");
         return;
       }
 
+      // --only restricts the apply (or dry-run preview) to one decision id,
+      // leaving every other queued/matched candidate exactly as it was — the
+      // escalation asks a per-decision question, so the answer surface should
+      // let a human accept one without also accepting everything else queued.
+      const toApply = opts.only ? rewrites.filter((r) => r.id === opts.only) : rewrites;
+      if (opts.only && !toApply.length) {
+        if (!opts.fromHook) fail(`no queued or matched entry for "${opts.only}"`);
+        return;
+      }
+
       if (!opts.apply) {
         if (!opts.quiet) {
-          console.log(`Would repair ${rewrites.length} commit reference(s):`);
-          for (const r of rewrites) console.log(`  ${r.id}  ${r.from} → ${r.to}`);
+          console.log(`Would repair ${toApply.length} commit reference(s):`);
+          for (const r of toApply) console.log(`  ${r.id}  ${r.from} → ${r.to}`);
           console.log(dim("\nDry run — nothing changed. Re-run with --apply."));
         }
         return;
       }
 
-      const plan = { rewrites, records: [...new Set(rewrites.map((r) => r.id))] };
+      const plan = { rewrites: toApply, records: [...new Set(toApply.map((r) => r.id))] };
       const touchedHomes = new Set<MemoryHome>();
       const appliedIds = new Set<string>();
       for (const d of decisions) {
@@ -5029,10 +5053,13 @@ program
         touchedHomes.add(home);
         appliedIds.add(d.id);
       }
-      // Every candidate in `rewrites` (fresh + previously queued) is now either
+      // Every candidate actually targeted this run (toApply) is now either
       // applied or found stale (its decision moved on since it was matched) —
-      // neither case is worth retrying with the same {from, to} pair.
-      writePendingRepairs(root, []);
+      // neither case is worth retrying with the same {from, to} pair. Without
+      // --only that's everything in `rewrites`, so the queue clears entirely;
+      // with --only, only the targeted entry is resolved and the rest of the
+      // queue is left untouched for a later run to reconsider.
+      writePendingRepairs(root, opts.only ? rewrites.filter((r) => r.id !== opts.only) : []);
       if (!appliedIds.size) {
         if (!opts.quiet) console.log("✓ Nothing to repair — every candidate had already moved on.");
         return;
@@ -5042,7 +5069,7 @@ program
       pumpMemoryHomes(store, root, touchedHomes, `hunch: repair ${appliedIds.size} commit reference(s) after squash-merge (${rangeLabel})`);
       if (!opts.quiet) {
         console.log(`✓ Repaired ${appliedIds.size} commit reference(s):`);
-        for (const r of rewrites) if (appliedIds.has(r.id)) console.log(`  ${r.id}  ${r.from} → ${r.to}`);
+        for (const r of toApply) if (appliedIds.has(r.id)) console.log(`  ${r.id}  ${r.from} → ${r.to}`);
       }
     } catch (err) {
       if (!opts.fromHook) throw err;

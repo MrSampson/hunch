@@ -99,7 +99,8 @@ test("commitRepairEscalations: a queued match surfaces as one inline question na
   assert.match(items[0]!.question, /likely squash-merged away/, "still names the likely explanation, just not as asserted fact");
   assert.match(items[0]!.question, /one newly-merged commit touches all its related files/);
   assert.equal(items[0]!.detail, "sha_old → sha_new");
-  assert.match(items[0]!.resolution, /repair-provenance --apply/);
+  assert.match(items[0]!.resolution, /repair-provenance --apply --only dec_1/, "gives a copy-pasteable command targeting just this decision");
+  assert.match(items[0]!.resolution, /--drop dec_1/, "also offers discarding just this one without applying");
 });
 
 test("commitRepairEscalations: a queued entry whose decision no longer exists still asks, by id", () => {
