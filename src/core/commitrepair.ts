@@ -70,11 +70,12 @@ export function mergeRewrites(fresh: readonly CommitRewrite[], queued: readonly 
   return [...fresh, ...queued.filter((r) => !freshIds.has(r.id))];
 }
 
-/** Pure: rewrite `commit` and its matching `commit:<sha>` evidence entry for one
- *  decision, or return the same reference when the plan doesn't touch it.
- *  If the record moved on since the plan was built (its commit no longer equals
- *  the plan's `from`), bail entirely — commit and evidence rewrite together or
- *  not at all, never one without the other. */
+/** Pure: rewrite `commit` for one decision, and its matching `commit:<sha>`
+ *  evidence entry too if one is present (replaceExact is a no-op when the
+ *  evidence array never cited the old sha) — or return the same reference
+ *  when the plan doesn't touch it. If the record moved on since the plan was
+ *  built (its commit no longer equals the plan's `from`), bail entirely
+ *  rather than applying a now-stale match. */
 export function repairDecisionCommit(d: Decision, plan: CommitRepairPlan): Decision {
   const mine = plan.rewrites.find((r) => r.id === d.id);
   if (!mine || d.commit !== mine.from) return d;

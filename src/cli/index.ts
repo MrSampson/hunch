@@ -5001,9 +5001,9 @@ program
       // opportunistically (from the hook) worth anything: the match survives
       // past this process exiting and past ORIG_HEAD getting overwritten by the
       // next merge, so a human can confirm it later with `--apply` alone.
-      if (freshPlan.rewrites.length) writePendingRepairs(root, mergeRewrites(freshPlan.rewrites, queued));
-
       const rewrites = mergeRewrites(freshPlan.rewrites, queued);
+      if (freshPlan.rewrites.length) writePendingRepairs(root, rewrites);
+
       if (!rewrites.length) {
         if (!opts.quiet) console.log("✓ Nothing to repair — no orphaned commit reference matched unambiguously, and nothing queued from an earlier run.");
         return;
