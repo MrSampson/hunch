@@ -1073,13 +1073,16 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
   // -- hunch_now (the hot view: recent activity + roadmap) --------------------
   // PUBLIC store only, per dec_29eff08c69's jurisdiction rule: an assistant may
   // paste this anywhere, so it must be publishable by construction. Union view
-  // stays behind `hunch now --private` on the local terminal.
+  // stays behind `hunch now --private` on the local terminal. EXCEPTION: a
+  // queued commit-repair's liveness is checked against the full store (see
+  // below), so a private-overlay decision's id and commit shas — never its
+  // title — can surface in the escalation line.
   server.registerTool(
     "hunch_now",
     {
       title: "Recent activity + the roadmap (the hot view)",
       description:
-        "What just happened and what's next, straight from the graph: the last N decisions, the ROADMAP, and any inline human question such as an imported ADR awaiting explicit approve/decline. Call at session start to orient, or before planning what to work on. Same data as the wiki's now.md. Public store only.",
+        "What just happened and what's next, straight from the graph: the last N decisions, the ROADMAP, and any inline human question such as an imported ADR awaiting explicit approve/decline. Call at session start to orient, or before planning what to work on. Same data as the wiki's now.md. Public store only, EXCEPT a queued commit-repair's liveness is checked against the full store (so a private-overlay decision's fully-answerable repair doesn't go silently unanswerable); only its id and the commit shas ever surface, never its title.",
       inputSchema: {
         recent_limit: z.number().optional().describe("How many recent decisions to include (default 10)."),
       },
