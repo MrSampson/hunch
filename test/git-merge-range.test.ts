@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { commitRepairStatus, mergeRangeChanges } from "../src/extractors/git.js";
+import { commitRepairStatus, commitsExist, mergeRangeChanges } from "../src/extractors/git.js";
 
 function git(root: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
@@ -100,4 +100,55 @@ test("mergeRangeChanges: empty range yields no candidates", () => {
     git(root, "commit", "-qm", "base");
     assert.deepEqual(mergeRangeChanges("HEAD", "HEAD", root), []);
   } finally { cleanup(); }
+});
+
+test("mergeRangeChanges: a maxCount caps the range to the most recent commits", () => {
+  const { root, cleanup } = repo();
+  try {
+    writeFileSync(join(root, "a.txt"), "1\n");
+    git(root, "add", "a.txt");
+    git(root, "commit", "-qm", "base");
+    const base = git(root, "rev-parse", "HEAD");
+
+    writeFileSync(join(root, "b.txt"), "1\n");
+    git(root, "add", "b.txt");
+    git(root, "commit", "-qm", "add b");
+
+    writeFileSync(join(root, "c.txt"), "1\n");
+    git(root, "add", "c.txt");
+    git(root, "commit", "-qm", "add c");
+    const addC = git(root, "rev-parse", "--short", "HEAD");
+
+    const capped = mergeRangeChanges(base, "HEAD", root, 1);
+    assert.deepEqual(capped, [{ sha: addC, files: ["c.txt"] }], "only the single most recent commit, not b");
+  } finally { cleanup(); }
+});
+
+test("commitsExist: batches many shas into one lookup, empty input yields an empty set", () => {
+  const { root, cleanup } = repo();
+  try {
+    assert.deepEqual(commitsExist([], root), new Set());
+
+    writeFileSync(join(root, "a.txt"), "1\n");
+    git(root, "add", "a.txt");
+    git(root, "commit", "-qm", "base");
+    const real = git(root, "rev-parse", "HEAD");
+    const missing = "deadbeef00deadbeef00deadbeef00deadbeef00";
+
+    const resolved = commitsExist([real, missing, real, "not-a-sha"], root);
+    assert.deepEqual(resolved, new Set([real]), "only the real, existing commit resolves; duplicates and garbage don't break it");
+  } finally { cleanup(); }
+});
+
+test("commitsExist: returns null (not an empty set) when the check itself fails to run — never mistaken for 'nothing resolves'", () => {
+  const notARepo = mkdtempSync(join(tmpdir(), "hunch-not-a-repo-"));
+  try {
+    // No `git init` here — cat-file has nothing to run against, so the process
+    // itself errors. A caller that can't tell this apart from "checked and
+    // found nothing" would flag every commit as unresolvable — the opposite
+    // of failing open.
+    assert.equal(commitsExist(["deadbeef00deadbeef00deadbeef00deadbeef00"], notARepo), null);
+  } finally {
+    rmSync(notARepo, { recursive: true, force: true });
+  }
 });
