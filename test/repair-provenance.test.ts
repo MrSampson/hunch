@@ -304,6 +304,24 @@ test("repair-provenance self-prunes a permanently-dead queue entry on every run,
   }
 });
 
+test("repair-provenance's prune message doesn't claim 'moved on' for a decision that simply has no commit on record", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    // dec_a never had a commit at all (e.g. hand-edited or imported without
+    // one) — deadRewrites correctly prunes it (repairDecisionCommit would
+    // bail forever), but "moved on" isn't an accurate description.
+    const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
+    decA.commit = null;
+    writeFileSync(fixture.decisionFile("dec_a"), JSON.stringify(decA, null, 2) + "\n");
+
+    const run = runCli(fixture.root, "repair-provenance", "--apply", "--only", "dec_b");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /no commit on record/);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("repair-provenance announces a pruned dead entry unless --quiet, so a human isn't left guessing why --apply --only later reports nothing queued", () => {
   const fixture = twoDecisionQueueFixture();
   try {
@@ -355,6 +373,86 @@ test("repair-provenance never deletes a queued entry just because its decision i
 
     const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string }[];
     assert.deepEqual(queue.map((r) => r.id), ["dec_a"], "dec_a's entry survives even though its decision wasn't visible this run");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --apply (no --only) never deletes an invisible entry's queue slot just because the whole run's queue is otherwise cleared", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    // Same invisibility as above, but exercised via the completion write at
+    // the end of --apply (no --only): dec_a is never in `decisions`, so the
+    // apply loop can't mark it applied, yet the old code cleared the WHOLE
+    // queue on this path regardless.
+    rmSync(fixture.decisionFile("dec_a"));
+
+    const run = runCli(fixture.root, "repair-provenance", "--apply", "--quiet");
+    assert.equal(run.status, 0, run.stderr);
+
+    const decB = JSON.parse(readFileSync(fixture.decisionFile("dec_b"), "utf8")) as Decision;
+    assert.equal(decB.commit, "sha_b_new", "dec_b, which WAS visible, is still applied");
+
+    const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string }[];
+    assert.deepEqual(queue.map((r) => r.id), ["dec_a"], "dec_a's entry survives — it was never actually applied, so it must not be cleared");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --apply --only <invisible-id> never deletes that entry — it was targeted but never actually resolved", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    rmSync(fixture.decisionFile("dec_a"));
+
+    const run = runCli(fixture.root, "repair-provenance", "--apply", "--only", "dec_a", "--quiet");
+    assert.equal(run.status, 0, run.stderr);
+
+    const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string }[];
+    assert.deepEqual(queue.map((r) => r.id).sort(), ["dec_a", "dec_b"], "targeting an invisible id with --only must not delete it, or leave dec_b's untouched entry");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --apply --only <invisible-id> reports it couldn't see the decision, not that it 'already moved on'", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    rmSync(fixture.decisionFile("dec_a"));
+
+    const run = runCli(fixture.root, "repair-provenance", "--apply", "--only", "dec_a");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /are visible this run/);
+    assert.doesNotMatch(run.stdout, /already moved on/, "the decision wasn't seen at all — that's a different, more actionable answer than 'moved on'");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance dry run marks a listed entry whose decision isn't visible this run — --apply would leave it queued, not resolve it", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    rmSync(fixture.decisionFile("dec_a"));
+
+    const run = runCli(fixture.root, "repair-provenance");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /Would repair 2 commit reference/);
+    assert.match(run.stdout, /dec_a.*not visible this run/, "dec_a's row is marked — --apply can't actually resolve it");
+    assert.doesNotMatch(run.stdout, /dec_b.*not visible this run/, "dec_b IS visible — its row must not be marked");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --apply reports which entries stayed queued unresolved, alongside what it actually repaired", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    rmSync(fixture.decisionFile("dec_a"));
+
+    const run = runCli(fixture.root, "repair-provenance", "--apply");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /Repaired 1 commit reference/);
+    assert.match(run.stdout, /not visible this run, left queued: dec_a/, "a human reading the success output should learn dec_a is still pending, not silently dropped");
   } finally {
     fixture.cleanup();
   }

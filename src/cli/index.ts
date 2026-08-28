@@ -42,7 +42,7 @@ import {
 import { isGitRepo, isGitRepoRoot, sameGitPublication, sameRemoteUrl, canonicalRemoteUrl, repositoryUsesRemote, headSha, isolatedHeadSha, logSince, lastChangeDate, firstCommitForFile, stagedFiles, workingFiles, commitFiles, asOfDate, stagedDiff, workingDiff, commitDiff, rangeFiles, rangeDiff, rangeSubjects, revExists, revParse, commitAndPushHunch, pullHunchStatus, syncExistingHunch, gitUntrackCached, gitCommonDir, hooksDir, isLinkedWorktree, mainWorktreeRoot, gitMemoryLog, memoryMoveDiff, revertMemoryMove, pushCurrentBranch, commitChanges, commitRepairStatus, mergeRangeChanges, type HunchPullStatus } from "../extractors/git.js";
 import { parseMemoryLog, type MemoryMove } from "../core/memorylog.js";
 import { renamesOf, planRepair, repairDecision, repairConstraint, type RepairPlan } from "../core/repair.js";
-import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites, deadRewrites } from "../core/commitrepair.js";
+import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites, deadRewrites, resolvedRewriteIds, type CommitRewrite } from "../core/commitrepair.js";
 import { readPendingRepairs, writePendingRepairs } from "../core/repairqueue.js";
 import { planPolicyRepair, repairPolicySpec, type PolicyBindingRewrite } from "../constitution/repairPolicies.js";
 import { writeTeamConfig, ensureTeamOverlay, readTeamConfig, safeGitUrl, safeTeamRef, overlayMatchesTeamRemote, advertisedTeamRemoteContract, boundedTeamGitEnv, cloneValidatedTeamOverlay, explicitTeamRemoteContract, teamRemoteContract } from "../integrations/team.js";
@@ -5008,6 +5008,19 @@ program
       }
 
       const decisions = store.recs("decisions");
+
+      // One save path for every queue mutation below — a future change to
+      // queue semantics has exactly one write call to touch, not four
+      // independently-reasoned ones (a real bug: Update 6 added the prune
+      // below, Update 7 hardened it, but a later write site kept the OLD
+      // "clear everything targeted" logic and silently reintroduced the same
+      // failure class on decisions invisible this run).
+      let queue = readPendingRepairs(root);
+      const save = (next: readonly CommitRewrite[]): void => {
+        queue = [...next];
+        writePendingRepairs(root, queue);
+      };
+
       // Prune only PROVEN-dead entries (deadRewrites: the decision is present
       // and demonstrably moved on/superseded/rejected) — never an id merely
       // absent from `decisions` right now, which can just mean this run
@@ -5019,13 +5032,11 @@ program
       // actually-dead entry that outlives any number of --only runs
       // targeting other ids, without risking a false prune. Deferred until
       // after --range validation so a pure usage error changes nothing.
-      const queuedRaw = readPendingRepairs(root);
-      const deadEntries = deadRewrites(queuedRaw, decisions);
-      const deadIds = new Set(deadEntries.map((r) => r.id));
-      const queued = deadIds.size ? queuedRaw.filter((r) => !deadIds.has(r.id)) : queuedRaw;
-      if (deadIds.size) {
-        writePendingRepairs(root, queued);
-        if (!opts.quiet) console.log(`Pruned ${deadEntries.length} dead queue entr${deadEntries.length === 1 ? "y" : "ies"} (decision moved on or was superseded/rejected): ${deadEntries.map((r) => r.id).join(", ")}`);
+      const deadEntries = deadRewrites(queue, decisions);
+      if (deadEntries.length) {
+        const deadIds = new Set(deadEntries.map((r) => r.id));
+        save(queue.filter((r) => !deadIds.has(r.id)));
+        if (!opts.quiet) console.log(`Pruned ${deadEntries.length} dead queue entr${deadEntries.length === 1 ? "y" : "ies"} (decision moved on, has no commit on record, or was superseded/rejected): ${deadEntries.map((r) => r.id).join(", ")}`);
       }
 
       const candidates = rangeResolves ? mergeRangeChanges(oldRef, newRef, root) : [];
@@ -5037,20 +5048,19 @@ program
       // opportunistically (from the hook) worth anything: the match survives
       // past this process exiting and past ORIG_HEAD getting overwritten by the
       // next merge, so a human can confirm it later with `--apply` alone.
-      let rewrites = mergeRewrites(freshPlan.rewrites, queued);
-      if (freshPlan.rewrites.length) writePendingRepairs(root, rewrites);
+      if (freshPlan.rewrites.length) save(mergeRewrites(freshPlan.rewrites, queue));
 
       if (opts.drop) {
-        const before = rewrites.length;
-        rewrites = rewrites.filter((r) => r.id !== opts.drop);
-        writePendingRepairs(root, rewrites);
+        const before = queue.length;
+        save(queue.filter((r) => r.id !== opts.drop));
         if (!opts.quiet) {
-          console.log(rewrites.length === before
+          console.log(queue.length === before
             ? `Nothing queued or matched for "${opts.drop}" to drop.`
             : `Dropped "${opts.drop}" from the queue.`);
         }
         if (!opts.apply) return;
       }
+      const rewrites = queue;
 
       if (!rewrites.length) {
         if (!opts.quiet) console.log("✓ Nothing to repair — no orphaned commit reference matched unambiguously, and nothing queued from an earlier run.");
@@ -5067,10 +5077,15 @@ program
         return;
       }
 
+      // Whether a listed entry's decision is visible at all this run — a row
+      // that isn't can't actually be resolved by --apply (see
+      // resolvedRewriteIds below), so dry-run/apply output must say so
+      // instead of listing it as though --apply would act on it.
+      const visibleIds = new Set(decisions.map((d) => d.id));
       if (!opts.apply) {
         if (!opts.quiet) {
           console.log(`Would repair ${toApply.length} commit reference(s):`);
-          for (const r of toApply) console.log(`  ${r.id}  ${r.from} → ${r.to}`);
+          for (const r of toApply) console.log(`  ${r.id}  ${r.from} → ${r.to}${visibleIds.has(r.id) ? "" : "  (not visible this run — --apply would leave it queued)"}`);
           console.log(dim("\nDry run — nothing changed. Re-run with --apply."));
         }
         return;
@@ -5087,15 +5102,27 @@ program
         touchedHomes.add(home);
         appliedIds.add(d.id);
       }
-      // Every candidate actually targeted this run (toApply) is now either
-      // applied or found stale (its decision moved on since it was matched) —
-      // neither case is worth retrying with the same {from, to} pair. Without
-      // --only that's everything in `rewrites`, so the queue clears entirely;
-      // with --only, only the targeted entry is resolved and the rest of the
-      // queue is left untouched for a later run to reconsider.
-      writePendingRepairs(root, opts.only ? rewrites.filter((r) => r.id !== opts.only) : []);
+      // Only a candidate whose decision was actually VISIBLE this run is
+      // resolved (applied, or found stale by repairDecisionCommit's own
+      // from-mismatch bail) — resolvedRewriteIds shares deadRewrites' own
+      // reasoning: an id we could not see this run is not proof of anything,
+      // so it stays queued rather than being swept up just because it was in
+      // `toApply`. This also covers --only: toApply is just the one targeted
+      // id, so an invisible target is left queued instead of deleted
+      // unresolved — the exact bug this consolidation exists to prevent from
+      // recurring at a fifth write site.
+      const resolvedIds = resolvedRewriteIds(toApply, decisions);
+      save(rewrites.filter((r) => !resolvedIds.has(r.id)));
       if (!appliedIds.size) {
-        if (!opts.quiet) console.log("✓ Nothing to repair — every candidate had already moved on.");
+        if (!opts.quiet) {
+          // "Moved on" (repairDecisionCommit's own bail) and "not visible this
+          // run" are different answers — only the first means nothing further
+          // to do here. resolvedIds is empty exactly when every targeted
+          // candidate's decision was invisible this run (see above).
+          console.log(resolvedIds.size
+            ? "✓ Nothing to repair — every candidate had already moved on."
+            : "Nothing applied — none of the targeted decision(s) are visible this run (branch checkout, or a private overlay not mounted?). Left queued for a run where they are.");
+        }
         return;
       }
       store.reindex();
@@ -5104,6 +5131,10 @@ program
       if (!opts.quiet) {
         console.log(`✓ Repaired ${appliedIds.size} commit reference(s):`);
         for (const r of toApply) if (appliedIds.has(r.id)) console.log(`  ${r.id}  ${r.from} → ${r.to}`);
+        const stillQueued = toApply.filter((r) => !resolvedIds.has(r.id));
+        if (stillQueued.length) {
+          console.log(`\n${stillQueued.length} entr${stillQueued.length === 1 ? "y" : "ies"} not visible this run, left queued: ${stillQueued.map((r) => r.id).join(", ")}`);
+        }
       }
     } catch (err) {
       if (!opts.fromHook) throw err;

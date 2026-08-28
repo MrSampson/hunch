@@ -60,14 +60,19 @@ export function planCommitRepair(
   return { rewrites, records: [...new Set(rewrites.map((r) => r.id))] };
 }
 
-/** Whether a queued rewrite is still worth acting on: the decision it names
- *  still exists, still cites the commit the entry expects to replace (a
+/** Whether a queued rewrite is still worth ASKING about: the decision it
+ *  names still exists, still cites the commit the entry expects to replace (a
  *  decision that already moved on would make repairDecisionCommit's own
  *  stale-plan bail refuse it), and hasn't since been superseded/rejected —
  *  same exclusion as orphanedCommitDecisions, since repairing dead history's
- *  provenance isn't worth asking about. The single predicate every consumer
- *  (the escalation surface, repair-provenance's own dry-run/apply/queue
- *  pruning) shares, so they can never disagree about the same entry. */
+ *  provenance isn't worth asking about. Backs the read-only escalation
+ *  surface only (commitRepairEscalations) — absence-means-not-askable is
+ *  safe there because it self-heals the moment visibility returns.
+ *  repair-provenance itself does NOT use this: it reads the full store and
+ *  may legitimately list (dry-run) or leave queued (apply) an entry this
+ *  predicate would call not-live, so the escalation surface and the CLI can
+ *  disagree about the same entry — see deadRewrites and resolvedRewriteIds
+ *  for the CLI's own, looser-on-purpose reasoning. */
 export function liveRewrites(queued: readonly CommitRewrite[], decisions: readonly Decision[]): CommitRewrite[] {
   const byId = new Map(decisions.map((d) => [d.id, d] as const));
   return queued.filter((r) => {
@@ -88,13 +93,36 @@ export function liveRewrites(queued: readonly CommitRewrite[], decisions: readon
  *  deleting an entry on a merely-absent id would destroy it unrecoverably.
  *  Contrast liveRewrites, whose absence-means-not-askable rule is safe on
  *  the read-only escalation surface, which self-heals once visibility
- *  returns. */
+ *  returns.
+ *
+ *  Caveat: "demonstrably" is only as strong as this run's view of
+ *  `decisions`, which comes from the same git-tracked, branch-dependent
+ *  files that motivate treating ABSENCE as inconclusive. A decision whose
+ *  `commit`/`status` genuinely differ between branches (e.g. a repair
+ *  already applied and committed on one branch, checked out here from a
+ *  branch that predates it) could still read as "moved on" when it hasn't,
+ *  from this branch's perspective. Far narrower than the absence case this
+ *  function exists to fix, and not addressed here. */
 export function deadRewrites(queued: readonly CommitRewrite[], decisions: readonly Decision[]): CommitRewrite[] {
   const byId = new Map(decisions.map((d) => [d.id, d] as const));
   return queued.filter((r) => {
     const d = byId.get(r.id);
     return !!d && (d.commit !== r.from || d.status === "superseded" || d.status === "rejected");
   });
+}
+
+/** Among `toApply` (the queued/matched candidates this run is about to act
+ *  on), the ids repair-provenance may treat as RESOLVED once it's done: the
+ *  decision is present in `decisions` this run, whether or not
+ *  repairDecisionCommit actually changed it (a present decision that already
+ *  moved on is "resolved" too — repairDecisionCommit's own bail refused it,
+ *  and there is nothing more this run can do about it). An id whose decision
+ *  is NOT present is never resolved — same reasoning as deadRewrites:
+ *  absence is the reader's transient view, not proof the match is settled,
+ *  so it must stay queued for a run where the decision is visible again. */
+export function resolvedRewriteIds(toApply: readonly CommitRewrite[], decisions: readonly Decision[]): Set<string> {
+  const seen = new Set(decisions.map((d) => d.id));
+  return new Set(toApply.filter((r) => seen.has(r.id)).map((r) => r.id));
 }
 
 /** Combine a freshly-computed plan's rewrites with anything already queued

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites, liveRewrites, deadRewrites } from "../src/core/commitrepair.js";
+import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites, liveRewrites, deadRewrites, resolvedRewriteIds } from "../src/core/commitrepair.js";
 import type { Decision } from "../src/core/types.js";
 import type { CommitCandidate, CommitRepairStatus } from "../src/extractors/git.js";
 
@@ -164,6 +164,27 @@ test("deadRewrites: an entry whose decision isn't in the list at all is NOT dead
     { id: "dec_invisible", from: "sha_old", to: "sha_new" }, // e.g. a branch checkout that predates it
   ];
   assert.deepEqual(deadRewrites(queued, decisions), [], "neither entry is provably dead — dec_present still matches, dec_invisible is merely unresolved");
+});
+
+test("resolvedRewriteIds: a targeted decision that IS visible is resolved, whether or not it actually changed", () => {
+  const decisions = [D({ id: "dec_present", commit: "sha_old" })];
+  const toApply = [{ id: "dec_present", from: "sha_old", to: "sha_new" }];
+  assert.deepEqual(resolvedRewriteIds(toApply, decisions), new Set(["dec_present"]));
+});
+
+test("resolvedRewriteIds: a targeted decision NOT present this run is never resolved — it must stay queued", () => {
+  const decisions: Decision[] = [];
+  const toApply = [{ id: "dec_invisible", from: "sha_old", to: "sha_new" }];
+  assert.deepEqual(resolvedRewriteIds(toApply, decisions), new Set());
+});
+
+test("resolvedRewriteIds: a mix resolves only the visible ones", () => {
+  const decisions = [D({ id: "dec_visible", commit: "sha_old" })];
+  const toApply = [
+    { id: "dec_visible", from: "sha_old", to: "sha_new" },
+    { id: "dec_invisible", from: "sha_old", to: "sha_new" },
+  ];
+  assert.deepEqual(resolvedRewriteIds(toApply, decisions), new Set(["dec_visible"]));
 });
 
 test("deadRewrites: an entry whose PRESENT decision moved on, or is superseded/rejected, is dead", () => {
