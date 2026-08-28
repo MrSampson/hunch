@@ -37,7 +37,17 @@ export interface HookInstall {
   action: "created" | "appended" | "updated" | "unchanged";
 }
 
-export function installPostCommitHook(root: string, invocation: string, opts: { private?: boolean; commit?: boolean; localOnly?: boolean } = {}): HookInstall {
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Shared idempotent create/append/update-in-place logic for every hunch git
+ *  hook: write a fresh hook file, replace our own managed block in place if the
+ *  invocation changed, or append after any pre-existing (non-hunch) hook body
+ *  without clobbering it. Used by all three hook installers below — the three
+ *  copies had already drifted (installPreCommitHook was missing the chmodSync
+ *  on its "updated" path) before this was unified. */
+function installManagedBlock(root: string, hookName: string, mark: string, end: string, blk: string): HookInstall {
   const dir = hooksDir(root);
   // `git rev-parse --git-path hooks` returns a path relative to the repo in a
   // normal checkout, but an ABSOLUTE one inside a linked worktree (the shared
@@ -45,8 +55,7 @@ export function installPostCommitHook(root: string, invocation: string, opts: { 
   // a bare startsWith("/") misfired on Windows worktrees → a doubled junk path.
   const abs = isAbsolute(dir) ? dir : join(root, dir);
   mkdirSync(abs, { recursive: true });
-  const hookPath = join(abs, "post-commit");
-  const blk = block(invocation, opts);
+  const hookPath = join(abs, hookName);
 
   if (!existsSync(hookPath)) {
     writeFileSync(hookPath, `#!/bin/sh\n${blk}\n`);
@@ -55,9 +64,8 @@ export function installPostCommitHook(root: string, invocation: string, opts: { 
   }
 
   const cur = readFileSync(hookPath, "utf8");
-  if (cur.includes(MARK)) {
-    // replace our managed block (invocation may have changed)
-    const updated = cur.replace(new RegExp(`${escapeRe(MARK)}[\\s\\S]*?${escapeRe(ENDMARK)}`), blk);
+  if (cur.includes(mark)) {
+    const updated = cur.replace(new RegExp(`${escapeRe(mark)}[\\s\\S]*?${escapeRe(end)}`), blk);
     if (updated === cur) return { path: hookPath, action: "unchanged" };
     writeFileSync(hookPath, updated);
     chmodSync(hookPath, 0o755);
@@ -70,8 +78,8 @@ export function installPostCommitHook(root: string, invocation: string, opts: { 
   return { path: hookPath, action: "appended" };
 }
 
-function escapeRe(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+export function installPostCommitHook(root: string, invocation: string, opts: { private?: boolean; commit?: boolean; localOnly?: boolean } = {}): HookInstall {
+  return installManagedBlock(root, "post-commit", MARK, ENDMARK, block(invocation, opts));
 }
 
 const PRE_MARK = "# >>> hunch pre-commit (constraint guard) >>>";
@@ -83,32 +91,9 @@ const PRE_END = "# <<< hunch pre-commit <<<";
  *  blocking invariant (see strictgate.ts), so it's safe on a shared repo.
  *  Preserves any existing pre-commit hook. */
 export function installPreCommitHook(root: string, invocation: string, strict = false): HookInstall {
-  const dir = hooksDir(root);
-  // `git rev-parse --git-path hooks` returns a path relative to the repo in a
-  // normal checkout, but an ABSOLUTE one inside a linked worktree (the shared
-  // hooks dir). isAbsolute() handles both POSIX (/…) and Windows (C:\… / C:/…);
-  // a bare startsWith("/") misfired on Windows worktrees → a doubled junk path.
-  const abs = isAbsolute(dir) ? dir : join(root, dir);
-  mkdirSync(abs, { recursive: true });
-  const hookPath = join(abs, "pre-commit");
   const cmd = `${invocation} check --staged${strict ? " --strict" : ""}`;
   const blk = [PRE_MARK, strict ? cmd : `${cmd} || true`, PRE_END].join("\n");
-
-  if (!existsSync(hookPath)) {
-    writeFileSync(hookPath, `#!/bin/sh\n${blk}\n`);
-    chmodSync(hookPath, 0o755);
-    return { path: hookPath, action: "created" };
-  }
-  const cur = readFileSync(hookPath, "utf8");
-  if (cur.includes(PRE_MARK)) {
-    const updated = cur.replace(new RegExp(`${escapeRe(PRE_MARK)}[\\s\\S]*?${escapeRe(PRE_END)}`), blk);
-    if (updated === cur) return { path: hookPath, action: "unchanged" };
-    writeFileSync(hookPath, updated);
-    return { path: hookPath, action: "updated" };
-  }
-  writeFileSync(hookPath, cur.endsWith("\n") ? `${cur}${blk}\n` : `${cur}\n${blk}\n`);
-  chmodSync(hookPath, 0o755);
-  return { path: hookPath, action: "appended" };
+  return installManagedBlock(root, "pre-commit", PRE_MARK, PRE_END, blk);
 }
 
 const MERGE_MARK = "# >>> hunch post-merge >>>";
@@ -119,43 +104,24 @@ function mergeBlock(invocation: string): string {
     MERGE_MARK,
     'if [ -z "$HUNCH_MERGE_SYNC" ]; then',
     "  export HUNCH_MERGE_SYNC=1",
-    `  ( ${invocation} repair-provenance --from-hook --quiet --apply >/dev/null 2>&1 || true ) &`,
+    // No --apply: this only detects a squash-merge orphaning a decision's commit
+    // and queues the match (.hunch/pending-commit-repairs.json, local-only) for a
+    // human to confirm via `hunch repair-provenance --apply` — the match signal
+    // (file-set overlap, not git's own rename detection) isn't strong enough to
+    // trust an unattended, backgrounded write into shared team memory.
+    `  ( ${invocation} repair-provenance --from-hook --quiet >/dev/null 2>&1 || true ) &`,
     "fi",
     MERGE_END,
   ].join("\n");
 }
 
-/** Install a post-merge hook that opportunistically repairs a decision's commit
- *  provenance right after a squash-merged branch lands locally (including a
- *  fast-forward from `git pull`) — while the original commits are still fully
- *  intact and matchable. Same idempotent create/append/update-in-place logic as
- *  installPostCommitHook; own env-var guard, since this hook's own repair
- *  commit is a `git commit`, not a `git merge`, so it can't re-trigger itself
- *  the way HUNCH_SYNC guards post-commit against its own commit. */
+/** Install a post-merge hook that opportunistically DETECTS a decision's commit
+ *  provenance going orphaned right after a squash-merged branch lands locally
+ *  (including a fast-forward from `git pull`) — while the original commits are
+ *  still fully intact and matchable — and queues the match for a human to
+ *  confirm. Own env-var guard, since this hook makes no commit of its own, so
+ *  it can't re-trigger itself the way HUNCH_SYNC guards post-commit against its
+ *  own commit; kept for consistency with the other two hooks regardless. */
 export function installPostMergeHook(root: string, invocation: string): HookInstall {
-  const dir = hooksDir(root);
-  const abs = isAbsolute(dir) ? dir : join(root, dir);
-  mkdirSync(abs, { recursive: true });
-  const hookPath = join(abs, "post-merge");
-  const blk = mergeBlock(invocation);
-
-  if (!existsSync(hookPath)) {
-    writeFileSync(hookPath, `#!/bin/sh\n${blk}\n`);
-    chmodSync(hookPath, 0o755);
-    return { path: hookPath, action: "created" };
-  }
-
-  const cur = readFileSync(hookPath, "utf8");
-  if (cur.includes(MERGE_MARK)) {
-    const updated = cur.replace(new RegExp(`${escapeRe(MERGE_MARK)}[\\s\\S]*?${escapeRe(MERGE_END)}`), blk);
-    if (updated === cur) return { path: hookPath, action: "unchanged" };
-    writeFileSync(hookPath, updated);
-    chmodSync(hookPath, 0o755);
-    return { path: hookPath, action: "updated" };
-  }
-
-  const appended = cur.endsWith("\n") ? `${cur}${blk}\n` : `${cur}\n${blk}\n`;
-  writeFileSync(hookPath, appended);
-  chmodSync(hookPath, 0o755);
-  return { path: hookPath, action: "appended" };
+  return installManagedBlock(root, "post-merge", MERGE_MARK, MERGE_END, mergeBlock(invocation));
 }

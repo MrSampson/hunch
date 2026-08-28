@@ -67,12 +67,13 @@ test("post-commit hook: re-install is idempotent (managed block replaced, not du
 
 const mergeHookText = (r: string): string => readFileSync(join(r, ".git", "hooks", "post-merge"), "utf8");
 
-test("post-merge hook: invokes repair-provenance, applied, from the hook, quietly", () => {
+test("post-merge hook: invokes repair-provenance from the hook, quietly, WITHOUT --apply (detect-and-queue only)", () => {
   const r = repo();
   try {
     installPostMergeHook(r, "hunch");
     const h = mergeHookText(r);
-    assert.match(h, /hunch repair-provenance --from-hook --quiet --apply >/);
+    assert.match(h, /hunch repair-provenance --from-hook --quiet >/);
+    assert.doesNotMatch(h, /--apply/);
     assert.match(h, /HUNCH_MERGE_SYNC/);
   } finally { rmSync(r, { recursive: true, force: true }); }
 });
