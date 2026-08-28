@@ -4839,7 +4839,7 @@ program
         console.log("✓ Nothing needs your decision — memory is auto-trusted and self-consistent.");
         return;
       }
-      console.log(`${items.length} decision(s) need your call (ask inline; nothing is queued):\n`);
+      console.log(`${items.length} decision(s) need your call — asked here, never decided for you:\n`);
       for (const e of items) {
         console.log(`  ⚖ ${e.question}`);
         console.log(`      ${dim(e.detail)}`);
@@ -5111,7 +5111,7 @@ program
 // ---- drift (doc≠graph detector; advisory + CI-gateable) -------------------
 program
   .command("drift")
-  .description("Detect memory drift: dead refs, dangling supersedes, stale 'proposed' docs, doc≠graph anchor-stale (a file still anchored to a superseded decision), and markdown sections whose <!-- hunch:topic … dec_id --> pin points at a superseded or missing decision (AGENTS.md/CLAUDE.md as a drift surface). Exits non-zero on any anchor-stale drift or topic collision — the doc≠graph gate.")
+  .description("Detect memory drift: dead refs, dangling supersedes, stale 'proposed' docs, commit-unresolvable (a decision cites a commit that no longer resolves in this repository), doc≠graph anchor-stale (a file still anchored to a superseded decision), and markdown sections whose <!-- hunch:topic … dec_id --> pin points at a superseded or missing decision (AGENTS.md/CLAUDE.md as a drift surface). Exits non-zero on any anchor-stale drift or topic collision — the doc≠graph gate.")
   .action(() => {
     const { store, root } = storeFor();
     try {
