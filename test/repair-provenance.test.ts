@@ -304,6 +304,62 @@ test("repair-provenance self-prunes a permanently-dead queue entry on every run,
   }
 });
 
+test("repair-provenance announces a pruned dead entry unless --quiet, so a human isn't left guessing why --apply --only later reports nothing queued", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
+    decA.commit = "sha_a_moved_on";
+    writeFileSync(fixture.decisionFile("dec_a"), JSON.stringify(decA, null, 2) + "\n");
+
+    const run = runCli(fixture.root, "repair-provenance", "--apply", "--only", "dec_b");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /Pruned 1 dead queue entry.*dec_a/);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --range garbage fails before touching the queue file — a usage error changes nothing on disk", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    // dec_a is provably dead (moved on) — if pruning ran before validation,
+    // this usage error would still silently rewrite the queue file.
+    const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
+    decA.commit = "sha_a_moved_on";
+    writeFileSync(fixture.decisionFile("dec_a"), JSON.stringify(decA, null, 2) + "\n");
+    const before = readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8");
+
+    const run = runCli(fixture.root, "repair-provenance", "--range", "garbage");
+    assert.notEqual(run.status, 0);
+    assert.match(`${run.stdout}${run.stderr}`, /--range must look like/);
+
+    const after = readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8");
+    assert.equal(after, before, "a pure usage error must not mutate the queue file");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance never deletes a queued entry just because its decision is momentarily invisible (branch checkout, unmounted overlay) — only a decision provably moved on is pruned", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    // Simulates checking out a branch/commit that predates dec_a's decision
+    // record, or a private overlay not mounted for this run — NOT proof the
+    // match is dead. Deleting this entry would be permanent: per
+    // repairqueue.ts's own docstring, the queue is the one durable record
+    // once ORIG_HEAD moves on and the matched-away commit can be gc'd.
+    rmSync(fixture.decisionFile("dec_a"));
+
+    const run = runCli(fixture.root, "repair-provenance", "--apply", "--only", "dec_b", "--quiet");
+    assert.equal(run.status, 0, run.stderr);
+
+    const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string }[];
+    assert.deepEqual(queue.map((r) => r.id), ["dec_a"], "dec_a's entry survives even though its decision wasn't visible this run");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("repair-provenance --only <id-not-present> reports nothing to apply and changes nothing", () => {
   const fixture = twoDecisionQueueFixture();
   try {
@@ -332,5 +388,104 @@ test("repair-provenance --from-hook is silent and exits 0 when there's no ORIG_H
     assert.equal(run.stdout.trim(), "");
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/** A public repo with a genuinely separate private-overlay repo, matching
+ *  the shape HunchStore's overlay safety check requires. The public store
+ *  has ZERO decisions; the decision this test cares about lives only in the
+ *  overlay, so store.advisoryRecs("decisions") (what SessionStart's
+ *  orientation reads) sees nothing while store.recs("decisions") (the full
+ *  store) does. */
+function privateOverlaySessionStartFixture(): { root: string; overlayRoot: string; decisionId: string; env: NodeJS.ProcessEnv; cleanup(): void } {
+  const root = mkdtempSync(join(tmpdir(), "hunch-sessionstart-public-"));
+  const overlayRoot = mkdtempSync(join(tmpdir(), "hunch-sessionstart-overlay-"));
+  const privateRoot = join(overlayRoot, ".hunch");
+
+  git(root, "init", "-q", "-b", "main");
+  git(root, "config", "user.email", "test@example.com");
+  git(root, "config", "user.name", "Test Human");
+  ensureGitignore(root);
+  git(root, "add", ".gitignore");
+  git(root, "commit", "-qm", "init");
+
+  git(overlayRoot, "init", "-q", "-b", "main");
+  git(overlayRoot, "config", "user.email", "test@example.com");
+  git(overlayRoot, "config", "user.name", "Test Human");
+  git(overlayRoot, "commit", "--allow-empty", "-qm", "init overlay");
+
+  mkdirSync(privateRoot, { recursive: true });
+
+  const decisionId = "dec_private_sessionstart";
+  const commit = "cafefeed00cafefeed00cafefeed00cafefeed0";
+  const decision: Decision = {
+    id: decisionId,
+    title: "Private decision",
+    topic: null,
+    status: "accepted",
+    context: "",
+    decision: "A private decision.",
+    consequences: [],
+    alternatives_rejected: [],
+    rejected_tripwires: [],
+    related_components: [],
+    related_files: ["src/private.ts"],
+    supersedes: null,
+    superseded_by: null,
+    caused_by_bug: null,
+    commit,
+    valid_from: "2026-01-01T00:00:00.000Z",
+    valid_to: null,
+    retired: { symbols: [], deps: [] },
+    provenance: { source: "human_confirmed", confidence: 1, evidence: [`commit:${commit}`], last_verified: "2026-01-01T00:00:00.000Z" },
+    date: "2026-01-01T00:00:00.000Z",
+  };
+
+  const prior = process.env.HUNCH_PRIVATE_DIR;
+  process.env.HUNCH_PRIVATE_DIR = privateRoot;
+  try {
+    const store = new HunchStore(hunchPaths(root));
+    store.putPrivate("decisions", decision);
+    store.close();
+  } finally {
+    if (prior === undefined) delete process.env.HUNCH_PRIVATE_DIR;
+    else process.env.HUNCH_PRIVATE_DIR = prior;
+  }
+
+  mkdirSync(join(root, ".hunch"), { recursive: true });
+  writeFileSync(
+    queueFile(root),
+    JSON.stringify([{ id: decisionId, from: commit, to: "d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0" }], null, 2) + "\n",
+  );
+
+  return {
+    root,
+    overlayRoot,
+    decisionId,
+    env: { ...process.env, HUNCH_PRIVATE_DIR: privateRoot, HUNCH_SYNTH_PROVIDER: "deterministic" },
+    cleanup: () => {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(overlayRoot, { recursive: true, force: true });
+    },
+  };
+}
+
+test("SessionStart orientation surfaces a queued commit-repair escalation for a private-overlay decision even when the public store has zero decisions", () => {
+  const fixture = privateOverlaySessionStartFixture();
+  try {
+    const run = spawnSync(process.execPath, [tsx, cli, "hook", "--provider", "claude"], {
+      cwd: fixture.root,
+      env: fixture.env,
+      input: JSON.stringify({ hook_event_name: "SessionStart", session_id: "s1" }),
+      encoding: "utf8",
+    });
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(
+      run.stdout,
+      new RegExp(fixture.decisionId),
+      "the public decisions list is empty, but the queued repair is fully answerable via the full store — SessionStart must not bail silently before checking it",
+    );
+  } finally {
+    fixture.cleanup();
   }
 });

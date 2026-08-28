@@ -42,7 +42,7 @@ import {
 import { isGitRepo, isGitRepoRoot, sameGitPublication, sameRemoteUrl, canonicalRemoteUrl, repositoryUsesRemote, headSha, isolatedHeadSha, logSince, lastChangeDate, firstCommitForFile, stagedFiles, workingFiles, commitFiles, asOfDate, stagedDiff, workingDiff, commitDiff, rangeFiles, rangeDiff, rangeSubjects, revExists, revParse, commitAndPushHunch, pullHunchStatus, syncExistingHunch, gitUntrackCached, gitCommonDir, hooksDir, isLinkedWorktree, mainWorktreeRoot, gitMemoryLog, memoryMoveDiff, revertMemoryMove, pushCurrentBranch, commitChanges, commitRepairStatus, mergeRangeChanges, type HunchPullStatus } from "../extractors/git.js";
 import { parseMemoryLog, type MemoryMove } from "../core/memorylog.js";
 import { renamesOf, planRepair, repairDecision, repairConstraint, type RepairPlan } from "../core/repair.js";
-import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites, liveRewrites } from "../core/commitrepair.js";
+import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites, deadRewrites } from "../core/commitrepair.js";
 import { readPendingRepairs, writePendingRepairs } from "../core/repairqueue.js";
 import { planPolicyRepair, repairPolicySpec, type PolicyBindingRewrite } from "../constitution/repairPolicies.js";
 import { writeTeamConfig, ensureTeamOverlay, readTeamConfig, safeGitUrl, safeTeamRef, overlayMatchesTeamRemote, advertisedTeamRemoteContract, boundedTeamGitEnv, cloneValidatedTeamOverlay, explicitTeamRemoteContract, teamRemoteContract } from "../integrations/team.js";
@@ -4185,21 +4185,6 @@ program
           // further than a terminal.
           const decisions = s.advisoryRecs("decisions");
           const { recent, roadmap, pendingReview } = nowData(decisions, 3);
-          if (!decisions.length) {
-            // Fresh graph: nothing to orient on, but the operating loop still ships.
-            if (pipelineEnabled()) emitContext(provider, "SessionStart", [PIPELINE_LOOP, controllerBrief].filter(Boolean).join("\n\n"));
-            return;
-          }
-          const L: string[] = [];
-          L.push(`🧠 Hunch orientation — ${decisions.length} decision(s) in the graph.`);
-          if (recent.length) {
-            L.push("Recent:");
-            for (const r of recent) L.push(`  ${r.date} [${r.status}] ${r.title} (${r.id})`);
-          }
-          if (roadmap.length) {
-            L.push(`Roadmap (${roadmap.length} live proposed): ${roadmap.slice(0, 3).map((r) => r.title).join(" · ")}${roadmap.length > 3 ? " · …" : ""}`);
-          }
-          if (pendingReview > 0) L.push(`${pendingReview} legacy un-vouched draft(s) — adopt as advisory memory with \`hunch adopt-drafts\` (new captures auto-trust).`);
           const escalations = pendingEscalations(decisions);
           escalations.push(...premiseEscalations(decisions, { now: new Date().toISOString(), exists: (p) => existsSync(join(paths.root, p)) }));
           // liveness checked against the full store even in private mode — a
@@ -4215,6 +4200,24 @@ program
             const { ConstitutionService: CS } = await import("../constitution/service.js");
             escalations.push(...policyEscalations(new CS(s, paths.root).list({ publicOnly: true }).map((p) => ({ ...p, last_action: p.audit.at(-1)?.action ?? null }))));
           } catch { /* constitution unavailable */ }
+          if (!decisions.length && !escalations.length) {
+            // Fresh graph and nothing else to raise: nothing to orient on, but
+            // the operating loop still ships. A queued commit-repair escalation
+            // (checked against the full store above) is enough reason NOT to
+            // bail here even when the visible decisions list is empty.
+            if (pipelineEnabled()) emitContext(provider, "SessionStart", [PIPELINE_LOOP, controllerBrief].filter(Boolean).join("\n\n"));
+            return;
+          }
+          const L: string[] = [];
+          L.push(`🧠 Hunch orientation — ${decisions.length} decision(s) in the graph.`);
+          if (recent.length) {
+            L.push("Recent:");
+            for (const r of recent) L.push(`  ${r.date} [${r.status}] ${r.title} (${r.id})`);
+          }
+          if (roadmap.length) {
+            L.push(`Roadmap (${roadmap.length} live proposed): ${roadmap.slice(0, 3).map((r) => r.title).join(" · ")}${roadmap.length > 3 ? " · …" : ""}`);
+          }
+          if (pendingReview > 0) L.push(`${pendingReview} legacy un-vouched draft(s) — adopt as advisory memory with \`hunch adopt-drafts\` (new captures auto-trust).`);
           if (escalations.length) {
             L.push(`⚖ ${escalations.length} decision(s) need YOUR call — ASK the user inline (don't queue): ${escalations.map((e) => e.question).join(" · ")}`);
           }
@@ -4987,17 +4990,6 @@ program
     try {
       if (!isGitRepo(root)) { if (!opts.fromHook) fail("repair-provenance needs a git repo."); return; }
 
-      const decisions = store.recs("decisions");
-      // A queue entry liveRewrites rejects (decision gone, commit moved on,
-      // or since superseded/rejected) is permanently dead — repairDecisionCommit
-      // would refuse it forever. Prune it here, on every run, so the queue
-      // can't accumulate a dead entry that outlives any number of --only
-      // runs targeting other ids, and so this command's own dry-run/apply
-      // output can never disagree with what `hunch escalations` still asks.
-      const queuedRaw = readPendingRepairs(root);
-      const queued = liveRewrites(queuedRaw, decisions);
-      if (queued.length !== queuedRaw.length) writePendingRepairs(root, queued);
-
       let oldRef = "ORIG_HEAD";
       let newRef = "HEAD";
       if (opts.range) {
@@ -5013,6 +5005,27 @@ program
         // --range, so --from-hook never reaches this branch in practice.)
         if (!opts.fromHook) fail(`range "${oldRef}..${newRef}" does not resolve in this repository`);
         return;
+      }
+
+      const decisions = store.recs("decisions");
+      // Prune only PROVEN-dead entries (deadRewrites: the decision is present
+      // and demonstrably moved on/superseded/rejected) — never an id merely
+      // absent from `decisions` right now, which can just mean this run
+      // checked out a branch that predates the decision, or a private
+      // overlay isn't mounted. That's the reader's transient view, not proof
+      // the match is stale, and the queue file is the one durable record of
+      // it (see repairqueue.ts) — deleting on absence would destroy it
+      // unrecoverably. This keeps the queue from accumulating an
+      // actually-dead entry that outlives any number of --only runs
+      // targeting other ids, without risking a false prune. Deferred until
+      // after --range validation so a pure usage error changes nothing.
+      const queuedRaw = readPendingRepairs(root);
+      const deadEntries = deadRewrites(queuedRaw, decisions);
+      const deadIds = new Set(deadEntries.map((r) => r.id));
+      const queued = deadIds.size ? queuedRaw.filter((r) => !deadIds.has(r.id)) : queuedRaw;
+      if (deadIds.size) {
+        writePendingRepairs(root, queued);
+        if (!opts.quiet) console.log(`Pruned ${deadEntries.length} dead queue entr${deadEntries.length === 1 ? "y" : "ies"} (decision moved on or was superseded/rejected): ${deadEntries.map((r) => r.id).join(", ")}`);
       }
 
       const candidates = rangeResolves ? mergeRangeChanges(oldRef, newRef, root) : [];

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites, liveRewrites } from "../src/core/commitrepair.js";
+import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites, liveRewrites, deadRewrites } from "../src/core/commitrepair.js";
 import type { Decision } from "../src/core/types.js";
 import type { CommitCandidate, CommitRepairStatus } from "../src/extractors/git.js";
 
@@ -155,4 +155,27 @@ test("liveRewrites: excludes superseded/rejected decisions, same exclusion as or
     { id: "dec_rejected", from: "sha_old", to: "sha_new" },
   ];
   assert.deepEqual(liveRewrites(queued, decisions), []);
+});
+
+test("deadRewrites: an entry whose decision isn't in the list at all is NOT dead — absence is the reader's problem, not proof the match is stale", () => {
+  const decisions = [D({ id: "dec_present", commit: "sha_old" })];
+  const queued = [
+    { id: "dec_present", from: "sha_old", to: "sha_new" },
+    { id: "dec_invisible", from: "sha_old", to: "sha_new" }, // e.g. a branch checkout that predates it
+  ];
+  assert.deepEqual(deadRewrites(queued, decisions), [], "neither entry is provably dead — dec_present still matches, dec_invisible is merely unresolved");
+});
+
+test("deadRewrites: an entry whose PRESENT decision moved on, or is superseded/rejected, is dead", () => {
+  const decisions = [
+    D({ id: "dec_moved_on", commit: "sha_moved" }),
+    D({ id: "dec_superseded", commit: "sha_old", status: "superseded" }),
+    D({ id: "dec_rejected", commit: "sha_old", status: "rejected" }),
+  ];
+  const queued = [
+    { id: "dec_moved_on", from: "sha_old", to: "sha_new" },
+    { id: "dec_superseded", from: "sha_old", to: "sha_new" },
+    { id: "dec_rejected", from: "sha_old", to: "sha_new" },
+  ];
+  assert.deepEqual(deadRewrites(queued, decisions).map((r) => r.id).sort(), ["dec_moved_on", "dec_rejected", "dec_superseded"]);
 });

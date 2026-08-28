@@ -76,6 +76,27 @@ export function liveRewrites(queued: readonly CommitRewrite[], decisions: readon
   });
 }
 
+/** Entries a decision has demonstrably outgrown: the decision IS present in
+ *  `decisions`, and it either moved on from `from` or has since been
+ *  superseded/rejected. An id this list can't see is deliberately NOT
+ *  included — absence is a property of the READER (a branch checkout that
+ *  predates the decision, an unmounted private overlay), not proof the match
+ *  is stale. This predicate backs a DESTRUCTIVE prune (repair-provenance
+ *  deletes what it returns from the queue file); repairqueue.ts's own
+ *  docstring is why that matters — the queue is the one durable record of a
+ *  match once ORIG_HEAD moves on and the matched-away commit can be gc'd, so
+ *  deleting an entry on a merely-absent id would destroy it unrecoverably.
+ *  Contrast liveRewrites, whose absence-means-not-askable rule is safe on
+ *  the read-only escalation surface, which self-heals once visibility
+ *  returns. */
+export function deadRewrites(queued: readonly CommitRewrite[], decisions: readonly Decision[]): CommitRewrite[] {
+  const byId = new Map(decisions.map((d) => [d.id, d] as const));
+  return queued.filter((r) => {
+    const d = byId.get(r.id);
+    return !!d && (d.commit !== r.from || d.status === "superseded" || d.status === "rejected");
+  });
+}
+
 /** Combine a freshly-computed plan's rewrites with anything already queued
  *  (src/core/repairqueue.ts) from an earlier detection, deduped by decision id.
  *  A fresh match — computed just now, against the current range — overrides a
