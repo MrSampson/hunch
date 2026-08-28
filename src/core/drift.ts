@@ -27,7 +27,7 @@ import { parseDocAnchors } from "./docanchors.js";
 import { markdownDocs, STALE_MARKER, SRC_REF } from "./docscan.js";
 import { computeWikiDrift } from "../wiki/wiki.js";
 import { computeMadrDrift } from "../integrations/madrManifest.js";
-import { isGitRepo, revExists } from "../extractors/git.js";
+import { commitsExist, isGitRepo } from "../extractors/git.js";
 
 export type DriftKind = "dead-ref" | "supersede" | "doc-stale" | "anchor-stale" | "doc-anchor-stale" | "doc-anchor-dangling" | "wiki-stale" | "finding-stale" | "premise-stale" | "commit-unresolvable" | "madr-stale" | "madr-edited" | "madr-orphan";
 
@@ -70,9 +70,16 @@ export function computeDrift(
   // happens to hold .hunch/ without being a git checkout. Injectable so tests
   // (and callers with a cheaper oracle) never have to shell out per decision.
   const gitRepo = isGitRepo(root);
+  // One batched `git cat-file --batch-check` for every commit-bearing decision,
+  // not one `rev-parse` per decision — skipped entirely when a predicate is
+  // injected (tests/callers with a cheaper oracle never pay for this at all).
+  const resolvableCommits = gitRepo && !deps.commitResolvable
+    ? commitsExist([...new Set(decisions.filter((d) => d.commit).map((d) => d.commit as string))], root)
+    : null;
   const defaultCommitResolvable = (sha: string): boolean => {
     if (!gitRepo) return true; // never flag outside a git repo
-    try { return revExists(sha, root); } catch { return true; } // fail open
+    if (resolvableCommits === null) return true; // the batch check itself failed, or was skipped — fail open
+    return resolvableCommits.has(sha);
   };
   const commitResolvable = deps.commitResolvable ?? defaultCommitResolvable;
 
