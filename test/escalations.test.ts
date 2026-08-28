@@ -7,7 +7,7 @@ const D = (over: Partial<Decision> & { id: string }): Decision => ({
   id: over.id, title: over.title ?? `title ${over.id}`, decision: "did a thing",
   status: over.status ?? "accepted", topic: over.topic ?? null,
   superseded_by: over.superseded_by ?? null, valid_to: over.valid_to ?? null,
-  alternatives_rejected: [], related_files: [],
+  alternatives_rejected: [], related_files: [], commit: over.commit ?? null,
   provenance: { source: over.source ?? "llm_draft", confidence: 0.6, evidence: [] },
   valid_from: "2026-01-01T00:00:00Z", date: "2026-01-01T00:00:00Z",
 } as Decision);
@@ -88,7 +88,7 @@ test("commitRepairEscalations: an empty queue asks nothing", () => {
 });
 
 test("commitRepairEscalations: a queued match surfaces as one inline question naming the decision's title", () => {
-  const decs = [D({ id: "dec_1", title: "Add the feature" })];
+  const decs = [D({ id: "dec_1", title: "Add the feature", commit: "sha_old" })];
   const items = commitRepairEscalations([{ id: "dec_1", from: "sha_old", to: "sha_new" }], decs);
   assert.equal(items.length, 1);
   assert.equal(items[0]!.kind, "commit-repair-pending");
@@ -103,8 +103,13 @@ test("commitRepairEscalations: a queued match surfaces as one inline question na
   assert.match(items[0]!.resolution, /--drop dec_1/, "also offers discarding just this one without applying");
 });
 
-test("commitRepairEscalations: a queued entry whose decision no longer exists still asks, by id", () => {
+test("commitRepairEscalations: a queued entry whose decision no longer exists asks nothing — not a permanently unanswerable question", () => {
   const items = commitRepairEscalations([{ id: "dec_gone", from: "sha_old", to: "sha_new" }], []);
-  assert.equal(items.length, 1);
-  assert.match(items[0]!.question, /dec_gone/);
+  assert.deepEqual(items, []);
+});
+
+test("commitRepairEscalations: a queued entry whose decision's commit already moved on asks nothing — repairDecisionCommit would refuse it anyway", () => {
+  const decs = [D({ id: "dec_1", title: "Add the feature", commit: "sha_moved_on" })];
+  const items = commitRepairEscalations([{ id: "dec_1", from: "sha_old", to: "sha_new" }], decs);
+  assert.deepEqual(items, []);
 });

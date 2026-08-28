@@ -81,17 +81,22 @@ export function pendingEscalations(decisions: readonly Decision[]): Escalation[]
  *  human, exactly like every other entry here, never a silent write. */
 export function commitRepairEscalations(queued: readonly CommitRewrite[], decisions: readonly Decision[]): Escalation[] {
   const byId = new Map(decisions.map((d) => [d.id, d] as const));
-  return queued.map((r) => {
-    const title = byId.get(r.id)?.title;
-    return {
-      kind: "commit-repair-pending",
-      topic: r.id,
-      decisionIds: [r.id],
-      question: `${r.id}${title ? ` ("${title}")` : ""}'s commit is no longer reachable from HEAD (likely squash-merged away), and one newly-merged commit touches all its related files — apply the proposed replacement?`,
-      detail: `${r.from} → ${r.to}`,
-      resolution: `hunch repair-provenance --apply --only ${r.id} to accept just this one, --drop ${r.id} to discard it without applying, or leave it queued to decide later`,
-    };
-  });
+  return queued
+    // A queued entry whose decision is gone, or whose commit already moved on,
+    // is not a question anymore — repairDecisionCommit's own stale-plan bail
+    // would refuse to apply it, so asking would be permanently unanswerable.
+    .filter((r) => byId.get(r.id)?.commit === r.from)
+    .map((r) => {
+      const title = byId.get(r.id)!.title;
+      return {
+        kind: "commit-repair-pending",
+        topic: r.id,
+        decisionIds: [r.id],
+        question: `${r.id} ("${title}")'s commit is no longer reachable from HEAD (likely squash-merged away), and one newly-merged commit touches all its related files — apply the proposed replacement?`,
+        detail: `${r.from} → ${r.to}`,
+        resolution: `hunch repair-provenance --apply --only ${r.id} to accept just this one, --drop ${r.id} to discard it without applying, or leave it queued to decide later`,
+      };
+    });
 }
 
 /** The minimal policy shape the escalation scan needs — a structural subset of
