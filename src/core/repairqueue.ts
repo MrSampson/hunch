@@ -18,10 +18,17 @@ function queuePath(root: string): string {
 }
 
 function isCommitRewrite(value: unknown): value is CommitRewrite {
-  return !!value && typeof value === "object"
-    && typeof (value as CommitRewrite).id === "string"
-    && typeof (value as CommitRewrite).from === "string"
-    && typeof (value as CommitRewrite).to === "string";
+  if (!value || typeof value !== "object") return false;
+  const { id, from, to } = value as CommitRewrite;
+  // Non-empty, and to !== from — an empty target is never a useful rewrite,
+  // and a no-op entry would apply "successfully" while accomplishing nothing.
+  // Not a hex-shape check: from/to are opaque strings elsewhere in this
+  // codebase's test fixtures, and git-facing lookups (commitRepairStatus,
+  // commitsExist) already validate shape where it actually matters.
+  return typeof id === "string" && !!id
+    && typeof from === "string" && !!from
+    && typeof to === "string" && !!to
+    && to !== from;
 }
 
 /** Tolerant read: a missing or corrupt queue file is treated as empty — this

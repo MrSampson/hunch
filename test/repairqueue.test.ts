@@ -54,6 +54,28 @@ test("readPendingRepairs: filters out malformed entries but keeps valid ones", (
   } finally { cleanup(); }
 });
 
+test("readPendingRepairs: filters out an entry with an empty to/from — never a useful rewrite target", () => {
+  const { root, cleanup } = tmpRoot();
+  try {
+    writeFileSync(
+      join(root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([{ id: "dec_1", from: "a", to: "b" }, { id: "dec_empty_to", from: "a", to: "" }, { id: "dec_empty_from", from: "", to: "b" }]),
+    );
+    assert.deepEqual(readPendingRepairs(root), [{ id: "dec_1", from: "a", to: "b" }]);
+  } finally { cleanup(); }
+});
+
+test("readPendingRepairs: filters out a no-op entry (to === from) — applying it would accomplish nothing", () => {
+  const { root, cleanup } = tmpRoot();
+  try {
+    writeFileSync(
+      join(root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([{ id: "dec_1", from: "a", to: "b" }, { id: "dec_noop", from: "a", to: "a" }]),
+    );
+    assert.deepEqual(readPendingRepairs(root), [{ id: "dec_1", from: "a", to: "b" }]);
+  } finally { cleanup(); }
+});
+
 test("writePendingRepairs([]) clears the queue", () => {
   const { root, cleanup } = tmpRoot();
   try {
