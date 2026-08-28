@@ -402,8 +402,10 @@ program
     // private`/`hunch shared` — a repo that already ran init before this hook
     // existed never receives it. `hunch index` already self-heals gitignore
     // the same way; do the same for the hook so an upgrade doesn't require
-    // re-running init by hand.
-    if (isGitRepo(root)) installPostMergeHook(root, resolveInvocation().shell);
+    // re-running init by hand. Gated on already having post-commit: `index`
+    // is not a setup command (it runs in CI, on any git repo), so it must
+    // never be what FIRST hooks a repo that never ran init at all.
+    if (isGitRepo(root) && hookStatus(root).postCommit) installPostMergeHook(root, resolveInvocation().shell);
     const res = indexRepo(store, root, { requireClean: true });
     const { counts } = store.reindex();
     const correctionSweep = new ConstitutionService(store, root).upgradeCorrections();
@@ -5581,9 +5583,16 @@ program
     if (isGitRepo(root)) {
       const hooks = hookStatus(root);
       const missing = [!hooks.postCommit && "post-commit", !hooks.postMerge && "post-merge"].filter((h): h is string => !!h);
-      console.log(missing.length
-        ? `hooks:      ⚠ missing ${missing.join(", ")} — run \`hunch index\` to install/upgrade (or \`hunch init\` for the full setup)`
-        : `hooks:      post-commit, post-merge installed${hooks.preCommit ? " (+ pre-commit)" : ""}`);
+      // `hunch index` only ever installs post-merge onto an existing
+      // post-commit install (it never hooks an un-hooked repo — see
+      // isGitRepo(root) && hookStatus(root).postCommit above) — so the fix
+      // hint must not point there when post-commit itself is missing.
+      const hint = !missing.length
+        ? `hooks:      post-commit, post-merge installed${hooks.preCommit ? " (+ pre-commit)" : ""}`
+        : !hooks.postCommit
+          ? `hooks:      ⚠ missing ${missing.join(", ")} — run \`hunch init\` for the full setup`
+          : `hooks:      ⚠ missing ${missing.join(", ")} — run \`hunch index\` to install it`;
+      console.log(hint);
     }
     // In unified mode the public .hunch directory is only a routing shell.
     // Report the same effective manifest that `hunch migrate` reads and stamps,

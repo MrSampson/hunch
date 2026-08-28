@@ -131,7 +131,30 @@ test("hookStatus: reports exactly which of the three managed hooks are present",
   } finally { rmSync(r, { recursive: true, force: true }); }
 });
 
-test("hunch index installs/upgrades the post-merge hook too, not just gitignore — the upgrade path for repos that never re-run hunch init", () => {
+test("hunch index installs/upgrades the post-merge hook for a repo that already has hunch's post-commit hook — the upgrade path for existing installations", () => {
+  const r = repo();
+  try {
+    writeFileSync(join(r, "app.ts"), "export const x = 1;\n");
+    execFileSync("git", ["config", "user.email", "t@t.co"], { cwd: r });
+    execFileSync("git", ["config", "user.name", "T"], { cwd: r });
+    execFileSync("git", ["add", "-A"], { cwd: r });
+    execFileSync("git", ["commit", "-qm", "init"], { cwd: r });
+    // Simulates a repo that already ran `hunch init` before the post-merge
+    // hook existed — it has post-commit, but never post-merge.
+    installPostCommitHook(r, "hunch");
+
+    const run = spawnSync(process.execPath, [TSX, CLI, "index", "--no-auto-commit"], {
+      cwd: r,
+      env: { ...process.env, HUNCH_PRIVATE_DIR: "", HUNCH_SYNTH_PROVIDER: "deterministic" },
+      encoding: "utf8",
+    });
+    assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
+    const hookPath = join(r, ".git", "hooks", "post-merge");
+    assert.match(readFileSync(hookPath, "utf8"), /repair-provenance --from-hook --quiet/);
+  } finally { rmSync(r, { recursive: true, force: true }); }
+});
+
+test("hunch index never installs any hook in a repo that never ran hunch init — no silent hooking of an un-hooked repo (e.g. a CI checkout)", () => {
   const r = repo();
   try {
     writeFileSync(join(r, "app.ts"), "export const x = 1;\n");
@@ -146,12 +169,12 @@ test("hunch index installs/upgrades the post-merge hook too, not just gitignore 
       encoding: "utf8",
     });
     assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
-    const hookPath = join(r, ".git", "hooks", "post-merge");
-    assert.match(readFileSync(hookPath, "utf8"), /repair-provenance --from-hook --quiet/);
+    assert.equal(existsSync(join(r, ".git", "hooks", "post-merge")), false, "index must never newly hook a repo hunch init was never run on");
+    assert.equal(existsSync(join(r, ".git", "hooks", "post-commit")), false);
   } finally { rmSync(r, { recursive: true, force: true }); }
 });
 
-test("hunch doctor reports missing post-commit/post-merge hooks with a fix hint", () => {
+test("hunch doctor: both hooks missing points at hunch init, not hunch index (index alone can't fix this)", () => {
   const r = repo();
   try {
     writeFileSync(join(r, "app.ts"), "export const x = 1;\n");
@@ -166,6 +189,29 @@ test("hunch doctor reports missing post-commit/post-merge hooks with a fix hint"
       encoding: "utf8",
     });
     assert.match(`${run.stdout}${run.stderr}`, /hooks:.*⚠.*missing.*post-commit.*post-merge/s);
+    assert.match(`${run.stdout}${run.stderr}`, /hunch init/);
+  } finally { rmSync(r, { recursive: true, force: true }); }
+});
+
+test("hunch doctor: only post-merge missing points at hunch index, which will actually fix it", () => {
+  const r = repo();
+  try {
+    writeFileSync(join(r, "app.ts"), "export const x = 1;\n");
+    execFileSync("git", ["config", "user.email", "t@t.co"], { cwd: r });
+    execFileSync("git", ["config", "user.name", "T"], { cwd: r });
+    execFileSync("git", ["add", "-A"], { cwd: r });
+    execFileSync("git", ["commit", "-qm", "init"], { cwd: r });
+    installPostCommitHook(r, "hunch"); // simulates a repo hunch-index would now actually upgrade
+
+    const run = spawnSync(process.execPath, [TSX, CLI, "doctor"], {
+      cwd: r,
+      env: { ...process.env, HUNCH_PRIVATE_DIR: "", HUNCH_SYNTH_PROVIDER: "deterministic" },
+      encoding: "utf8",
+    });
+    assert.match(`${run.stdout}${run.stderr}`, /hooks:.*⚠.*missing.*post-merge/s);
+    assert.doesNotMatch(`${run.stdout}${run.stderr}`, /missing.*post-commit/s);
+    assert.match(`${run.stdout}${run.stderr}`, /hunch index/);
+    assert.doesNotMatch(`${run.stdout}${run.stderr}`, /hunch init/, "hunch index alone fixes this — must not send the human to the heavier command");
   } finally { rmSync(r, { recursive: true, force: true }); }
 });
 
