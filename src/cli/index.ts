@@ -39,7 +39,7 @@ import {
   writeSynthesisPreference,
   type SynthPreference,
 } from "../synthesis/provider.js";
-import { isGitRepo, isGitRepoRoot, sameGitPublication, sameRemoteUrl, canonicalRemoteUrl, repositoryUsesRemote, headSha, isolatedHeadSha, logSince, lastChangeDate, stagedFiles, workingFiles, commitFiles, asOfDate, stagedDiff, workingDiff, commitDiff, rangeFiles, rangeDiff, rangeSubjects, revExists, revParse, commitAndPushHunch, pullHunchStatus, syncExistingHunch, gitUntrackCached, gitCommonDir, hooksDir, isLinkedWorktree, mainWorktreeRoot, gitMemoryLog, memoryMoveDiff, revertMemoryMove, pushCurrentBranch, commitChanges, commitRepairStatus, mergeRangeChanges, type HunchPullStatus } from "../extractors/git.js";
+import { isGitRepo, isGitRepoRoot, sameGitPublication, sameRemoteUrl, canonicalRemoteUrl, repositoryUsesRemote, headSha, isolatedHeadSha, logSince, lastChangeDate, firstCommitForFile, stagedFiles, workingFiles, commitFiles, asOfDate, stagedDiff, workingDiff, commitDiff, rangeFiles, rangeDiff, rangeSubjects, revExists, revParse, commitAndPushHunch, pullHunchStatus, syncExistingHunch, gitUntrackCached, gitCommonDir, hooksDir, isLinkedWorktree, mainWorktreeRoot, gitMemoryLog, memoryMoveDiff, revertMemoryMove, pushCurrentBranch, commitChanges, commitRepairStatus, mergeRangeChanges, type HunchPullStatus } from "../extractors/git.js";
 import { parseMemoryLog, type MemoryMove } from "../core/memorylog.js";
 import { renamesOf, planRepair, repairDecision, repairConstraint, type RepairPlan } from "../core/repair.js";
 import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites } from "../core/commitrepair.js";
@@ -63,7 +63,11 @@ import { writeMcpJson, writeSlashCommands, installClaudeHooks } from "../integra
 import { scaffoldProviders, regenerateGrounding, refreshExistingGrounding, refreshCommittableGrounding } from "../integrations/providers.js";
 import { healClaudeConfigCaseSplit } from "../integrations/claudeConfig.js";
 import { formatContext, formatStructure } from "../core/format.js";
-import { buildDeliveryEnvelope } from "../core/delivery.js";
+import { diagnoseIssueCorrectionStage, formatCorrectionStageDiagnostic } from "../core/correctionStage.js";
+import { compileVerifiedEvidenceMap, formatVerifiedEvidenceMap } from "../core/evidenceMap.js";
+import { collectCorrectionStageSources } from "../extractors/correctionSources.js";
+import { buildDeliveryEnvelope, DELIVERY_PROFILES, type DeliveryProfile } from "../core/delivery.js";
+import { deriveChangeIdentity } from "../core/changeIdentity.js";
 import { readConfig, writeConfig, FIRMNESS_LEVELS, isFirmness, type Firmness } from "../core/config.js";
 import { blockingInScope, vetoInScope, proposedEditLines } from "../core/hookpolicy.js";
 import { isHumanConfirmed } from "../core/strictgate.js";
@@ -74,15 +78,23 @@ import { recordServed, servedSummary } from "../core/served.js";
 import { contextHookOutput, denyHookOutput, hookProvider, normalizeHookEvent, stopHookOutput, type HookProvider } from "../core/agenthook.js";
 import {
   PIPELINE_LOOP,
-  UNVERIFIED_NAG,
+  armExecutionObligations,
+  beforeEditProbeVerdict,
+  compileExecutableProbes,
+  environmentExecutableProbes,
+  environmentExecutionObligations,
+  executionObligationBrief,
+  isProductPath,
   loadPipelineState,
   onCommand,
   onEdit,
   onPrompt,
   onSkill,
   pipelineEnabled,
+  proofCheckpoint,
   savePipelineState,
   stopVerdict,
+  unverifiedNag,
 } from "../core/pipeline.js";
 import { draftDuplicateOf, isAcceptedDuplicateAnchor } from "../core/dupdetect.js";
 import { planAutoReview, planMutations, type AutoReviewPlan, type AutoReviewEntry } from "../core/autoreview.js";
@@ -95,12 +107,15 @@ import { generateWiki, wikiStatus, wikiPrompt, publicHome, privateHome, readWiki
 import { adoptProsePrompt } from "../wiki/adopt.js";
 import { topicCollisions, isInForce, liveForTopic } from "../core/topics.js";
 import { ADR_DIR_CANDIDATES, ADR_FILE_RE, mapAdrCorpus } from "../extractors/adrImport.js";
+import { applyImportedAdrReview, carryImportedAdrReview, importedAdrReviewHash, importedAdrSourceHash, isImportedAdrDecision, pendingImportedAdrReviews } from "../core/importReview.js";
 import { exportMadrCorpus, isRegenerableMadr } from "../integrations/madrExport.js";
 import { buildMadrManifest, writeMadrManifest, refreshMadrCorpus } from "../integrations/madrManifest.js";
 import { pendingEscalations, policyEscalations, commitRepairEscalations } from "../core/escalations.js";
 import { premiseEscalations } from "../core/premises.js";
 import { parseDocAnchors, renderDocGrounding } from "../core/docanchors.js";
 import { compareCandidates } from "../core/compare.js";
+import { planLandscapeAdoption } from "../core/landscapeAdoption.js";
+import { discoverRepositoryLandscape } from "../extractors/landscapeDiscovery.js";
 import { checkConformance } from "../core/conformance.js";
 import { ConstitutionService, policyEvaluationEnvelope, type PolicyEvaluationSet } from "../constitution/service.js";
 import { sourceGraphSnapshot } from "../constitution/evaluator.js";
@@ -252,6 +267,10 @@ program
         const res = indexRepo(store, root, { source: { kind: "commit", ref: "HEAD" } });
         store.reindex();
         console.log(`  ✓ indexed committed HEAD (${res.files} files) → ${res.symbols} symbols, ${res.edges} edges, ${res.components} components`);
+        for (const item of res.coverage) {
+          const reasons = Object.entries(item.reasons).map(([reason, count]) => `${reason}:${count}`).join(", ");
+          console.log(`    coverage ${item.language}: ${item.eligible} eligible · ${item.parsed} parsed · ${item.skipped} skipped${reasons ? ` (${reasons})` : ""}`);
+        }
         if (res.skipped) console.log(`  ⚠ ${res.skipped} file(s) could not be parsed (skipped)`);
       } else {
         // A checkout-derived graph can be swept into a later memory commit by
@@ -390,6 +409,10 @@ program
     const healed = shouldAutoCommit ? [] : refreshExistingGrounding(root, store);
     console.log(`Indexed ${res.files} files:`);
     console.log(`  ${counts.symbols} symbols, ${counts.edges} edges, ${counts.components} components`);
+    for (const item of res.coverage) {
+      const reasons = Object.entries(item.reasons).map(([reason, count]) => `${reason}:${count}`).join(", ");
+      console.log(`  coverage ${item.language}: ${item.eligible} eligible · ${item.parsed} parsed · ${item.skipped} skipped${reasons ? ` (${reasons})` : ""}`);
+    }
     if (correctionSweep.scanned) {
       console.log(`  correction reviews: ${correctionSweep.proved} proved · ${correctionSweep.already_proved} current · ${correctionSweep.pending} pending · ${correctionSweep.legacy_only} legacy-only · ${correctionSweep.conflicted} conflicted · ${correctionSweep.failed.length} failed; authority none`);
     }
@@ -2742,6 +2765,91 @@ for (const command of ["status", "report"] as const) {
     });
 }
 
+// ---- landscape (review + explicitly adopt exact repository candidates) ---
+const landscapeCmd = program
+  .command("landscape")
+  .description("Review exact-revision Engineering Landscape candidates and explicitly adopt them into the graph.");
+
+landscapeCmd
+  .command("review")
+  .description("Discover a read-only, hash-bound candidate set. This command never writes graph authority.")
+  .option("--ref <ref>", "Git commit/ref to inspect", "HEAD")
+  .option("--json", "emit the complete machine-readable discovery envelope")
+  .action((opts: { ref: string; json?: boolean }) => {
+    const root = findRoot();
+    const discovery = discoverRepositoryLandscape(root, opts.ref);
+    if (opts.json) {
+      console.log(JSON.stringify(discovery, null, 2));
+      return;
+    }
+    console.log(`Landscape candidates at ${discovery.sourceRevision}`);
+    console.log(`Discovery: ${discovery.discoveryHash}`);
+    console.log(`Repository identity: ${discovery.repositoryRootIdentity}\n`);
+    console.log(`RESOURCES (${discovery.resources.length})`);
+    for (const candidate of discovery.resources) {
+      console.log(`  ${candidate.candidateHash}  ${candidate.record.id}  ${candidate.record.name}`);
+    }
+    console.log(`\nRELATIONSHIPS (${discovery.relationships.length})`);
+    for (const candidate of discovery.relationships) {
+      console.log(`  ${candidate.candidateHash}  ${candidate.record.from} --${candidate.record.type}--> ${candidate.record.to}`);
+    }
+    if (discovery.issues.length) {
+      console.log(`\nISSUES (${discovery.issues.length})`);
+      for (const issue of discovery.issues) {
+        console.log(`  ${issue.code}  ${issue.sourcePath}${issue.sourceField ? `#${issue.sourceField}` : ""} — ${issue.detail}`);
+      }
+    }
+    console.log("\nNothing was written. Review the candidates, then adopt all of them with:");
+    console.log(`  hunch landscape adopt --ref ${discovery.sourceRevision} --expected ${discovery.discoveryHash} --all --reviewed-by <you>${discovery.issues.length ? " --acknowledge-issues" : ""}`);
+    console.log("Or pass --candidate <hash...> to adopt an explicit subset; relationships require both endpoint resources.");
+  });
+
+landscapeCmd
+  .command("adopt")
+  .description("Human-confirm a reviewed candidate set and write only those exact records through Hunch's normal graph boundary.")
+  .option("--ref <ref>", "exact Git commit/ref that was reviewed", "HEAD")
+  .requiredOption("--expected <hash>", "discovery hash printed by landscape review")
+  .requiredOption("--reviewed-by <label>", "credential-free operator/reviewer label")
+  .option("--all", "adopt every candidate in the reviewed discovery")
+  .option("--candidate <hashes...>", "adopt only these candidate hashes")
+  .option("--acknowledge-issues", "confirm that the printed discovery issues were reviewed")
+  .action((opts: {
+    ref: string;
+    expected: string;
+    reviewedBy: string;
+    all?: boolean;
+    candidate?: string[];
+    acknowledgeIssues?: boolean;
+  }) => {
+    if (opts.all && opts.candidate?.length) return fail("choose either --all or --candidate, not both");
+    if (!opts.all && !opts.candidate?.length) return fail("choose --all or name reviewed hashes with --candidate <hashes...>");
+    const { store, root } = storeFor();
+    try {
+      const discovery = discoverRepositoryLandscape(root, opts.ref);
+      const plan = planLandscapeAdoption({
+        discovery,
+        expectedDiscoveryHash: opts.expected,
+        reviewer: opts.reviewedBy,
+        candidateHashes: opts.all ? "all" : opts.candidate!,
+        acknowledgeIssues: opts.acknowledgeIssues,
+        existingResources: store.recs("resources"),
+        existingRelationships: store.recs("edges"),
+      });
+      for (const resource of plan.resourcesToWrite) store.putCapture("resources", resource);
+      for (const relationship of plan.relationshipsToWrite) store.putCapture("edges", relationship);
+      store.reindex();
+      if (plan.resourcesToWrite.length || plan.relationshipsToWrite.length) {
+        pumpMemoryHome(store, root, store.captureHome(false), "hunch: adopt reviewed Engineering Landscape candidates");
+      }
+      console.log(JSON.stringify(plan.receipt, null, 2));
+      console.log(`✓ accepted ${plan.receipt.acceptedResourceIds.length} resource(s) and ${plan.receipt.acceptedRelationshipIds.length} relationship(s); wrote ${plan.resourcesToWrite.length + plan.relationshipsToWrite.length}, reused ${plan.receipt.reusedResourceIds.length + plan.receipt.reusedRelationshipIds.length}.`);
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error));
+    } finally {
+      store.close();
+    }
+  });
+
 // ---- compare (rank N candidate solutions by architectural fit) ------------
 program
   .command("compare")
@@ -2898,7 +3006,16 @@ program
       }
       const files = readdirSync(join(root, dir)).filter((f) => ADR_FILE_RE.test(f)).sort();
       if (!files.length) return fail(`no NNNN-slug.md ADR files in ${dir}`);
-      const sources = files.map((f) => ({ relPath: `${dir}/${f}`, text: readFileSync(join(root, dir, f), "utf8") }));
+      const sources = files.map((f) => {
+        const relPath = `${dir}/${f}`;
+        const sourceRevision = firstCommitForFile(relPath, root) || null;
+        return {
+          relPath,
+          text: readFileSync(join(root, dir, f), "utf8"),
+          sourceDate: sourceRevision ? (asOfDate(sourceRevision, root) ?? null) : null,
+          sourceRevision,
+        };
+      });
       const { decisions, warnings } = mapAdrCorpus(sources);
       for (const w of warnings) console.log(`  ⚠ ${w}`);
 
@@ -2925,8 +3042,12 @@ program
 
       store.json.ensureDirs();
       let created = 0, updated = 0;
-      for (const d of decisions) {
-        if (store.getRec("decisions", d.id)) updated++;
+      for (let index = 0; index < decisions.length; index++) {
+        const candidate = decisions[index]!;
+        const previous = opts.private ? store.getRec("decisions", candidate.id) : store.json.get("decisions", candidate.id);
+        const d = carryImportedAdrReview(previous, candidate);
+        decisions[index] = d;
+        if (previous) updated++;
         else created++;
         store.putCapture("decisions", d, opts.private);
       }
@@ -2936,6 +3057,18 @@ program
       const flush = flushCapture(store, hunchPaths(root).hunch, !!opts.private, `hunch: import ${decisions.length} ADR(s) from ${dir}`);
       const live = decisions.filter((d) => d.status === "accepted").length;
       console.log(`✓ imported ${decisions.length} ADR(s) from ${dir} (${created} new, ${updated} updated; ${live} live, ${decisions.length - live} historical)${opts.private ? " [private overlay]" : ""}`);
+      const pending = pendingImportedAdrReviews(decisions);
+      if (pending.length) {
+        const first = pending[0]!;
+        const sourceHash = importedAdrSourceHash(first)!;
+        const reviewHash = importedAdrReviewHash(first);
+        console.log(`\n⚖ HUMAN REVIEW  ${pending.length} imported live ADR(s) are advisory until you answer.`);
+        console.log(`  “${first.title}” (${first.id})`);
+        console.log("  Approve it as human-confirmed project authority, or decline and keep it advisory?");
+        console.log(`  Approve: hunch review --approve-import ${first.id} --expected-source-hash ${sourceHash} --expected-review-hash ${reviewHash} --reviewed-by <you>`);
+        console.log(`  Decline: hunch review --decline-import ${first.id} --expected-source-hash ${sourceHash} --expected-review-hash ${reviewHash} --reviewed-by <you>`);
+        console.log("  Your coding assistant will also ask this inline in the next Hunch session; silence never approves it.");
+      }
       if (flush === "pushed") console.log("  ↳ private memory committed + pushed");
     } finally {
       store.close();
@@ -3472,14 +3605,103 @@ program
     }
   });
 
+// ---- shortlist (experimental correction-stage diagnostic) -----------------
+program
+  .command("shortlist")
+  .description("Experimental repository-adaptive diagnostic: preserve a flat top five, add file-anchored semantic clusters, and emit an efficiency-tested advisory inspection plan capped at eleven. --evidence is annotation-only; no exact-owner claim.")
+  .argument("<issue...>", "issue report or reproduction prose")
+  .option("--limit <n>", "candidate count (1-5)", "5")
+  .option("--evidence <receipt>", "verified-evidence JSON receipt path, or - for stdin")
+  .option("--json", "emit the diagnostic as JSON")
+  .action((issueParts: string[], opts: { limit: string; evidence?: string; json?: boolean }) => {
+    const issue = issueParts.join(" ").trim();
+    if (!issue) return fail("issue text must not be empty");
+    const rawLimit = Number(opts.limit);
+    if (!Number.isSafeInteger(rawLimit) || rawLimit < 1 || rawLimit > 5) return fail("--limit must be an integer from 1 to 5");
+    const root = findRoot();
+    try {
+      let evidence: unknown = undefined;
+      if (opts.evidence) {
+        const raw = opts.evidence === "-" ? readFileSync(0, "utf8") : readFileSync(resolve(opts.evidence), "utf8");
+        if (Buffer.byteLength(raw, "utf8") > 1_000_000) return fail("evidence receipt exceeds the 1 MB safety limit");
+        evidence = JSON.parse(raw) as unknown;
+      }
+      const collection = collectCorrectionStageSources(root, issue);
+      const diagnostic = diagnoseIssueCorrectionStage(issue, collection.sources, rawLimit, evidence);
+      if (opts.json) {
+        console.log(JSON.stringify({
+          ...diagnostic,
+          scan: {
+            files_read: collection.files_read,
+            bytes_read: collection.bytes_read,
+            files_skipped: collection.files_skipped,
+          },
+        }, null, 2));
+      } else {
+        console.log(formatCorrectionStageDiagnostic(diagnostic));
+        console.log(`Scan: ${collection.files_read} source file(s), ${collection.files_skipped} skipped by safety/budget limits.`);
+      }
+    } catch (error) {
+      fail(`could not build the correction-stage shortlist: ${(error as Error).message}`);
+    }
+  });
+
+// ---- evidence-map (compile supplied behavioral receipts) ------------------
+program
+  .command("evidence-map")
+  .description("Compile authenticated probe/execution/intervention receipts into a read-only evidence map. Runs no code and never claims an exact owner.")
+  .argument("<receipt>", "JSON receipt path, or - to read stdin")
+  .option("--json", "emit the evidence map as JSON")
+  .action((receiptFile: string, opts: { json?: boolean }) => {
+    try {
+      const raw = receiptFile === "-" ? readFileSync(0, "utf8") : readFileSync(resolve(receiptFile), "utf8");
+      if (Buffer.byteLength(raw, "utf8") > 1_000_000) return fail("evidence receipt exceeds the 1 MB safety limit");
+      const map = compileVerifiedEvidenceMap(JSON.parse(raw) as unknown);
+      console.log(opts.json ? JSON.stringify(map, null, 2) : formatVerifiedEvidenceMap(map));
+    } catch (error) {
+      fail(`could not compile the verified evidence map: ${(error as Error).message}`);
+    }
+  });
+
+// ---- change-id (squash-stable exact delta identity) -----------------------
+program
+  .command("change-id")
+  .description("Derive an exact change identity that survives commit-message and squash metadata changes.")
+  .argument("<base>", "base commit or ref")
+  .argument("[head]", "head commit or ref", "HEAD")
+  .option("--json", "emit the complete sealed identity as JSON")
+  .action((base: string, head: string, opts: { json?: boolean }) => {
+    try {
+      const identity = deriveChangeIdentity(findRoot(), base, head);
+      if (opts.json) {
+        console.log(JSON.stringify(identity, null, 2));
+      } else {
+        console.log([
+          `${identity.change_id} (${identity.algorithm})`,
+          `  exact revisions: ${identity.base_revision}..${identity.head_revision}`,
+          `  exact delta: ${identity.delta_hash}`,
+          `  Git stable patch ID: ${identity.patch_id ?? "unavailable (exact Hunch identity still valid)"}`,
+          `  files: ${identity.file_count} (${identity.paths_hash})`,
+          `  sealed receipt: ${identity.content_hash}`,
+        ].join("\n"));
+      }
+    } catch (error) {
+      fail((error as Error).message);
+    }
+  });
+
 // ---- context (surgical retrieval) -----------------------------------------
 program
   .command("context")
   .description("Assemble the minimal relevant Hunch slice for a task on a file/symbol.")
   .argument("<target>", "file path or symbol")
   .option("--budget <n>", "rough token budget", "1500")
+  .option("--profile <profile>", "delivery role: builder, reviewer, or architect", "builder")
   .option("--as-of <ref>", "time-travel: assemble the slice as it stood at a commit/tag/branch")
-  .action(async (target: string, opts: { budget: string; asOf?: string }) => {
+  .action(async (target: string, opts: { budget: string; profile: string; asOf?: string }) => {
+    if (!DELIVERY_PROFILES.includes(opts.profile as DeliveryProfile)) {
+      return fail(`--profile must be one of: ${DELIVERY_PROFILES.join(", ")}`);
+    }
     const { store, root } = storeFor();
     const asOf = opts.asOf ? asOfDate(opts.asOf, root) : undefined;
     if (opts.asOf && !asOf) return fail(`could not resolve --as-of "${opts.asOf}" to a commit`);
@@ -3489,7 +3711,14 @@ program
     // used to come back empty while the graph held the answer one FTS query away —
     // the task-shaped entry point must not whiff on task-shaped input. Fall back to
     // search so the caller always leaves with the closest graph matches.
-    const empty = !ctx.constraints.length && !ctx.decisions.length && !ctx.bugs.length && !ctx.blast_radius.length;
+    const empty =
+      !ctx.constraints.length &&
+      !ctx.decisions.length &&
+      !ctx.bugs.length &&
+      !ctx.blast_radius.length &&
+      !ctx.findings.length &&
+      !ctx.landscape?.resources.length &&
+      !ctx.landscape?.relationships.length;
     if (empty && !asOf) {
       const hits = store.search(target, 8);
       if (hits.length) {
@@ -3506,6 +3735,7 @@ program
       components: store.recs("components"),
       decisionCorpus: store.recs("decisions"),
       historical: !!asOf,
+      profile: opts.profile as DeliveryProfile,
     }));
     store.close();
   });
@@ -3624,6 +3854,7 @@ program
     const precise = blocking.filter((c) => !!effectiveForbids(c));
     const scopeOnly = blocking.filter((c) => !effectiveForbids(c));
     const drafts = store.json.loadAll("decisions").filter(isReviewDraft);
+    const importedReviews = pendingImportedAdrReviews(store.json.loadAll("decisions"));
     const { ready, scrutiny } = partitionReview(drafts, READY_MIN_GROUNDED);
     const stale = store.staleness((f) => lastChangeDate(f, root)).filter((s) => s.kind === "constraint");
 
@@ -3642,6 +3873,9 @@ program
     }
     if (ready.length || scrutiny.length) {
       console.log(`\n  ⏳ TO CONFIRM   ${ready.length} ready · ${scrutiny.length} need scrutiny   → hunch review${ready.length ? " --accept-verified" : ""}`);
+    }
+    if (importedReviews.length) {
+      console.log(`\n  ⚖ ADR REVIEW   ${importedReviews.length} imported live ADR(s) need an approve/decline answer   → hunch review`);
     }
     if (stale.length) {
       console.log(`\n  ♻ STALE        ${stale.length} rule(s) whose guarded code moved since last verified   → re-confirm to keep the teeth`);
@@ -3760,15 +3994,30 @@ program
       // Verification pipeline (delivery enforced, not hoped for — see core/pipeline.ts).
       // PostToolUse records facts; Stop gates on them. Both are pipeline-only events,
       // handled before the grounding dispatch below.
-      if (evt.hook_event_name === "PostToolUse" && evt.session_id && pipelineEnabled()) {
+      if ((evt.hook_event_name === "PostToolUse" || evt.hook_event_name === "PostToolUseFailure") && evt.session_id && pipelineEnabled()) {
         let st = loadPipelineState(evt.session_id);
+        const before = st;
+        let activity: Parameters<typeof proofCheckpoint>[2] | null = null;
         if (/^(Edit|Write|MultiEdit)$/.test(evt.tool_name ?? "")) {
           const p = evt.tool_input?.file_path;
-          if (p) st = onEdit(st, toRepoRel(root, p));
+          if (p) {
+            st = onEdit(st, toRepoRel(root, p));
+            activity = { kind: "edit" };
+          }
         } else if (evt.tool_name === "Bash" || evt.tool_name === "PowerShell") {
-          st = onCommand(st, String(evt.tool_input?.command ?? ""));
+          const command = String(evt.tool_input?.command ?? "");
+          st = onCommand(st, command, evt.tool_outcome);
+          activity = { kind: "command", command };
         } else if (evt.tool_name === "Skill") {
           st = onSkill(st, String(evt.tool_input?.skill ?? ""));
+          activity = { kind: "skill" };
+        }
+        if (activity) {
+          const checkpoint = proofCheckpoint(before, st, activity);
+          st = checkpoint.state;
+          savePipelineState(evt.session_id, st);
+          if (checkpoint.reminder) emitContext(provider, evt.hook_event_name, checkpoint.reminder);
+          return;
         }
         savePipelineState(evt.session_id, st);
         return;
@@ -3801,8 +4050,8 @@ program
         if (evt.session_id && pipelineEnabled()) {
           const st = onPrompt(loadPipelineState(evt.session_id));
           savePipelineState(evt.session_id, st);
-          if (!st.verifyAfterEdit) {
-            text += `\n\n${UNVERIFIED_NAG}`;
+          if (!st.verifyAfterEdit || st.obligations.some((item) => item.status !== "satisfied")) {
+            text += `\n\n${unverifiedNag(st)}`;
             mustDeliver = true;
           }
         }
@@ -3906,6 +4155,19 @@ program
         // is instead of pulling (or worse, grepping) for it. Cheap reads only
         // (no reindex, no drift walk); public store only — session transcripts
         // travel further than a terminal. Union view: `hunch now --private`.
+        let controllerBrief = "";
+        if (evt.session_id && pipelineEnabled()) {
+          const state = armExecutionObligations(
+            loadPipelineState(evt.session_id),
+            [
+              ...compileExecutableProbes(environmentExecutableProbes()),
+              ...environmentExecutionObligations(),
+            ],
+            { replaceOrigin: "episode" },
+          );
+          savePipelineState(evt.session_id, state);
+          controllerBrief = executionObligationBrief(state);
+        }
         const s = new HunchStore(paths);
         try {
           // Mode-aware: in unified ("shared") mode the public `.hunch/` is only a routing
@@ -3917,7 +4179,7 @@ program
           const { recent, roadmap, pendingReview } = nowData(decisions, 3);
           if (!decisions.length) {
             // Fresh graph: nothing to orient on, but the operating loop still ships.
-            if (pipelineEnabled()) emitContext(provider, "SessionStart", PIPELINE_LOOP);
+            if (pipelineEnabled()) emitContext(provider, "SessionStart", [PIPELINE_LOOP, controllerBrief].filter(Boolean).join("\n\n"));
             return;
           }
           const L: string[] = [];
@@ -3947,6 +4209,7 @@ program
           // The operating loop rides session start — guaranteed delivery, once
           // (the zod bench showed ambient skills are read in ~0% of sessions).
           if (pipelineEnabled()) L.push("", PIPELINE_LOOP);
+          if (controllerBrief) L.push("", controllerBrief);
           const orientation = L.join("\n");
           // Antigravity's nearest equivalent is PreInvocation, which can fire
           // repeatedly in one conversation. Deduplicate it just like edit
@@ -3966,6 +4229,18 @@ program
       // Outside the repo (".." prefix) or on another drive (absolute, e.g. "D:/…")
       // → nothing for Hunch to say.
       if (!target || target.startsWith("..") || /^[a-zA-Z]:/.test(target)) return;
+
+      // A compiled red→green probe is only meaningful if its red receipt exists
+      // before implementation. Firm/strict may deny two edits per prompt, then
+      // fail open so a malformed or unavailable probe can never deadlock work.
+      if ((firmness === "firm" || firmness === "strict") && evt.session_id && pipelineEnabled() && isProductPath(target)) {
+        const baseline = beforeEditProbeVerdict(loadPipelineState(evt.session_id));
+        if (baseline.block) {
+          savePipelineState(evt.session_id, baseline.state);
+          emitDeny(provider, baseline.reason ?? "Hunch evidence gate — establish the pre-edit probe baseline first.");
+          return;
+        }
+      }
 
       // Pre-edit grounding must resolve the same advertised graph as every CLI
       // and MCP consumer. Any unavailable/mismatched team route falls through to
@@ -4026,9 +4301,18 @@ program
       // not a block; the commit-time `hunch check` does the actual gating.
       const retired = store.retiredForFile(target).filter((r) => r.symbols.length || r.deps.length);
       const hasContent =
-        ctx.constraints.length || ctx.decisions.length || ctx.bugs.length || ctx.blast_radius.length || ctx.findings.length || retired.length || docGround;
+        ctx.constraints.length ||
+        ctx.decisions.length ||
+        ctx.bugs.length ||
+        ctx.blast_radius.length ||
+        ctx.findings.length ||
+        ctx.landscape?.resources.length ||
+        ctx.landscape?.relationships.length ||
+        retired.length ||
+        docGround;
       if (!hasContent) return; // no noise on files Hunch hasn't learned yet
       const envelope = buildDeliveryEnvelope(ctx, {
+        profile: "builder",
         root,
         symbols: store.recs("symbols"),
         components: store.recs("components"),
@@ -4060,6 +4344,8 @@ program
         delivery_reason: item.delivery_reason,
         provenance_status: item.provenance_status,
         token_cost: item.token_cost,
+        delivery_profile: envelope.profile,
+        ranking_policy: envelope.ranking_policy,
       })));
       if (injectionMode(evt.session_id, `pre:${target}`, text) === "delta") {
         receipts("refreshed");
@@ -4176,23 +4462,64 @@ program
 
 program
   .command("review")
-  .description("Triage drafts: segmented list, accept/reject one, or batch-accept Critic-verified drafts.")
+  .description("Answer hash-bound imported-ADR questions, or triage deliberate proposed drafts.")
   .option("--accept <id>", "promote a decision to accepted/human-confirmed (confirms its tripwires)")
   .option("--reject <id>", "reject a draft decision with a durable lifecycle tombstone")
+  .option("--approve-import <id>", "approve one exact imported ADR as human-confirmed authority")
+  .option("--decline-import <id>", "record that one exact imported ADR was reviewed and must stay advisory")
+  .option("--expected-source-hash <hash>", "exact sha256 source hash printed with the imported-ADR question")
+  .option("--expected-review-hash <hash>", "exact sha256 mapped-meaning hash printed with the imported-ADR question")
+  .option("--reviewed-by <label>", "credential-free human reviewer label for an imported-ADR answer")
   .option("--accept-verified", "batch-accept every Critic-verified, well-grounded draft (>= --min-grounded)")
   .option("--reject-duplicates", "batch-reject drafts that near-duplicate an accepted record (deterministic term+file similarity — hygiene, not judgment)")
   .option("--min-grounded <n>", "grounded-ness threshold for the ready group / --accept-verified", String(READY_MIN_GROUNDED))
   .option("--private", "include local private/shared-overlay drafts; terminal output may contain private memory")
-  .action((opts: { accept?: string; reject?: string; acceptVerified?: boolean; rejectDuplicates?: boolean; minGrounded?: string; private?: boolean }) => {
+  .action((opts: { accept?: string; reject?: string; approveImport?: string; declineImport?: string; expectedSourceHash?: string; expectedReviewHash?: string; reviewedBy?: string; acceptVerified?: boolean; rejectDuplicates?: boolean; minGrounded?: string; private?: boolean }) => {
     const { store, root } = storeFor();
     const minGrounded = Number.isFinite(Number(opts.minGrounded)) ? Number(opts.minGrounded) : READY_MIN_GROUNDED;
     if (opts.private && !store.hasPrivate) { store.close(); return fail("--private needs HUNCH_PRIVATE_DIR set to a private store"); }
+    const actionCount = [opts.accept, opts.reject, opts.approveImport, opts.declineImport, opts.acceptVerified, opts.rejectDuplicates].filter(Boolean).length;
+    if (actionCount > 1) { store.close(); return fail("choose exactly one review action at a time"); }
     const decisions = () => opts.private ? store.recs("decisions") : store.json.loadAll("decisions");
     let publicGroundingChanged = false;
     const touchedHomes = new Set<MemoryHome>();
-    if (opts.accept) {
+    if (opts.approveImport || opts.declineImport) {
+      const id = opts.approveImport ?? opts.declineImport!;
+      if (!opts.expectedSourceHash || !opts.expectedReviewHash || !opts.reviewedBy) {
+        store.close();
+        return fail("an imported-ADR answer requires --expected-source-hash <hash>, --expected-review-hash <hash>, and --reviewed-by <label>");
+      }
+      const d = opts.private ? store.getRec("decisions", id) : store.json.get("decisions", id);
+      if (!d) { store.close(); return fail(`decision ${id} not found`); }
+      try {
+        const reviewed = applyImportedAdrReview(d, {
+          disposition: opts.approveImport ? "approve" : "decline",
+          expectedSourceHash: opts.expectedSourceHash,
+          expectedReviewHash: opts.expectedReviewHash,
+          reviewer: opts.reviewedBy,
+        });
+        const home = opts.private ? decisionMemoryHome(store, id) : "public";
+        putDecisionInHome(store, reviewed, home);
+        touchedHomes.add(home);
+        store.reindex();
+        if (home === "public") {
+          publicGroundingChanged = true;
+          if (!store.autoCommit) refreshExistingGrounding(root, store);
+        }
+        console.log(opts.approveImport
+          ? `✓ approved ${id} for exact source ${opts.expectedSourceHash} (now human-confirmed authority)`
+          : `✓ declined authority for ${id} at exact source ${opts.expectedSourceHash} (reviewed; remains advisory)`);
+      } catch (error) {
+        store.close();
+        return fail(error instanceof Error ? error.message : String(error));
+      }
+    } else if (opts.accept) {
       const d = opts.private ? store.getRec("decisions", opts.accept) : store.json.get("decisions", opts.accept);
       if (!d) { store.close(); return fail(`decision ${opts.accept} not found`); }
+      if (isImportedAdrDecision(d)) {
+        store.close();
+        return fail(`imported ADR ${d.id} requires the hash-bound --approve-import flow shown by hunch review`);
+      }
       const { source, armed, home } = acceptDecision(store, d, opts.private ? decisionMemoryHome(store, d.id) : "public");
       touchedHomes.add(home);
       store.reindex();
@@ -4252,11 +4579,25 @@ program
         for (const it of ready) console.log(`   ${it.d.id}  grounded=${it.synth.grounded ?? "?"}  ${it.d.title}`);
       }
     } else {
-      const drafts = decisions().filter(isReviewDraft);
+      const allDecisions = decisions();
+      const imported = pendingImportedAdrReviews(allDecisions);
+      const drafts = allDecisions.filter(isReviewDraft);
       const { ready, scrutiny } = partitionReview(drafts, minGrounded);
-      if (!ready.length && !scrutiny.length) {
+      if (!ready.length && !scrutiny.length && !imported.length) {
         console.log("✓ No drafts awaiting review — captured memory auto-trusts (advisory) the moment it lands.");
       } else {
+        if (imported.length) {
+          const d = imported[0]!;
+          const sourceHash = importedAdrSourceHash(d)!;
+          const reviewHash = importedAdrReviewHash(d);
+          console.log(`⚖ ${imported.length} imported live ADR(s) need a human answer (one at a time):\n`);
+          console.log(`  ${d.id}  ${d.title}`);
+          console.log(`      ${d.related_files[0] ?? "source unknown"}  source ${sourceHash}  review ${reviewHash}`);
+          console.log(`      ${d.decision.slice(0, 180)}`);
+          console.log("\n  Approve as human-confirmed authority, or decline and keep advisory?");
+          console.log(`  Approve: hunch review --approve-import ${d.id} --expected-source-hash ${sourceHash} --expected-review-hash ${reviewHash} --reviewed-by <you>`);
+          console.log(`  Decline: hunch review --decline-import ${d.id} --expected-source-hash ${sourceHash} --expected-review-hash ${reviewHash} --reviewed-by <you>\n`);
+        }
         if (ready.length) {
           console.log(`✓ ${ready.length} ready to confirm — Critic-verified, grounded ≥ ${minGrounded} (best first):\n`);
           for (const it of ready) printReviewItem(it);
@@ -4468,7 +4809,7 @@ program
 // ---- escalations (the inline "ask the human" surface) ---------------------
 program
   .command("escalations")
-  .description("The decisions a human must make NOW — surfaced to be asked INLINE (in the prompt), never a background queue. Captured memory auto-trusts on landing; this lists only what the graph genuinely can't resolve itself: topic conflicts, premise-stale decisions, a queued commit-provenance repair awaiting `--apply`, Constitution candidates awaiting review, and proposed policies whose activation is a human call. Normally empty. Exits non-zero when any are open, so an assistant/CI knows to raise them.")
+  .description("The decisions a human must make NOW — surfaced to be asked INLINE (in the prompt), never a background queue. Captured memory auto-trusts on landing; this lists only what the graph genuinely can't resolve itself: topic conflicts, premise-stale decisions, one exact imported ADR at a time, a queued commit-provenance repair awaiting `--apply`, Constitution candidates awaiting review, and proposed policies whose activation is a human call. Normally empty. Exits non-zero when any are open, so an assistant/CI knows to raise them.")
   .option("--json", "emit the escalation entries as JSON (the VS Code panel's data source)")
   .action(async (opts: { json?: boolean }) => {
     const { store, root } = storeFor();
@@ -5358,7 +5699,11 @@ function toRepoRel(root: string, abs: string): string {
   return relative(realpathNorm(root), realpathNorm(abs)).split("\\").join("/");
 }
 
-function emitContext(provider: HookProvider, event: "PreToolUse" | "UserPromptSubmit" | "SessionStart" | "SubagentStart", text: string): void {
+function emitContext(
+  provider: HookProvider,
+  event: "PreToolUse" | "PostToolUse" | "PostToolUseFailure" | "UserPromptSubmit" | "SessionStart" | "SubagentStart",
+  text: string,
+): void {
   const output = contextHookOutput(provider, event, text);
   if (output) process.stdout.write(JSON.stringify(output));
 }
