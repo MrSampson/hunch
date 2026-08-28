@@ -1995,19 +1995,6 @@ export interface CommitCandidate {
   files: string[];
 }
 
-/** Is `commit` reachable from `ref`? Used to tell a merged commit from one that
- *  fell out of history (e.g. squashed away) — `git merge-base --is-ancestor`
- *  exits 0 for yes, non-zero for no, with no stdout either way, so this can't
- *  reuse gitSafe (which can't distinguish "false" from "error"). */
-export function isAncestor(commit: string, ref: string, cwd: string): boolean {
-  try {
-    execFileSync("git", ["-C", cwd, "merge-base", "--is-ancestor", commit, ref], { stdio: "ignore", timeout: 5_000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /** Every commit newly reachable in `oldRef..newRef`, with the files each one
  *  changed (rename-aware, via commitChanges). Used to find the commit a
  *  squash-merge produced from a set of now-orphaned source-branch commits. */
@@ -2015,7 +2002,9 @@ export function mergeRangeChanges(oldRef: string, newRef: string, cwd: string): 
   const shas = gitSafe(["rev-list", "--abbrev-commit", `${oldRef}..${newRef}`], cwd).split("\n").filter(Boolean).reverse();
   return shas.map((sha) => ({
     sha,
-    files: commitChanges(sha, cwd).map((c) => c.after ?? c.before).filter((f): f is string => !!f),
+    // A deletion is never a sensible repair target — a decision's provenance
+    // should never resolve to the commit that removed the file it's about.
+    files: commitChanges(sha, cwd).filter((c) => c.status !== "deleted").map((c) => c.after ?? c.before).filter((f): f is string => !!f),
   }));
 }
 
