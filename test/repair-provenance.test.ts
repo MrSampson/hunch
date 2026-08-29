@@ -933,6 +933,36 @@ test("repair-provenance --apply survives a corrupted queue with two entries shar
   }
 });
 
+test("repair-provenance --apply survives a corrupted queue with two entries sharing an id that BOTH resolve — only the first is applied, and only it is reported/swept (#51)", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    // Same {id, from}, but this time BOTH proposed `to`s are real, distinct
+    // commits — the mirror of the #48 withheld-sibling case above.
+    // repairDecisionCommit only ever applies the first match by id
+    // (plan.rewrites.find), so the second entry here is never written even
+    // though it's just as "resolvable" as the first.
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaANew },
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaBNew },
+      ], null, 2) + "\n",
+    );
+    const run = runCli(fixture.root, "repair-provenance", "--apply");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /Repaired 1 commit reference/, "only the first sibling was actually applied");
+    assert.doesNotMatch(run.stdout, new RegExp(fixture.shaBNew), "the second, never-applied sibling must not be listed under 'Repaired'");
+
+    const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
+    assert.equal(decA.commit, fixture.shaANew, "the first sibling is the one actually written");
+
+    const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string; to: string }[];
+    assert.deepEqual(queue, [{ id: "dec_a", from: "sha_a_old", to: fixture.shaBNew }], "the never-applied second sibling stays queued, not swept just because its id resolved via the first");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("repair-provenance --from-hook is silent and exits 0 when there's no ORIG_HEAD to react to", () => {
   const root = mkdtempSync(join(tmpdir(), "hunch-squash-noop-"));
   try {

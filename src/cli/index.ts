@@ -5241,7 +5241,19 @@ program
       // alone would treat the pair as one unit and delete/misreport the
       // withheld sibling just because the other one resolved.
       const resolvedIds = resolvedRewriteIds(applicable, decisions);
-      save(queue.filter((r) => staysQueued(r) || !resolvedIds.has(r.id)));
+      // A corrupted queue can also carry two entries sharing an id whose
+      // `to`s BOTH resolve — `applicable` above only tells the two of them
+      // apart from a withheld sibling, not from each other. repairDecisionCommit
+      // picks its match with `plan.rewrites.find(r => r.id === d.id)`, i.e. the
+      // first `applicable` entry for that id; every later entry sharing the id
+      // is never applied. `chosen` records that same first-match-wins pick by
+      // OBJECT identity so the print loop and the queue sweep below agree with
+      // what actually got written — an id-keyed check alone would report the
+      // never-applied sibling as "Repaired" and delete it from the queue (#51).
+      const chosen = new Map<string, CommitRewrite>();
+      for (const r of applicable) if (!chosen.has(r.id)) chosen.set(r.id, r);
+      const wasChosen = (r: CommitRewrite): boolean => chosen.get(r.id) === r;
+      save(queue.filter((r) => staysQueued(r) || !resolvedIds.has(r.id) || !wasChosen(r)));
       if (!appliedIds.size) {
         // deadRewrites already pruned any VISIBLE decision that moved on or
         // was superseded/rejected, so a targeted, resolvable id that IS
@@ -5270,8 +5282,8 @@ program
       pumpMemoryHomes(store, root, touchedHomes, `hunch: repair ${appliedIds.size} commit reference(s) after squash-merge (${rangeLabel})`);
       if (!opts.quiet) {
         console.log(`✓ Repaired ${appliedIds.size} commit reference(s):`);
-        for (const r of applicable) if (appliedIds.has(r.id)) console.log(`  ${r.id}  ${r.from} → ${r.to}`);
-        const stillQueued = toApply.filter((r) => staysQueued(r) || !resolvedIds.has(r.id));
+        for (const r of applicable) if (appliedIds.has(r.id) && wasChosen(r)) console.log(`  ${r.id}  ${r.from} → ${r.to}`);
+        const stillQueued = toApply.filter((r) => staysQueued(r) || !resolvedIds.has(r.id) || !wasChosen(r));
         const stillInvisible = stillQueued.filter((r) => reasonQueued(r) === "invisible");
         const stillWithheld = stillQueued.filter((r) => reasonQueued(r) === "withheld");
         if (stillInvisible.length) {
