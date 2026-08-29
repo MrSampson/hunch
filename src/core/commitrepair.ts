@@ -175,6 +175,28 @@ export function mergeRewrites(fresh: readonly CommitRewrite[], queued: readonly 
   return [...fresh, ...queued.filter((r) => !freshIds.has(r.id))];
 }
 
+/** Partition the entries --apply is about to act on by whether their proposed
+ *  `to` commit actually exists in this repository. `existing` is
+ *  `commitsExist`'s result over every `to` in `toApply`: `null` means the
+ *  check itself failed to run (not a git repo, git missing, timeout) and is
+ *  treated as fail-open, same discipline as drift.ts's own use of
+ *  commitsExist — nothing is withheld just because the check couldn't run.
+ *
+ *  A corrupted queue file, a hand-edited entry, or a bug upstream could
+ *  otherwise get a `to` that never resolves to a real commit written
+ *  straight into a decision's `commit` field and provenance evidence, then
+ *  auto-committed into shared team memory. `withheld` entries must stay
+ *  queued (never deleted, never passed to repairDecisionCommit) — the queue
+ *  file is the one durable record of the match, same reasoning as
+ *  deadRewrites/resolvedRewriteIds. */
+export function withheldForUnresolvableTo(toApply: readonly CommitRewrite[], existing: Set<string> | null): { applicable: CommitRewrite[]; withheld: CommitRewrite[] } {
+  if (existing === null) return { applicable: [...toApply], withheld: [] };
+  const applicable: CommitRewrite[] = [];
+  const withheld: CommitRewrite[] = [];
+  for (const r of toApply) (existing.has(r.to) ? applicable : withheld).push(r);
+  return { applicable, withheld };
+}
+
 /** Pure: rewrite `commit` for one decision, and its matching `commit:<sha>`
  *  evidence entry too if one is present (replaceExact is a no-op when the
  *  evidence array never cited the old sha) — or return the same reference

@@ -39,10 +39,10 @@ import {
   writeSynthesisPreference,
   type SynthPreference,
 } from "../synthesis/provider.js";
-import { isGitRepo, isGitRepoRoot, sameGitPublication, sameRemoteUrl, canonicalRemoteUrl, repositoryUsesRemote, headSha, isolatedHeadSha, logSince, lastChangeDate, firstCommitForFile, stagedFiles, workingFiles, commitFiles, asOfDate, stagedDiff, workingDiff, commitDiff, rangeFiles, rangeDiff, rangeSubjects, revExists, revParse, commitAndPushHunch, pullHunchStatus, syncExistingHunch, gitUntrackCached, gitCommonDir, hooksDir, isLinkedWorktree, mainWorktreeRoot, gitMemoryLog, memoryMoveDiff, revertMemoryMove, pushCurrentBranch, commitChanges, commitRepairStatus, mergeRangeChanges, type HunchPullStatus } from "../extractors/git.js";
+import { isGitRepo, isGitRepoRoot, sameGitPublication, sameRemoteUrl, canonicalRemoteUrl, repositoryUsesRemote, headSha, isolatedHeadSha, logSince, lastChangeDate, firstCommitForFile, stagedFiles, workingFiles, commitFiles, asOfDate, stagedDiff, workingDiff, commitDiff, rangeFiles, rangeDiff, rangeSubjects, revExists, revParse, commitAndPushHunch, pullHunchStatus, syncExistingHunch, gitUntrackCached, gitCommonDir, hooksDir, isLinkedWorktree, mainWorktreeRoot, gitMemoryLog, memoryMoveDiff, revertMemoryMove, pushCurrentBranch, commitChanges, commitRepairStatus, mergeRangeChanges, commitsExist, type HunchPullStatus } from "../extractors/git.js";
 import { parseMemoryLog, type MemoryMove } from "../core/memorylog.js";
 import { renamesOf, planRepair, repairDecision, repairConstraint, type RepairPlan } from "../core/repair.js";
-import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites, deadRewrites, resolvedRewriteIds, withoutDropped, addDropped, type CommitRewrite, type DroppedRewrite } from "../core/commitrepair.js";
+import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites, deadRewrites, resolvedRewriteIds, withoutDropped, addDropped, withheldForUnresolvableTo, type CommitRewrite, type DroppedRewrite } from "../core/commitrepair.js";
 import { readPendingRepairs, writePendingRepairs, readDroppedRepairs, writeDroppedRepairs, readActivePendingRepairs } from "../core/repairqueue.js";
 import { planPolicyRepair, repairPolicySpec, type PolicyBindingRewrite } from "../constitution/repairPolicies.js";
 import { writeTeamConfig, ensureTeamOverlay, readTeamConfig, safeGitUrl, safeTeamRef, overlayMatchesTeamRemote, advertisedTeamRemoteContract, boundedTeamGitEnv, cloneValidatedTeamOverlay, explicitTeamRemoteContract, teamRemoteContract } from "../integrations/team.js";
@@ -5170,7 +5170,18 @@ program
         return;
       }
 
-      const plan = { rewrites: toApply, records: [...new Set(toApply.map((r) => r.id))] };
+      // Never write an unverified `to` into a decision's commit field: a
+      // corrupted queue entry, a hand-edited value, or a bug upstream could
+      // otherwise get committed straight into shared team memory with
+      // nothing to catch it. `null` means the check itself failed to run
+      // (not a git repo, git missing, timeout) and is treated as fail-open —
+      // same discipline as drift.ts's own use of commitsExist. A withheld
+      // entry is never dropped from the queue: it's indistinguishable from
+      // an invisible decision in that respect, just a different reason.
+      const existingTargets = commitsExist(toApply.map((r) => r.to), root);
+      const { applicable, withheld } = withheldForUnresolvableTo(toApply, existingTargets);
+
+      const plan = { rewrites: applicable, records: [...new Set(applicable.map((r) => r.id))] };
       const touchedHomes = new Set<MemoryHome>();
       const appliedIds = new Set<string>();
       for (const d of decisions) {
@@ -5181,25 +5192,31 @@ program
         touchedHomes.add(home);
         appliedIds.add(d.id);
       }
-      // Only a candidate whose decision was actually VISIBLE this run is
-      // resolved (applied, or found stale by repairDecisionCommit's own
-      // from-mismatch bail) — resolvedRewriteIds shares deadRewrites' own
-      // reasoning: an id we could not see this run is not proof of anything,
-      // so it stays queued rather than being swept up just because it was in
-      // `toApply`. This also covers --only: toApply is just the one targeted
-      // id, so an invisible target is left queued instead of deleted
-      // unresolved.
-      const resolvedIds = resolvedRewriteIds(toApply, decisions);
+      // Only a candidate whose decision was actually VISIBLE this run AND
+      // whose `to` resolved in this repository is resolved (applied, or
+      // found stale by repairDecisionCommit's own from-mismatch bail) —
+      // resolvedRewriteIds shares deadRewrites' own reasoning: an id we
+      // could not see this run, or whose replacement doesn't exist, is not
+      // proof of anything, so it stays queued rather than being swept up
+      // just because it was in `toApply`. This also covers --only: toApply
+      // is just the one targeted id, so an invisible or unresolvable target
+      // is left queued instead of deleted unresolved.
+      const resolvedIds = resolvedRewriteIds(applicable, decisions);
       save(queue.filter((r) => !resolvedIds.has(r.id)));
       if (!appliedIds.size) {
         // deadRewrites already pruned any VISIBLE decision that moved on or
-        // was superseded/rejected, so a targeted id that IS visible always
-        // reaches repairDecisionCommit with a matching `from` and is always
-        // healed into a new object (appliedIds.add fires unconditionally for
-        // every visible match) — reaching here is only possible when every
-        // targeted candidate's decision was invisible this run.
+        // was superseded/rejected, so a targeted, resolvable id that IS
+        // visible always reaches repairDecisionCommit with a matching
+        // `from` and is always healed into a new object (appliedIds.add
+        // fires unconditionally for every visible match) — reaching here
+        // means every targeted candidate was either invisible or withheld.
+        const invisibleIds = applicable.filter((r) => !visibleIds.has(r.id)).map((r) => r.id);
         if (!opts.quiet) {
-          console.log(`Nothing applied — none of the targeted decision(s) are visible this run (branch checkout, or a private overlay not mounted?): ${toApply.map((r) => r.id).join(", ")}. Left queued for a run where they are — or \`hunch repair-provenance --drop <dec_id>\` if a decision is gone for good.`);
+          if (invisibleIds.length) {
+            console.log(`Nothing applied — none of the targeted decision(s) are visible this run (branch checkout, or a private overlay not mounted?): ${invisibleIds.join(", ")}. Left queued for a run where they are — or \`hunch repair-provenance --drop <dec_id>\` if a decision is gone for good.`);
+          } else {
+            console.log(`Nothing applied — the proposed replacement commit doesn't resolve in this repository for: ${withheld.map((r) => r.id).join(", ")}. Left queued.`);
+          }
         }
         return;
       }
@@ -5210,8 +5227,13 @@ program
         console.log(`✓ Repaired ${appliedIds.size} commit reference(s):`);
         for (const r of toApply) if (appliedIds.has(r.id)) console.log(`  ${r.id}  ${r.from} → ${r.to}`);
         const stillQueued = toApply.filter((r) => !resolvedIds.has(r.id));
-        if (stillQueued.length) {
-          console.log(`\n${stillQueued.length} entr${stillQueued.length === 1 ? "y" : "ies"} not visible this run, left queued: ${stillQueued.map((r) => r.id).join(", ")} — or \`hunch repair-provenance --drop <dec_id>\` if a decision is gone for good.`);
+        const stillInvisible = stillQueued.filter((r) => !withheld.includes(r));
+        const stillWithheld = stillQueued.filter((r) => withheld.includes(r));
+        if (stillInvisible.length) {
+          console.log(`\n${stillInvisible.length} entr${stillInvisible.length === 1 ? "y" : "ies"} not visible this run, left queued: ${stillInvisible.map((r) => r.id).join(", ")} — or \`hunch repair-provenance --drop <dec_id>\` if a decision is gone for good.`);
+        }
+        if (stillWithheld.length) {
+          console.log(`\n${stillWithheld.length} entr${stillWithheld.length === 1 ? "y" : "ies"} left queued — the proposed replacement commit doesn't resolve in this repository: ${stillWithheld.map((r) => r.id).join(", ")}.`);
         }
       }
     } catch (err) {
