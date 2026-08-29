@@ -143,7 +143,14 @@ export function resolvedRewriteIds(toApply: readonly CommitRewrite[], decisions:
  *  by an earlier `--drop` — otherwise a later merge that re-derives the
  *  identical candidate would re-queue exactly what the human rejected. A
  *  match sharing {id, from} but proposing a different `to` is unaffected: it
- *  is a different proposal, not the rejected one. */
+ *  is a different proposal, not the rejected one.
+ *
+ *  Preserves object identity for every surviving entry (a plain filter, never
+ *  a clone or a rebuild) — repair-provenance's own action relies on this to
+ *  diff its swept-vs-active queue by reference (`queue.filter(r =>
+ *  !active.includes(r))`) rather than re-spelling the {id, from, to} key a
+ *  third time. Do not change this to normalize or reconstruct entries
+ *  without updating that call site too. */
 export function withoutDropped(rewrites: readonly CommitRewrite[], dropped: readonly DroppedRewrite[]): CommitRewrite[] {
   if (!dropped.length) return [...rewrites];
   const tombstoned = new Set(dropped.map((t) => `${t.id}\0${t.from}\0${t.to}`));

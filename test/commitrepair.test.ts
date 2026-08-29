@@ -213,6 +213,14 @@ test("withoutDropped: empty tombstone list is a no-op", () => {
   assert.deepEqual(withoutDropped(fresh, []), fresh);
 });
 
+test("withoutDropped: preserves object identity for every surviving entry — repair-provenance's swept-vs-active diff relies on filtering by reference, not re-deriving the {id, from, to} key", () => {
+  const survivor = { id: "dec_kept", from: "a", to: "b" };
+  const rejected = { id: "dec_dropped", from: "c", to: "d" };
+  const result = withoutDropped([survivor, rejected], [{ id: "dec_dropped", from: "c", to: "d" }]);
+  assert.equal(result.length, 1);
+  assert.equal(result[0], survivor, "the surviving entry must be the SAME object reference, not an equal-but-rebuilt copy");
+});
+
 test("addDropped: appends a newly-dropped {id, from, to} triple", () => {
   const existing = [{ id: "dec_old", from: "sha_a", to: "sha_a2" }];
   const newly = [{ id: "dec_new", from: "sha_b", to: "sha_b2" }];

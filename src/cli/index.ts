@@ -5120,6 +5120,11 @@ program
         if (!opts.apply) return;
       }
 
+      // Deliberately checked before --only ever gets a chance to consult
+      // onlyWasPruned/onlyWasSwept below: when the prune or the sweep just
+      // emptied the queue entirely, --only's own explanatory messages never
+      // get a chance to fire — this generic message covers that case too,
+      // and still exits 0 either way, so no usage-error bug survives here.
       if (!queue.length) {
         if (!opts.quiet) console.log("✓ Nothing to repair — no orphaned commit reference matched unambiguously, and nothing queued from an earlier run.");
         return;
