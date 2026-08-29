@@ -448,6 +448,22 @@ test("repair-provenance --apply --only <invisible-id> reports it couldn't see th
   }
 });
 
+test("repair-provenance --apply (whole queue invisible) names the ids in its 'nothing applied' message, not just the escape hatch", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    rmSync(fixture.decisionFile("dec_a"));
+    rmSync(fixture.decisionFile("dec_b"));
+
+    const run = runCli(fixture.root, "repair-provenance", "--apply");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /are visible this run/);
+    assert.match(run.stdout, /dec_a.*dec_b|dec_b.*dec_a/s, "names which ids are stuck, matching the sibling partial-success message's convention");
+    assert.match(run.stdout, /--drop <dec_id>/);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("repair-provenance dry run marks a listed entry whose decision isn't visible this run — --apply would leave it queued, not resolve it", () => {
   const fixture = twoDecisionQueueFixture();
   try {

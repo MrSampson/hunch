@@ -5134,7 +5134,7 @@ program
         // every visible match) — reaching here is only possible when every
         // targeted candidate's decision was invisible this run.
         if (!opts.quiet) {
-          console.log("Nothing applied — none of the targeted decision(s) are visible this run (branch checkout, or a private overlay not mounted?). Left queued for a run where they are — or `hunch repair-provenance --drop <dec_id>` if a decision is gone for good.");
+          console.log(`Nothing applied — none of the targeted decision(s) are visible this run (branch checkout, or a private overlay not mounted?): ${toApply.map((r) => r.id).join(", ")}. Left queued for a run where they are — or \`hunch repair-provenance --drop <dec_id>\` if a decision is gone for good.`);
         }
         return;
       }
