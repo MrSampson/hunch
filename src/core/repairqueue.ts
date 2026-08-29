@@ -113,8 +113,8 @@ export function readActivePendingRepairs(root: string): CommitRewrite[] {
   return withoutDropped(readPendingRepairs(root), readDroppedRepairs(root));
 }
 
-/** Ids of `queued` entries whose proposed `to` doesn't resolve to a real
- *  commit in this repository — the same withheldForUnresolvableTo gate
+/** The `queued` entries whose proposed `to` doesn't resolve to a real commit
+ *  in this repository — the same withheldForUnresolvableTo gate
  *  `repair-provenance --apply` itself runs before writing, surfaced here so
  *  a READ-ONLY consumer (hunch escalations, hunch_now/hunch_escalations,
  *  SessionStart orientation) can tell a permanently-stuck entry apart from
@@ -122,8 +122,15 @@ export function readActivePendingRepairs(root: string): CommitRewrite[] {
  *  `--apply --only <id>` that's guaranteed to no-op forever. `null` from
  *  commitsExist (the check itself failed to run) is treated as fail-open —
  *  same discipline as the apply path — so nothing is misreported as
- *  withheld just because the check couldn't run. */
-export function withheldRewriteIds(root: string, queued: readonly CommitRewrite[]): Set<string> {
+ *  withheld just because the check couldn't run.
+ *
+ *  Returns the OBJECTS, not their ids, and every caller must pass the exact
+ *  same `queued` array into both this function and whatever it hands the
+ *  result to (commitRepairEscalations) — an id-keyed set would collapse a
+ *  corrupted queue's two same-id entries (one resolvable, one not) into one
+ *  unit, exactly the identity confusion withheldForUnresolvableTo's own
+ *  docstring warns about. */
+export function withheldRewrites(root: string, queued: readonly CommitRewrite[]): Set<CommitRewrite> {
   const existing = commitsExist(queued.map((r) => r.to), root);
-  return new Set(withheldForUnresolvableTo(queued, existing).withheld.map((r) => r.id));
+  return new Set(withheldForUnresolvableTo(queued, existing).withheld);
 }

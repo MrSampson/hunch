@@ -440,6 +440,36 @@ test("MCP hunch_escalations never re-asks about a tombstoned entry sitting in th
   }
 });
 
+test("MCP hunch_now surfaces a withheld commit-repair with the never-resolves wording, not the ordinary --apply-works wording (#48 follow-up)", async () => {
+  const fixture = squashFixture();
+  let client: Client | null = null;
+  try {
+    // Corrupt the queue after detection: swap the real matched `to` for one
+    // that was never a git object — same "corrupted queue file" scenario as
+    // the CLI-level escalations test, but exercised through hunch_now, which
+    // had no test coverage of this branch at all before this test.
+    writeFileSync(
+      queueFile(fixture.root),
+      JSON.stringify([{ id: "dec_squash_fixture", from: fixture.origCommit, to: "0123456789abcdef0123456789abcdef01234567" }], null, 2) + "\n",
+    );
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [tsx, cli, "mcp"],
+      cwd: fixture.root,
+      env: { ...process.env, HUNCH_PRIVATE_DIR: "", HUNCH_SYNTH_PROVIDER: "deterministic" },
+    });
+    client = new Client({ name: "repair-provenance-mcp-hunch-now-withheld-test", version: "1.0.0" });
+    await client.connect(transport);
+    const result = await client.callTool({ name: "hunch_now", arguments: {} });
+    const text = (result.content as { type: "text"; text: string }[]).map((part) => part.text).join("\n");
+    assert.match(text, /doesn't resolve in this repository/, "hunch_now must surface the withheld wording");
+    assert.doesNotMatch(text, /--apply --only dec_squash_fixture to accept/, "must never advertise an action that's guaranteed to no-op forever");
+  } finally {
+    await client?.close();
+    fixture.cleanup();
+  }
+});
+
 test("repair-provenance --drop <id-not-queued> writes no tombstone — there's nothing to reject", () => {
   const fixture = twoDecisionQueueFixture();
   try {
@@ -790,6 +820,28 @@ test("repair-provenance --apply reports an invisible decision AND a withheld ent
 
     const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string }[];
     assert.deepEqual(queue.map((r) => r.id).sort(), ["dec_a", "dec_b"], "neither entry is deleted — nothing was actually applied");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --apply uses plural wording when TWO entries are withheld and nothing applied (#48)", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([
+        { id: "dec_a", from: "sha_a_old", to: "0123456789abcdef0123456789abcdef01234567" },
+        { id: "dec_b", from: "sha_b_old", to: "fedcba9876543210fedcba9876543210fedcba98" },
+      ], null, 2) + "\n",
+    );
+    const run = runCli(fixture.root, "repair-provenance", "--apply");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /entries whose proposed replacement commits don't resolve in this repository: dec_a, dec_b/, "plural grammar for two withheld entries, not the singular 'an entry ... doesn't'");
+    assert.doesNotMatch(run.stdout, /an entry whose proposed replacement commit doesn't/, "must not use the singular phrasing for two entries");
+
+    const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string }[];
+    assert.deepEqual(queue.map((r) => r.id).sort(), ["dec_a", "dec_b"], "both withheld entries stay queued");
   } finally {
     fixture.cleanup();
   }

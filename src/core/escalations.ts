@@ -89,36 +89,38 @@ export function pendingEscalations(decisions: readonly Decision[]): Escalation[]
  *  its title isn't visible, and must not go silent just because the title is
  *  private.
  *
- *  `withheldIds` (from repairqueue.ts's withheldRewriteIds — a git-facing
- *  check this module deliberately stays free of, so the caller runs it and
- *  passes the result in) names entries whose proposed `to` doesn't resolve
- *  to a real commit here. `--apply --only <id>` can never resolve one of
- *  these — advertising it as the answer would be advice guaranteed to
- *  no-op forever, which is worse than not asking at all. Such an entry
- *  still needs a human (only `--drop` can retire it), so it still
- *  escalates, just with wording that doesn't promise `--apply` will help. */
-export function commitRepairEscalations(queued: readonly CommitRewrite[], decisions: readonly Decision[], live: readonly Decision[] = decisions, withheldIds: ReadonlySet<string> = new Set()): Escalation[] {
+ *  `withheld` (from repairqueue.ts's withheldRewrites — a git-facing check
+ *  this module deliberately stays free of, so the caller runs it and passes
+ *  the result in) names entries whose proposed `to` doesn't resolve to a
+ *  real commit here. `--apply --only <id>` can never resolve one of these —
+ *  advertising it as the answer would be advice guaranteed to no-op
+ *  forever, which is worse than not asking at all. Such an entry still
+ *  needs a human (only `--drop` can retire it), so it still escalates, just
+ *  with wording that doesn't promise `--apply` will help.
+ *
+ *  Keyed by OBJECT, not by id, matching withheldForUnresolvableTo's own
+ *  contract: a corrupted queue file can carry two entries sharing an id
+ *  (one resolvable, one not) — an id-keyed set couldn't tell them apart and
+ *  would wrongly tag the resolvable sibling as unresolvable too. Every
+ *  caller of this function already passes the SAME `queued` array to both
+ *  this function and withheldRewrites, so identity holds. */
+export function commitRepairEscalations(queued: readonly CommitRewrite[], decisions: readonly Decision[], live: readonly Decision[] = decisions, withheld: ReadonlySet<CommitRewrite> = new Set()): Escalation[] {
   const byId = new Map(decisions.map((d) => [d.id, d] as const));
   return liveRewrites(queued, live)
     .map((r) => {
       const title = byId.get(r.id)?.title;
       const named = `${r.id}${title ? ` ("${title}")` : ""}`;
-      if (withheldIds.has(r.id)) {
+      const base = { kind: "commit-repair-pending" as const, topic: r.id, decisionIds: [r.id], detail: `${r.from} → ${r.to}` };
+      if (withheld.has(r)) {
         return {
-          kind: "commit-repair-pending",
-          topic: r.id,
-          decisionIds: [r.id],
+          ...base,
           question: `${named}'s commit is no longer reachable from HEAD (likely squash-merged away), and the queued replacement commit doesn't resolve in this repository (corrupted queue entry, or the commit has since been garbage-collected) — reject it?`,
-          detail: `${r.from} → ${r.to}`,
           resolution: `this entry can never be applied as-is — \`hunch repair-provenance --apply\` will leave it queued every run; \`hunch repair-provenance --drop ${r.id}\` to reject it, or wait for a fresh match to supersede it`,
         };
       }
       return {
-        kind: "commit-repair-pending",
-        topic: r.id,
-        decisionIds: [r.id],
+        ...base,
         question: `${named}'s commit is no longer reachable from HEAD (likely squash-merged away), and one newly-merged commit touches all its related files — apply the proposed replacement?`,
-        detail: `${r.from} → ${r.to}`,
         resolution: `hunch repair-provenance --apply --only ${r.id} to accept just this one, --drop ${r.id} to reject it (tombstoned durably — this same match won't resurface, though a genuinely different candidate still can), or leave it queued to decide later`,
       };
     });
