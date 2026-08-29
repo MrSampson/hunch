@@ -43,7 +43,7 @@ import { isGitRepo, isGitRepoRoot, sameGitPublication, sameRemoteUrl, canonicalR
 import { parseMemoryLog, type MemoryMove } from "../core/memorylog.js";
 import { renamesOf, planRepair, repairDecision, repairConstraint, type RepairPlan } from "../core/repair.js";
 import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites, deadRewrites, resolvedRewriteIds, withoutDropped, addDropped, type CommitRewrite, type DroppedRewrite } from "../core/commitrepair.js";
-import { readPendingRepairs, writePendingRepairs, readDroppedRepairs, writeDroppedRepairs } from "../core/repairqueue.js";
+import { readPendingRepairs, writePendingRepairs, readDroppedRepairs, writeDroppedRepairs, readActivePendingRepairs } from "../core/repairqueue.js";
 import { planPolicyRepair, repairPolicySpec, type PolicyBindingRewrite } from "../constitution/repairPolicies.js";
 import { writeTeamConfig, ensureTeamOverlay, readTeamConfig, safeGitUrl, safeTeamRef, overlayMatchesTeamRemote, advertisedTeamRemoteContract, boundedTeamGitEnv, cloneValidatedTeamOverlay, explicitTeamRemoteContract, teamRemoteContract } from "../integrations/team.js";
 import { runbookId, decisionId } from "../core/ids.js";
@@ -4192,7 +4192,7 @@ program
           // `hunch repair-provenance` (which reads the full store), so it
           // must not go silently unanswerable just because its title stays
           // out of session transcripts. Only the id and commit shas surface.
-          escalations.push(...commitRepairEscalations(readPendingRepairs(paths.root), decisions, s.recs("decisions")));
+          escalations.push(...commitRepairEscalations(readActivePendingRepairs(paths.root), decisions, s.recs("decisions")));
           try {
             // Constitution human moments ride the same line; a broken policy store
             // must never take session-start orientation down (fail open). Public
@@ -4835,7 +4835,7 @@ program
       // Premise decay rides the same inline surface: a decision whose recorded
       // reason died is a QUESTION for the human — authority never changes here.
       items.push(...premiseEscalations(decisionsForEsc, { now: new Date().toISOString(), exists: (p) => existsSync(join(root, p)) }));
-      items.push(...commitRepairEscalations(readPendingRepairs(root), decisionsForEsc));
+      items.push(...commitRepairEscalations(readActivePendingRepairs(root), decisionsForEsc));
       // Constitution moments ride the same inline surface (§59.5.3) — never a queue.
       // Fail open: a broken policy store must not take the memory escalations down.
       try {
@@ -5033,20 +5033,34 @@ program
         writeDroppedRepairs(root, dropped);
       };
 
-      // The queue must never carry a tombstoned entry, regardless of how it
-      // got there — the fresh-match filtering below only covers the merge
-      // this run performs. A concurrently-racing writer (the post-merge
-      // hook's backgrounded detection can read the queue/dropped files
-      // independently of a human's --drop landing in between) could still
-      // leave a tombstoned entry sitting in the queue file; sweeping on every
-      // load makes "never contains a rejected triple" a property of the
-      // queue itself, not of one write site. Same fragmentation lesson as
-      // the comment on `save` above.
-      const tombstonedInQueue = withoutDropped(queue, dropped);
-      if (tombstonedInQueue.length !== queue.length) {
-        const sweptIds = queue.filter((r) => !tombstonedInQueue.some((k) => k.id === r.id && k.from === r.from && k.to === r.to)).map((r) => r.id);
-        save(tombstonedInQueue);
-        if (!opts.quiet) console.log(`Swept ${sweptIds.length} already-rejected match${sweptIds.length === 1 ? "" : "es"} from the queue: ${sweptIds.join(", ")}`);
+      // The queue file itself must never carry a tombstoned entry, regardless
+      // of how it got there — the fresh-match filtering further down only
+      // covers the merge this run performs. A concurrently-racing writer (the
+      // post-merge hook's backgrounded detection can read the queue/dropped
+      // files independently of a human's --drop landing in between) could
+      // still leave a tombstoned entry sitting in the queue file; sweeping on
+      // every load makes "never contains a rejected triple" a property of the
+      // queue file itself, not of one write site. Same fragmentation lesson
+      // as the comment on `save` above. Every OTHER reader of the queue
+      // (escalations, SessionStart, the MCP tools) calls
+      // readActivePendingRepairs instead of reading the raw file, so a
+      // tombstoned entry can never surface as a question even before this
+      // sweep next runs.
+      //
+      // Deletes unconditionally, without the prune's visibility caveats below
+      // — safe here because the swept entry's exact triple is preserved in
+      // dropped-commit-repairs.json, so nothing about it is unrecoverable
+      // (unlike the prune, which could otherwise destroy the queue's only
+      // durable record of a match).
+      const activeInQueue = withoutDropped(queue, dropped);
+      const swept = queue.filter((r) => !activeInQueue.includes(r));
+      // Remembered for --only below, same reasoning as onlyWasPruned: targeting
+      // an id whose only queued entry was just swept as already-rejected is not
+      // the same usage error as targeting an id that never existed.
+      const onlyWasSwept = !!opts.only && swept.some((r) => r.id === opts.only);
+      if (swept.length) {
+        save(activeInQueue);
+        if (!opts.quiet) console.log(`Swept ${swept.length} already-rejected match${swept.length === 1 ? "" : "es"} from the queue: ${swept.map((r) => r.id).join(", ")}`);
       }
 
       // Prune only PROVEN-dead entries (deadRewrites: the decision is present
@@ -5117,6 +5131,13 @@ program
       // let a human accept one without also accepting everything else queued.
       const toApply = opts.only ? queue.filter((r) => r.id === opts.only) : queue;
       if (opts.only && !toApply.length) {
+        if (onlyWasSwept) {
+          // Not a usage error either: the human already rejected exactly this
+          // match via an earlier --drop, and this run's sweep just confirmed
+          // the rejection still holds — nothing left to apply.
+          if (!opts.quiet) console.log(`"${opts.only}" was already rejected via --drop — nothing left to do.`);
+          return;
+        }
         if (onlyWasPruned) {
           // Not a usage error: the human's target was real, and this run
           // already resolved it above (see the prune's own message for why).

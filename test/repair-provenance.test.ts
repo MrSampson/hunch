@@ -308,6 +308,58 @@ test("repair-provenance sweeps a tombstoned entry that lands in the queue by ano
   }
 });
 
+test("repair-provenance announces a swept already-rejected match unless --quiet", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    writeFileSync(
+      join(fixture.root, ".hunch", "dropped-commit-repairs.json"),
+      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: "sha_a_new" }], null, 2) + "\n",
+    );
+    const run = runCli(fixture.root, "repair-provenance");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /Swept 1 already-rejected match from the queue: dec_a/);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --apply --only <id-just-swept> exits 0 with an explanatory message, not a usage error", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    // dec_a is real and was queued, but its exact triple was already rejected
+    // via an earlier --drop — this run's own sweep resolves it before --only
+    // ever gets to look for it, same non-error shape as onlyWasPruned.
+    writeFileSync(
+      join(fixture.root, ".hunch", "dropped-commit-repairs.json"),
+      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: "sha_a_new" }], null, 2) + "\n",
+    );
+    const run = runCli(fixture.root, "repair-provenance", "--apply", "--only", "dec_a", "--quiet");
+    assert.equal(run.status, 0, run.stderr);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("hunch escalations never re-asks about an entry sitting in the raw queue file if it's already tombstoned — the tombstone must hold on READ, not just on repair-provenance's own write", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    // Same race as the sweep test above, but this time nobody runs
+    // repair-provenance at all before a human (or CI) checks escalations —
+    // the surface that actually gets read must not depend on repair-provenance
+    // having run first to clean up after a racing writer.
+    writeFileSync(
+      join(fixture.root, ".hunch", "dropped-commit-repairs.json"),
+      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: "sha_a_new" }], null, 2) + "\n",
+    );
+    const run = runCli(fixture.root, "escalations", "--json");
+    const items = run.stdout ? (JSON.parse(run.stdout) as { kind: string; decisionIds: string[] }[]) : [];
+    const stillAsking = items.find((i) => i.kind === "commit-repair-pending" && i.decisionIds.includes("dec_a"));
+    assert.equal(stillAsking, undefined, "dec_a's rejected match must not resurface as an escalation just because it's still sitting in the raw queue file");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("repair-provenance --drop <id-not-queued> writes no tombstone — there's nothing to reject", () => {
   const fixture = twoDecisionQueueFixture();
   try {

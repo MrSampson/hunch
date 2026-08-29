@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readPendingRepairs, writePendingRepairs, readDroppedRepairs, writeDroppedRepairs } from "../src/core/repairqueue.js";
+import { readPendingRepairs, writePendingRepairs, readDroppedRepairs, writeDroppedRepairs, readActivePendingRepairs } from "../src/core/repairqueue.js";
 
 function tmpRoot(): { root: string; cleanup(): void } {
   const root = mkdtempSync(join(tmpdir(), "hunch-repairqueue-"));
@@ -165,5 +165,32 @@ test("writeDroppedRepairs([]) clears the tombstone file", () => {
     writeDroppedRepairs(root, [{ id: "dec_1", from: "a", to: "b" }]);
     writeDroppedRepairs(root, []);
     assert.deepEqual(readDroppedRepairs(root), []);
+  } finally { cleanup(); }
+});
+
+test("readActivePendingRepairs: an entry with no tombstone passes through unchanged", () => {
+  const { root, cleanup } = tmpRoot();
+  try {
+    writePendingRepairs(root, [{ id: "dec_1", from: "a", to: "b" }]);
+    assert.deepEqual(readActivePendingRepairs(root), [{ id: "dec_1", from: "a", to: "b" }]);
+  } finally { cleanup(); }
+});
+
+test("readActivePendingRepairs: hides an entry whose exact {id, from, to} was rejected via --drop, even though it's still sitting in the raw queue file", () => {
+  const { root, cleanup } = tmpRoot();
+  try {
+    writePendingRepairs(root, [{ id: "dec_a", from: "sha_old", to: "sha_new" }, { id: "dec_b", from: "x", to: "y" }]);
+    writeDroppedRepairs(root, [{ id: "dec_a", from: "sha_old", to: "sha_new" }]);
+    assert.deepEqual(readActivePendingRepairs(root), [{ id: "dec_b", from: "x", to: "y" }]);
+    assert.deepEqual(readPendingRepairs(root), [{ id: "dec_a", from: "sha_old", to: "sha_new" }, { id: "dec_b", from: "x", to: "y" }], "the raw queue file itself is untouched — this is a read-time filter, not a mutation");
+  } finally { cleanup(); }
+});
+
+test("readActivePendingRepairs: a genuinely different `to` for a tombstoned {id, from} still passes through", () => {
+  const { root, cleanup } = tmpRoot();
+  try {
+    writePendingRepairs(root, [{ id: "dec_a", from: "sha_old", to: "sha_different_candidate" }]);
+    writeDroppedRepairs(root, [{ id: "dec_a", from: "sha_old", to: "sha_rejected_candidate" }]);
+    assert.deepEqual(readActivePendingRepairs(root), [{ id: "dec_a", from: "sha_old", to: "sha_different_candidate" }]);
   } finally { cleanup(); }
 });

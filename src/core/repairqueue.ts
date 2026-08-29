@@ -19,7 +19,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "./io.js";
-import type { CommitRewrite, DroppedRewrite } from "./commitrepair.js";
+import { withoutDropped, type CommitRewrite, type DroppedRewrite } from "./commitrepair.js";
 
 function queuePath(root: string): string {
   return join(root, ".hunch", "pending-commit-repairs.json");
@@ -89,4 +89,21 @@ export function readDroppedRepairs(root: string): DroppedRewrite[] {
 
 export function writeDroppedRepairs(root: string, dropped: readonly DroppedRewrite[]): void {
   writeFileAtomic(droppedPath(root), JSON.stringify(dropped, null, 2) + "\n");
+}
+
+/** The queue as every READ-ONLY consumer should see it: raw entries minus
+ *  anything a human already rejected via `--drop`, regardless of how a
+ *  tombstoned entry ended up back in the raw queue file (e.g. the post-merge
+ *  hook's backgrounded detection racing a `--drop`). A read-time filter, not
+ *  a mutation — the raw queue file is untouched.
+ *
+ *  `repair-provenance`'s own action is the one exception: it needs the RAW
+ *  read (via readPendingRepairs) because it diffs raw-vs-swept to report what
+ *  it cleaned up, and it persists the sweep back to disk. Every other
+ *  reader — `hunch escalations`, SessionStart orientation, the `hunch_now`
+ *  and `hunch_escalations` MCP tools — must call this instead, or a
+ *  tombstoned entry that hasn't yet been swept by a `repair-provenance` run
+ *  re-surfaces as if the human never answered it. */
+export function readActivePendingRepairs(root: string): CommitRewrite[] {
+  return withoutDropped(readPendingRepairs(root), readDroppedRepairs(root));
 }
