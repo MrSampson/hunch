@@ -470,6 +470,37 @@ test("MCP hunch_now surfaces a withheld commit-repair with the never-resolves wo
   }
 });
 
+test("MCP hunch_escalations surfaces a withheld commit-repair with the never-resolves wording, not the ordinary --apply-works wording (#48 follow-up)", async () => {
+  const fixture = squashFixture();
+  let client: Client | null = null;
+  try {
+    // Guards the hunch_escalations call site's own withheldRewrites/
+    // commitRepairEscalations wiring specifically (mirrors the hunch_now
+    // test above) — mutating this site to re-read the queue instead of
+    // reusing one local would silently fall back to the ordinary wording
+    // with no other test catching it.
+    writeFileSync(
+      queueFile(fixture.root),
+      JSON.stringify([{ id: "dec_squash_fixture", from: fixture.origCommit, to: "0123456789abcdef0123456789abcdef01234567" }], null, 2) + "\n",
+    );
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [tsx, cli, "mcp"],
+      cwd: fixture.root,
+      env: { ...process.env, HUNCH_PRIVATE_DIR: "", HUNCH_SYNTH_PROVIDER: "deterministic" },
+    });
+    client = new Client({ name: "repair-provenance-mcp-hunch-escalations-withheld-test", version: "1.0.0" });
+    await client.connect(transport);
+    const result = await client.callTool({ name: "hunch_escalations", arguments: {} });
+    const text = (result.content as { type: "text"; text: string }[]).map((part) => part.text).join("\n");
+    assert.match(text, /doesn't resolve in this repository/, "hunch_escalations must surface the withheld wording");
+    assert.doesNotMatch(text, /--apply --only dec_squash_fixture to accept/, "must never advertise an action that's guaranteed to no-op forever");
+  } finally {
+    await client?.close();
+    fixture.cleanup();
+  }
+});
+
 test("repair-provenance --drop <id-not-queued> writes no tombstone — there's nothing to reject", () => {
   const fixture = twoDecisionQueueFixture();
   try {
@@ -1014,6 +1045,31 @@ test("SessionStart orientation surfaces a queued commit-repair escalation for a 
       new RegExp(fixture.decisionId),
       "the public decisions list is empty, but the queued repair is fully answerable via the full store — SessionStart must not bail silently before checking it",
     );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("SessionStart orientation surfaces the withheld (never-resolves) wording, not the ordinary --apply-works wording, when the queued `to` doesn't resolve here (#48 follow-up)", () => {
+  const fixture = privateOverlaySessionStartFixture();
+  try {
+    // The fixture's own queued `to` ("d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0")
+    // is well-formed hex but was never a git object in this repo — it's
+    // withheld by construction. Guards the SessionStart call site's own
+    // `withheldRewrites`/`commitRepairEscalations` wiring specifically:
+    // mutating that site to re-read the queue instead of reusing one local
+    // (breaking the object-identity contract both functions depend on)
+    // would silently fall back to the ordinary wording with no other test
+    // catching it.
+    const run = spawnSync(process.execPath, [tsx, cli, "hook", "--provider", "claude"], {
+      cwd: fixture.root,
+      env: fixture.env,
+      input: JSON.stringify({ hook_event_name: "SessionStart", session_id: "s1" }),
+      encoding: "utf8",
+    });
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /doesn't resolve in this repository/, "SessionStart must surface the withheld wording");
+    assert.doesNotMatch(run.stdout, new RegExp(`--apply --only ${fixture.decisionId} to accept`), "must never advertise an action that's guaranteed to no-op forever");
   } finally {
     fixture.cleanup();
   }
