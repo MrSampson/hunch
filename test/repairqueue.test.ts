@@ -1,14 +1,29 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readPendingRepairs, writePendingRepairs, readDroppedRepairs, writeDroppedRepairs, readActivePendingRepairs } from "../src/core/repairqueue.js";
+import { readPendingRepairs, writePendingRepairs, readDroppedRepairs, writeDroppedRepairs, readActivePendingRepairs, withheldRewrites } from "../src/core/repairqueue.js";
 
 function tmpRoot(): { root: string; cleanup(): void } {
   const root = mkdtempSync(join(tmpdir(), "hunch-repairqueue-"));
   mkdirSync(join(root, ".hunch"), { recursive: true });
   return { root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+/** withheldRewriteIds needs a real git repository — commitsExist shells out. */
+function gitRoot(): { root: string; headSha: string; cleanup(): void } {
+  const root = mkdtempSync(join(tmpdir(), "hunch-repairqueue-git-"));
+  const git = (...args: string[]): string => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+  git("init", "-q", "-b", "main");
+  git("config", "user.email", "test@example.com");
+  git("config", "user.name", "Test Human");
+  writeFileSync(join(root, "a.txt"), "x\n");
+  git("add", "-A");
+  git("commit", "-qm", "init");
+  mkdirSync(join(root, ".hunch"), { recursive: true });
+  return { root, headSha: git("rev-parse", "HEAD"), cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
 test("readPendingRepairs: returns an empty array when the queue file doesn't exist", () => {
@@ -192,5 +207,57 @@ test("readActivePendingRepairs: a genuinely different `to` for a tombstoned {id,
     writePendingRepairs(root, [{ id: "dec_a", from: "sha_old", to: "sha_different_candidate" }]);
     writeDroppedRepairs(root, [{ id: "dec_a", from: "sha_old", to: "sha_rejected_candidate" }]);
     assert.deepEqual(readActivePendingRepairs(root), [{ id: "dec_a", from: "sha_old", to: "sha_different_candidate" }]);
+  } finally { cleanup(); }
+});
+
+test("withheldRewrites: an empty queue withholds nothing", () => {
+  const { root, cleanup } = gitRoot();
+  try {
+    assert.deepEqual(withheldRewrites(root, []), new Set());
+  } finally { cleanup(); }
+});
+
+test("withheldRewrites: an entry whose `to` resolves to a real commit here is not withheld", () => {
+  const { root, headSha, cleanup } = gitRoot();
+  try {
+    const result = withheldRewrites(root, [{ id: "dec_1", from: "sha_old", to: headSha }]);
+    assert.deepEqual(result, new Set());
+  } finally { cleanup(); }
+});
+
+test("withheldRewrites: an entry whose `to` doesn't resolve here is withheld", () => {
+  const { root, cleanup } = gitRoot();
+  try {
+    const entry = { id: "dec_1", from: "sha_old", to: "0123456789abcdef0123456789abcdef01234567" };
+    const result = withheldRewrites(root, [entry]);
+    assert.deepEqual(result, new Set([entry]));
+  } finally { cleanup(); }
+});
+
+test("withheldRewrites: a mix withholds only the unresolvable entry", () => {
+  const { root, headSha, cleanup } = gitRoot();
+  try {
+    const ghost = { id: "dec_ghost", from: "b", to: "0123456789abcdef0123456789abcdef01234567" };
+    const result = withheldRewrites(root, [{ id: "dec_real", from: "a", to: headSha }, ghost]);
+    assert.deepEqual(result, new Set([ghost]));
+  } finally { cleanup(); }
+});
+
+test("withheldRewrites: preserves object identity — the withheld set contains the caller's own queue entries, not rebuilt copies (a downstream consumer keys off this by reference)", () => {
+  const { root, cleanup } = gitRoot();
+  try {
+    const entry = { id: "dec_1", from: "sha_old", to: "0123456789abcdef0123456789abcdef01234567" };
+    const result = withheldRewrites(root, [entry]);
+    assert.equal([...result][0], entry, "must be the SAME object reference, not an equal-but-rebuilt copy");
+  } finally { cleanup(); }
+});
+
+test("withheldRewrites: a corrupted queue with two entries sharing an id — one resolvable, one not — withholds only the specific unresolvable object, not every entry with that id", () => {
+  const { root, headSha, cleanup } = gitRoot();
+  try {
+    const resolvable = { id: "dec_a", from: "sha_a_old", to: headSha };
+    const ghost = { id: "dec_a", from: "sha_a_old", to: "0123456789abcdef0123456789abcdef01234567" };
+    const result = withheldRewrites(root, [resolvable, ghost]);
+    assert.deepEqual(result, new Set([ghost]), "the resolvable sibling sharing the same id must NOT be swept up by an id-keyed check");
   } finally { cleanup(); }
 });

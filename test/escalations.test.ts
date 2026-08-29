@@ -131,3 +131,49 @@ test("commitRepairEscalations: without a third argument, liveness still defaults
   assert.equal(items.length, 1);
   assert.match(items[0]!.question, /Add the feature/);
 });
+
+test("commitRepairEscalations: without a fourth argument, no entry is treated as withheld (backward compatible)", () => {
+  const decs = [D({ id: "dec_1", title: "Add the feature", commit: "sha_old" })];
+  const items = commitRepairEscalations([{ id: "dec_1", from: "sha_old", to: "sha_new" }], decs);
+  assert.match(items[0]!.resolution, /--apply --only dec_1 to accept/);
+});
+
+test("commitRepairEscalations: a withheld entry (its `to` doesn't resolve here) still asks, but never advertises --apply --only as a working resolution", () => {
+  const decs = [D({ id: "dec_1", title: "Add the feature", commit: "sha_old" })];
+  const entry = { id: "dec_1", from: "sha_old", to: "sha_ghost" };
+  const items = commitRepairEscalations([entry], decs, decs, new Set([entry]));
+  assert.equal(items.length, 1, "a withheld entry still needs a human — it still escalates");
+  assert.equal(items[0]!.kind, "commit-repair-pending");
+  assert.match(items[0]!.question, /doesn't resolve in this repository/);
+  assert.match(items[0]!.question, /reject it\?/);
+  assert.doesNotMatch(items[0]!.resolution, /--apply --only dec_1 to accept/, "must never advertise an action that's guaranteed to no-op forever");
+  assert.match(items[0]!.resolution, /--drop dec_1/, "the only working resolution — --drop — must still be named");
+});
+
+test("commitRepairEscalations: withheld is keyed by OBJECT, so an untouched sibling in the same batch keeps the ordinary (apply-works) wording", () => {
+  const decs = [
+    D({ id: "dec_a", title: "Decision A", commit: "sha_a_old" }),
+    D({ id: "dec_b", title: "Decision B", commit: "sha_b_old" }),
+  ];
+  const entryA = { id: "dec_a", from: "sha_a_old", to: "sha_ghost" };
+  const entryB = { id: "dec_b", from: "sha_b_old", to: "sha_b_new" };
+  const items = commitRepairEscalations([entryA, entryB], decs, decs, new Set([entryA]));
+  const forA = items.find((i) => i.decisionIds.includes("dec_a"))!;
+  const forB = items.find((i) => i.decisionIds.includes("dec_b"))!;
+  assert.match(forA.question, /doesn't resolve in this repository/);
+  assert.doesNotMatch(forB.question, /doesn't resolve in this repository/, "dec_b was never withheld — must not inherit dec_a's wording");
+  assert.match(forB.resolution, /--apply --only dec_b to accept/);
+});
+
+test("commitRepairEscalations: a corrupted queue with two entries sharing an id — one withheld, one not — must not tag the resolvable sibling as withheld too (an id-keyed set would)", () => {
+  const decs = [D({ id: "dec_a", title: "Decision A", commit: "sha_a_old" })];
+  const resolvable = { id: "dec_a", from: "sha_a_old", to: "sha_real" };
+  const ghost = { id: "dec_a", from: "sha_a_old", to: "sha_ghost" };
+  const items = commitRepairEscalations([resolvable, ghost], decs, decs, new Set([ghost]));
+  assert.equal(items.length, 2, "both entries still surface — liveRewrites doesn't dedupe by id");
+  const forResolvable = items.find((i) => i.detail === "sha_a_old → sha_real")!;
+  const forGhost = items.find((i) => i.detail === "sha_a_old → sha_ghost")!;
+  assert.match(forResolvable.resolution, /--apply --only dec_a to accept/, "the resolvable sibling must keep the ordinary, working wording");
+  assert.match(forGhost.resolution, /--drop dec_a/, "the withheld sibling gets the never-resolves wording");
+  assert.doesNotMatch(forGhost.resolution, /--apply --only dec_a to accept/);
+});

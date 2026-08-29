@@ -58,7 +58,7 @@ import { assertCompleteRepoScan, indexRepo, scanRepo } from "../extractors/index
 import type { Decision, Finding, Symbol } from "../core/types.js";
 import { liveForTopic, historyForTopic, rejectedForTopic, captureConflicts } from "../core/topics.js";
 import { pendingEscalations, policyEscalations, commitRepairEscalations, type Escalation } from "../core/escalations.js";
-import { readActivePendingRepairs } from "../core/repairqueue.js";
+import { readActivePendingRepairs, withheldRewrites } from "../core/repairqueue.js";
 import { scanRecord, publicationWarning, loadVocabulary } from "../core/publication.js";
 import { premiseEscalations } from "../core/premises.js";
 import { applyImportedAdrReview, pendingImportedAdrReviews } from "../core/importReview.js";
@@ -1101,7 +1101,8 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
       // full store too) even though the title stays scoped to advisoryRecs —
       // an overlay decision's repair is fully answerable, so it must not go
       // silent here just because its title is private.
-      escalations.push(...commitRepairEscalations(readActivePendingRepairs(root), store.advisoryRecs("decisions"), store.recs("decisions")));
+      const hunchNowQueue = readActivePendingRepairs(root);
+      escalations.push(...commitRepairEscalations(hunchNowQueue, store.advisoryRecs("decisions"), store.recs("decisions"), withheldRewrites(root, hunchNowQueue)));
       if (escalations.length) {
         L.push("", `⚖ ${escalations.length} decision(s) need the human's call — ASK inline (never queue): ${escalations.map((e) => e.question).join(" · ")}`);
       }
@@ -1130,7 +1131,8 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
       // like every entry here — authority never changes until the human answers.
       items.push(...premiseEscalations(store.advisoryRecs("decisions"), { now: new Date().toISOString(), exists: (p) => existsSync(join(root, p)) }));
       // See the sibling hunch_now handler above for why `live` is the full store.
-      items.push(...commitRepairEscalations(readActivePendingRepairs(root), store.advisoryRecs("decisions"), store.recs("decisions")));
+      const hunchEscalationsQueue = readActivePendingRepairs(root);
+      items.push(...commitRepairEscalations(hunchEscalationsQueue, store.advisoryRecs("decisions"), store.recs("decisions"), withheldRewrites(root, hunchEscalationsQueue)));
       try {
         items.push(...policyEscalations(new ConstitutionService(store, root).list({ publicOnly: true }).map((p) => ({ ...p, last_action: p.audit.at(-1)?.action ?? null }))));
       } catch { /* constitution unavailable — memory escalations still surface */ }

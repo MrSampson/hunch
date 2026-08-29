@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites, liveRewrites, deadRewrites, resolvedRewriteIds, withoutDropped, addDropped } from "../src/core/commitrepair.js";
+import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites, liveRewrites, deadRewrites, resolvedRewriteIds, withoutDropped, addDropped, withheldForUnresolvableTo } from "../src/core/commitrepair.js";
 import type { Decision } from "../src/core/types.js";
 import type { CommitCandidate, CommitRepairStatus } from "../src/extractors/git.js";
 
@@ -257,4 +257,47 @@ test("deadRewrites: an entry whose PRESENT decision moved on, or is superseded/r
     { id: "dec_rejected", from: "sha_old", to: "sha_new" },
   ];
   assert.deepEqual(deadRewrites(queued, decisions).map((r) => r.id).sort(), ["dec_moved_on", "dec_rejected", "dec_superseded"]);
+});
+
+test("withheldForUnresolvableTo: an entry whose `to` is in the existing set is applicable", () => {
+  const toApply = [{ id: "dec_1", from: "a", to: "sha_real" }];
+  const result = withheldForUnresolvableTo(toApply, new Set(["sha_real"]));
+  assert.deepEqual(result.applicable, toApply);
+  assert.deepEqual(result.withheld, []);
+});
+
+test("withheldForUnresolvableTo: an entry whose `to` does not resolve is withheld, not applicable — and never dropped from the caller's view", () => {
+  const toApply = [{ id: "dec_1", from: "a", to: "sha_ghost" }];
+  const result = withheldForUnresolvableTo(toApply, new Set());
+  assert.deepEqual(result.applicable, []);
+  assert.deepEqual(result.withheld, toApply);
+});
+
+test("withheldForUnresolvableTo: a mix partitions correctly", () => {
+  const toApply = [
+    { id: "dec_real", from: "a", to: "sha_real" },
+    { id: "dec_ghost", from: "b", to: "sha_ghost" },
+  ];
+  const result = withheldForUnresolvableTo(toApply, new Set(["sha_real"]));
+  assert.deepEqual(result.applicable.map((r) => r.id), ["dec_real"]);
+  assert.deepEqual(result.withheld.map((r) => r.id), ["dec_ghost"]);
+});
+
+test("withheldForUnresolvableTo: existing === null (the check itself failed) is fail-open — nothing withheld", () => {
+  const toApply = [{ id: "dec_1", from: "a", to: "sha_unknown" }];
+  const result = withheldForUnresolvableTo(toApply, null);
+  assert.deepEqual(result.applicable, toApply);
+  assert.deepEqual(result.withheld, []);
+});
+
+test("withheldForUnresolvableTo: preserves object identity for applicable entries", () => {
+  const entry = { id: "dec_1", from: "a", to: "sha_real" };
+  const result = withheldForUnresolvableTo([entry], new Set(["sha_real"]));
+  assert.equal(result.applicable[0], entry);
+});
+
+test("withheldForUnresolvableTo: preserves object identity for withheld entries too — the CLI's queue sweep keys a Set off these exact references to survive a duplicate-id corrupted queue", () => {
+  const entry = { id: "dec_1", from: "a", to: "sha_ghost" };
+  const result = withheldForUnresolvableTo([entry], new Set());
+  assert.equal(result.withheld[0], entry, "must be the SAME object reference, not an equal-but-rebuilt copy");
 });

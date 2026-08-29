@@ -190,10 +190,34 @@ test("a queued repair surfaces via `hunch escalations` — the discoverable surf
   }
 });
 
+test("a withheld queued repair (its `to` doesn't resolve here) still surfaces via `hunch escalations`, but never advertises --apply --only as a working resolution (#48 follow-up)", () => {
+  const fixture = squashFixture();
+  try {
+    // Corrupt the queue after detection: swap the real matched `to` for one
+    // that was never a git object. Simulates a hand-edited/corrupted queue
+    // file — exactly the shape --apply's own existence check defends against.
+    writeFileSync(
+      queueFile(fixture.root),
+      JSON.stringify([{ id: "dec_squash_fixture", from: fixture.origCommit, to: "0123456789abcdef0123456789abcdef01234567" }], null, 2) + "\n",
+    );
+
+    const escRun = runCli(fixture.root, "escalations", "--json");
+    assert.equal(escRun.status, 1, "escalations exits non-zero when something needs a human decision");
+    const items = JSON.parse(escRun.stdout) as { kind: string; decisionIds: string[]; question: string; resolution: string }[];
+    const pending = items.find((i) => i.kind === "commit-repair-pending");
+    assert.ok(pending, "a withheld entry still needs a human — it still escalates");
+    assert.match(pending!.question, /doesn't resolve in this repository/);
+    assert.doesNotMatch(pending!.resolution, /--apply --only dec_squash_fixture to accept/, "must never advertise an action that's guaranteed to no-op forever");
+    assert.match(pending!.resolution, /--drop dec_squash_fixture/, "the only working resolution — --drop — must still be named");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 /** Two independent decisions, each with a queued repair, seeded directly (no
  *  real squash-merge needed — that matching path is covered elsewhere). Lets
  *  --only/--drop tests act on one entry and assert the other is untouched. */
-function twoDecisionQueueFixture(): { root: string; decisionFile: (id: string) => string; cleanup(): void } {
+function twoDecisionQueueFixture(): { root: string; decisionFile: (id: string) => string; shaANew: string; shaBNew: string; cleanup(): void } {
   const root = mkdtempSync(join(tmpdir(), "hunch-squash-two-"));
   git(root, "init", "-q", "-b", "main");
   git(root, "config", "user.email", "test@example.com");
@@ -202,6 +226,22 @@ function twoDecisionQueueFixture(): { root: string; decisionFile: (id: string) =
   writeFileSync(join(root, "a.txt"), "x\n");
   git(root, "add", "-A");
   git(root, "commit", "-qm", "init");
+
+  // Every queued "to" must resolve to a REAL commit by default —
+  // repair-provenance's existence check (issue #48) leaves an entry queued
+  // rather than applying it when `to` doesn't resolve, so a fake placeholder
+  // here would silently confound tests that mean to exercise OTHER reasons
+  // an entry stays queued (invisible decision, drop, sweep, prune). Tests
+  // that specifically target the unresolvable-`to` path overwrite the queue
+  // file themselves with a deliberately fake sha.
+  writeFileSync(join(root, "a2.txt"), "y\n");
+  git(root, "add", "-A");
+  git(root, "commit", "-qm", "a commit dec_a's queued repair can resolve to");
+  const shaANew = git(root, "rev-parse", "HEAD");
+  writeFileSync(join(root, "b.txt"), "y\n");
+  git(root, "add", "-A");
+  git(root, "commit", "-qm", "a commit dec_b's queued repair can resolve to");
+  const shaBNew = git(root, "rev-parse", "HEAD");
 
   const mkDecision = (id: string, commit: string): Decision => ({
     id,
@@ -236,12 +276,14 @@ function twoDecisionQueueFixture(): { root: string; decisionFile: (id: string) =
 
   writeFileSync(
     join(root, ".hunch", "pending-commit-repairs.json"),
-    JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: "sha_a_new" }, { id: "dec_b", from: "sha_b_old", to: "sha_b_new" }], null, 2) + "\n",
+    JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: shaANew }, { id: "dec_b", from: "sha_b_old", to: shaBNew }], null, 2) + "\n",
   );
 
   return {
     root,
     decisionFile: (id: string) => join(root, ".hunch/decisions", `${id}.json`),
+    shaANew,
+    shaBNew,
     cleanup: () => rmSync(root, { recursive: true, force: true }),
   };
 }
@@ -299,7 +341,7 @@ test("repair-provenance sweeps a tombstoned entry that lands in the queue by ano
     // files independently) re-added the identical entry to the queue afterward.
     writeFileSync(
       join(fixture.root, ".hunch", "dropped-commit-repairs.json"),
-      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: "sha_a_new" }], null, 2) + "\n",
+      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: fixture.shaANew }], null, 2) + "\n",
     );
     const run = runCli(fixture.root, "repair-provenance", "--quiet");
     assert.equal(run.status, 0, run.stderr);
@@ -315,7 +357,7 @@ test("repair-provenance announces a swept already-rejected match unless --quiet"
   try {
     writeFileSync(
       join(fixture.root, ".hunch", "dropped-commit-repairs.json"),
-      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: "sha_a_new" }], null, 2) + "\n",
+      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: fixture.shaANew }], null, 2) + "\n",
     );
     const run = runCli(fixture.root, "repair-provenance");
     assert.equal(run.status, 0, run.stderr);
@@ -333,7 +375,7 @@ test("repair-provenance --apply --only <id-just-swept> exits 0 with an explanato
     // ever gets to look for it, same non-error shape as onlyWasPruned.
     writeFileSync(
       join(fixture.root, ".hunch", "dropped-commit-repairs.json"),
-      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: "sha_a_new" }], null, 2) + "\n",
+      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: fixture.shaANew }], null, 2) + "\n",
     );
     // Not --quiet: distinguishes this from the OTHER exit-0 path (an id that
     // was never queued at all) — only this one names the --drop rejection.
@@ -356,7 +398,7 @@ test("hunch escalations never re-asks about an entry sitting in the raw queue fi
     // having run first to clean up after a racing writer.
     writeFileSync(
       join(fixture.root, ".hunch", "dropped-commit-repairs.json"),
-      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: "sha_a_new" }], null, 2) + "\n",
+      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: fixture.shaANew }], null, 2) + "\n",
     );
     const run = runCli(fixture.root, "escalations", "--json");
     const items = run.stdout ? (JSON.parse(run.stdout) as { kind: string; decisionIds: string[] }[]) : [];
@@ -378,7 +420,7 @@ test("MCP hunch_escalations never re-asks about a tombstoned entry sitting in th
   try {
     writeFileSync(
       join(fixture.root, ".hunch", "dropped-commit-repairs.json"),
-      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: "sha_a_new" }], null, 2) + "\n",
+      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: fixture.shaANew }], null, 2) + "\n",
     );
     const transport = new StdioClientTransport({
       command: process.execPath,
@@ -392,6 +434,67 @@ test("MCP hunch_escalations never re-asks about a tombstoned entry sitting in th
     const text = (result.content as { type: "text"; text: string }[]).map((part) => part.text).join("\n");
     assert.doesNotMatch(text, /dec_a/, "the tombstoned match must not resurface via the MCP tool either");
     assert.match(text, /dec_b/, "dec_b's untombstoned match must still surface — a positive control against a tool that silently emits nothing");
+  } finally {
+    await client?.close();
+    fixture.cleanup();
+  }
+});
+
+test("MCP hunch_now surfaces a withheld commit-repair with the never-resolves wording, not the ordinary --apply-works wording (#48 follow-up)", async () => {
+  const fixture = squashFixture();
+  let client: Client | null = null;
+  try {
+    // Corrupt the queue after detection: swap the real matched `to` for one
+    // that was never a git object — same "corrupted queue file" scenario as
+    // the CLI-level escalations test, but exercised through hunch_now, which
+    // had no test coverage of this branch at all before this test.
+    writeFileSync(
+      queueFile(fixture.root),
+      JSON.stringify([{ id: "dec_squash_fixture", from: fixture.origCommit, to: "0123456789abcdef0123456789abcdef01234567" }], null, 2) + "\n",
+    );
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [tsx, cli, "mcp"],
+      cwd: fixture.root,
+      env: { ...process.env, HUNCH_PRIVATE_DIR: "", HUNCH_SYNTH_PROVIDER: "deterministic" },
+    });
+    client = new Client({ name: "repair-provenance-mcp-hunch-now-withheld-test", version: "1.0.0" });
+    await client.connect(transport);
+    const result = await client.callTool({ name: "hunch_now", arguments: {} });
+    const text = (result.content as { type: "text"; text: string }[]).map((part) => part.text).join("\n");
+    assert.match(text, /doesn't resolve in this repository/, "hunch_now must surface the withheld wording");
+    assert.doesNotMatch(text, /--apply --only dec_squash_fixture to accept/, "must never advertise an action that's guaranteed to no-op forever");
+  } finally {
+    await client?.close();
+    fixture.cleanup();
+  }
+});
+
+test("MCP hunch_escalations surfaces a withheld commit-repair with the never-resolves wording, not the ordinary --apply-works wording (#48 follow-up)", async () => {
+  const fixture = squashFixture();
+  let client: Client | null = null;
+  try {
+    // Guards the hunch_escalations call site's own withheldRewrites/
+    // commitRepairEscalations wiring specifically (mirrors the hunch_now
+    // test above) — mutating this site to re-read the queue instead of
+    // reusing one local would silently fall back to the ordinary wording
+    // with no other test catching it.
+    writeFileSync(
+      queueFile(fixture.root),
+      JSON.stringify([{ id: "dec_squash_fixture", from: fixture.origCommit, to: "0123456789abcdef0123456789abcdef01234567" }], null, 2) + "\n",
+    );
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [tsx, cli, "mcp"],
+      cwd: fixture.root,
+      env: { ...process.env, HUNCH_PRIVATE_DIR: "", HUNCH_SYNTH_PROVIDER: "deterministic" },
+    });
+    client = new Client({ name: "repair-provenance-mcp-hunch-escalations-withheld-test", version: "1.0.0" });
+    await client.connect(transport);
+    const result = await client.callTool({ name: "hunch_escalations", arguments: {} });
+    const text = (result.content as { type: "text"; text: string }[]).map((part) => part.text).join("\n");
+    assert.match(text, /doesn't resolve in this repository/, "hunch_escalations must surface the withheld wording");
+    assert.doesNotMatch(text, /--apply --only dec_squash_fixture to accept/, "must never advertise an action that's guaranteed to no-op forever");
   } finally {
     await client?.close();
     fixture.cleanup();
@@ -418,7 +521,7 @@ test("repair-provenance --apply --only <id> applies just that decision, leaving 
     const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
     const decB = JSON.parse(readFileSync(fixture.decisionFile("dec_b"), "utf8")) as Decision;
     assert.equal(decA.commit, "sha_a_old", "the untargeted decision is never applied");
-    assert.equal(decB.commit, "sha_b_new", "the targeted decision is applied");
+    assert.equal(decB.commit, fixture.shaBNew, "the targeted decision is applied");
 
     const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string }[];
     assert.deepEqual(queue.map((r) => r.id), ["dec_a"], "only the applied entry is cleared from the queue");
@@ -554,7 +657,7 @@ test("repair-provenance --apply (no --only) never deletes an invisible entry's q
     assert.equal(run.status, 0, run.stderr);
 
     const decB = JSON.parse(readFileSync(fixture.decisionFile("dec_b"), "utf8")) as Decision;
-    assert.equal(decB.commit, "sha_b_new", "dec_b, which WAS visible, is still applied");
+    assert.equal(decB.commit, fixture.shaBNew, "dec_b, which WAS visible, is still applied");
 
     const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string }[];
     assert.deepEqual(queue.map((r) => r.id), ["dec_a"], "dec_a's entry survives — it was never actually applied, so it must not be cleared");
@@ -647,6 +750,184 @@ test("repair-provenance --only <id-not-present> reports nothing to apply and cha
     assert.match(`${run.stdout}${run.stderr}`, /no queued or matched entry for "dec_missing"/);
     const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
     assert.equal(decA.commit, "sha_a_old");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --apply --only <id> never writes a decision's commit field when the queued `to` doesn't resolve to a real commit here (#48)", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    // Overwrite dec_a's queued "to" with a placeholder that was never a real
+    // git object — a corrupted queue file, a hand edit, or an upstream bug
+    // could produce exactly this shape.
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: "0123456789abcdef0123456789abcdef01234567" }, { id: "dec_b", from: "sha_b_old", to: fixture.shaBNew }], null, 2) + "\n",
+    );
+    const run = runCli(fixture.root, "repair-provenance", "--apply", "--only", "dec_a", "--quiet");
+    assert.equal(run.status, 0, run.stderr);
+
+    const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
+    assert.equal(decA.commit, "sha_a_old", "an unresolvable `to` must never be written into the decision's commit field");
+
+    const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string }[];
+    assert.deepEqual(queue.map((r) => r.id), ["dec_a", "dec_b"], "the withheld entry stays queued — never deleted just because its `to` failed to resolve");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --apply --only <id> reports the withheld reason distinctly from 'not visible' (#48)", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: "0123456789abcdef0123456789abcdef01234567" }, { id: "dec_b", from: "sha_b_old", to: fixture.shaBNew }], null, 2) + "\n",
+    );
+    const run = runCli(fixture.root, "repair-provenance", "--apply", "--only", "dec_a");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /doesn't resolve in this repository/);
+    assert.doesNotMatch(run.stdout, /are visible this run/, "dec_a's decision IS visible — the withheld reason must not be confused with the invisibility reason");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --apply (no --only) applies the resolvable entry and leaves the unresolvable one queued, reporting both distinctly (#48)", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: "0123456789abcdef0123456789abcdef01234567" }, { id: "dec_b", from: "sha_b_old", to: fixture.shaBNew }], null, 2) + "\n",
+    );
+    const run = runCli(fixture.root, "repair-provenance", "--apply");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /Repaired 1 commit reference/);
+    assert.match(run.stdout, /doesn't resolve in this repository: dec_a/);
+
+    const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
+    const decB = JSON.parse(readFileSync(fixture.decisionFile("dec_b"), "utf8")) as Decision;
+    assert.equal(decA.commit, "sha_a_old", "withheld — never applied");
+    assert.equal(decB.commit, fixture.shaBNew, "resolvable entry still applies normally");
+
+    const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string }[];
+    assert.deepEqual(queue.map((r) => r.id), ["dec_a"], "only the withheld entry survives in the queue");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance dry run marks a withheld entry distinctly from an invisible one, and the preview count matches what --apply can actually do (#48)", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: "0123456789abcdef0123456789abcdef01234567" }, { id: "dec_b", from: "sha_b_old", to: fixture.shaBNew }], null, 2) + "\n",
+    );
+    const run = runCli(fixture.root, "repair-provenance");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /Would repair 1 of 2 listed/, "one of the two would be withheld, so the preview must not overclaim both are repairable");
+    assert.match(run.stdout, /dec_a.*doesn't resolve in this repository/, "dec_a's row is marked with the withheld reason");
+    assert.doesNotMatch(run.stdout, /dec_a.*not visible this run/, "dec_a's decision IS visible — must not be marked invisible");
+    assert.doesNotMatch(run.stdout, /dec_b.*doesn't resolve in this repository/, "dec_b's `to` DOES resolve — its row must not be marked withheld");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --apply reports an invisible decision AND a withheld entry together, not one masking the other (#48)", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    rmSync(fixture.decisionFile("dec_a")); // invisible: decision gone from this run's view
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: fixture.shaANew }, { id: "dec_b", from: "sha_b_old", to: "fedcba9876543210fedcba9876543210fedcba98" }], null, 2) + "\n",
+    );
+    const run = runCli(fixture.root, "repair-provenance", "--apply");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /are visible this run.*dec_a/s, "the invisible reason must still name dec_a");
+    assert.match(run.stdout, /doesn't resolve in this repository.*dec_b/s, "the withheld reason must still name dec_b — must not be swallowed by the invisible branch");
+
+    const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string }[];
+    assert.deepEqual(queue.map((r) => r.id).sort(), ["dec_a", "dec_b"], "neither entry is deleted — nothing was actually applied");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --apply uses plural wording when TWO entries are withheld and nothing applied (#48)", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([
+        { id: "dec_a", from: "sha_a_old", to: "0123456789abcdef0123456789abcdef01234567" },
+        { id: "dec_b", from: "sha_b_old", to: "fedcba9876543210fedcba9876543210fedcba98" },
+      ], null, 2) + "\n",
+    );
+    const run = runCli(fixture.root, "repair-provenance", "--apply");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /entries whose proposed replacement commits don't resolve in this repository: dec_a, dec_b/, "plural grammar for two withheld entries, not the singular 'an entry ... doesn't'");
+    assert.doesNotMatch(run.stdout, /an entry whose proposed replacement commit doesn't/, "must not use the singular phrasing for two entries");
+
+    const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string }[];
+    assert.deepEqual(queue.map((r) => r.id).sort(), ["dec_a", "dec_b"], "both withheld entries stay queued");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --apply classifies a SINGLE entry that is both invisible AND withheld as invisible only, matching the dry-run's own precedence, not both at once", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    rmSync(fixture.decisionFile("dec_a")); // invisible
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: "0123456789abcdef0123456789abcdef01234567" }, { id: "dec_b", from: "sha_b_old", to: fixture.shaBNew }], null, 2) + "\n",
+    );
+    const dry = runCli(fixture.root, "repair-provenance");
+    assert.equal(dry.status, 0, dry.stderr);
+    assert.match(dry.stdout, /dec_a.*not visible this run/, "dry run classifies dec_a as invisible");
+    assert.doesNotMatch(dry.stdout, /dec_a.*doesn't resolve in this repository/, "dry run must not ALSO classify it as withheld — one reason per entry");
+
+    const run = runCli(fixture.root, "repair-provenance", "--apply", "--only", "dec_a");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /are visible this run.*dec_a/s, "apply agrees with the dry run: invisible, not withheld");
+    assert.doesNotMatch(run.stdout, /doesn't resolve in this repository/, "must not print the withheld message for an entry already classified as invisible — no contradictory 'won't self-heal' advice for a decision that might become visible again");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --apply survives a corrupted queue with two entries sharing an id — the withheld sibling is never deleted or misreported as repaired (#48)", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    // Not a shape the write path ever produces itself — this is exactly the
+    // "corrupted queue file" scenario the existence check exists to defend
+    // against. Same id, same `from`, two different proposed `to`s: one real,
+    // one a ghost.
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaANew },
+        { id: "dec_a", from: "sha_a_old", to: "0123456789abcdef0123456789abcdef01234567" },
+      ], null, 2) + "\n",
+    );
+    // Deliberately NOT --quiet: a human reading the output must learn the
+    // withheld sibling is still there, not just find it surviving on disk —
+    // an id-keyed report (rather than the sweep's own object-keyed check)
+    // would see `dec_a` fully resolved and print nothing about it at all.
+    const run = runCli(fixture.root, "repair-provenance", "--apply");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /Repaired 1 commit reference/);
+    assert.match(run.stdout, /doesn't resolve in this repository: dec_a/, "the withheld sibling must be reported as still queued, not silently dropped from the summary just because its sibling resolved");
+
+    const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
+    assert.equal(decA.commit, fixture.shaANew, "the resolvable sibling is applied");
+
+    const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string; to: string }[];
+    assert.deepEqual(queue, [{ id: "dec_a", from: "sha_a_old", to: "0123456789abcdef0123456789abcdef01234567" }], "the withheld sibling survives in the queue — an id-keyed sweep must not delete it just because its sibling resolved");
   } finally {
     fixture.cleanup();
   }
@@ -764,6 +1045,31 @@ test("SessionStart orientation surfaces a queued commit-repair escalation for a 
       new RegExp(fixture.decisionId),
       "the public decisions list is empty, but the queued repair is fully answerable via the full store — SessionStart must not bail silently before checking it",
     );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("SessionStart orientation surfaces the withheld (never-resolves) wording, not the ordinary --apply-works wording, when the queued `to` doesn't resolve here (#48 follow-up)", () => {
+  const fixture = privateOverlaySessionStartFixture();
+  try {
+    // The fixture's own queued `to` ("d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0")
+    // is well-formed hex but was never a git object in this repo — it's
+    // withheld by construction. Guards the SessionStart call site's own
+    // `withheldRewrites`/`commitRepairEscalations` wiring specifically:
+    // mutating that site to re-read the queue instead of reusing one local
+    // (breaking the object-identity contract both functions depend on)
+    // would silently fall back to the ordinary wording with no other test
+    // catching it.
+    const run = spawnSync(process.execPath, [tsx, cli, "hook", "--provider", "claude"], {
+      cwd: fixture.root,
+      env: fixture.env,
+      input: JSON.stringify({ hook_event_name: "SessionStart", session_id: "s1" }),
+      encoding: "utf8",
+    });
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /doesn't resolve in this repository/, "SessionStart must surface the withheld wording");
+    assert.doesNotMatch(run.stdout, new RegExp(`--apply --only ${fixture.decisionId} to accept`), "must never advertise an action that's guaranteed to no-op forever");
   } finally {
     fixture.cleanup();
   }
