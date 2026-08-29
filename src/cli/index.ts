@@ -39,9 +39,11 @@ import {
   writeSynthesisPreference,
   type SynthPreference,
 } from "../synthesis/provider.js";
-import { isGitRepo, isGitRepoRoot, sameGitPublication, sameRemoteUrl, canonicalRemoteUrl, repositoryUsesRemote, headSha, isolatedHeadSha, logSince, lastChangeDate, firstCommitForFile, stagedFiles, workingFiles, commitFiles, asOfDate, stagedDiff, workingDiff, commitDiff, rangeFiles, rangeDiff, rangeSubjects, revExists, revParse, commitAndPushHunch, pullHunchStatus, syncExistingHunch, gitUntrackCached, gitCommonDir, hooksDir, isLinkedWorktree, mainWorktreeRoot, gitMemoryLog, memoryMoveDiff, revertMemoryMove, pushCurrentBranch, commitChanges, type HunchPullStatus } from "../extractors/git.js";
+import { isGitRepo, isGitRepoRoot, sameGitPublication, sameRemoteUrl, canonicalRemoteUrl, repositoryUsesRemote, headSha, isolatedHeadSha, logSince, lastChangeDate, firstCommitForFile, stagedFiles, workingFiles, commitFiles, asOfDate, stagedDiff, workingDiff, commitDiff, rangeFiles, rangeDiff, rangeSubjects, revExists, revParse, commitAndPushHunch, pullHunchStatus, syncExistingHunch, gitUntrackCached, gitCommonDir, hooksDir, isLinkedWorktree, mainWorktreeRoot, gitMemoryLog, memoryMoveDiff, revertMemoryMove, pushCurrentBranch, commitChanges, commitRepairStatus, mergeRangeChanges, type HunchPullStatus } from "../extractors/git.js";
 import { parseMemoryLog, type MemoryMove } from "../core/memorylog.js";
 import { renamesOf, planRepair, repairDecision, repairConstraint, type RepairPlan } from "../core/repair.js";
+import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites, deadRewrites, resolvedRewriteIds, type CommitRewrite } from "../core/commitrepair.js";
+import { readPendingRepairs, writePendingRepairs } from "../core/repairqueue.js";
 import { planPolicyRepair, repairPolicySpec, type PolicyBindingRewrite } from "../constitution/repairPolicies.js";
 import { writeTeamConfig, ensureTeamOverlay, readTeamConfig, safeGitUrl, safeTeamRef, overlayMatchesTeamRemote, advertisedTeamRemoteContract, boundedTeamGitEnv, cloneValidatedTeamOverlay, explicitTeamRemoteContract, teamRemoteContract } from "../integrations/team.js";
 import { runbookId, decisionId } from "../core/ids.js";
@@ -50,7 +52,7 @@ import type { Runbook } from "../core/types.js";
 import { extractInlineIntent } from "../extractors/comments.js";
 import { renderText, renderMarkdown, renderSarif, renderImpact, reportFailsStrict, type CheckReport, type SarifExtras } from "../core/checkreport.js";
 import { partitionReview, isReviewDraft, READY_MIN_GROUNDED, type ReviewItem } from "../core/reviewqueue.js";
-import { installPostCommitHook, installPreCommitHook } from "../integrations/hooks.js";
+import { installPostCommitHook, installPreCommitHook, installPostMergeHook, hookStatus } from "../integrations/hooks.js";
 import { ensureSharedOverlayPointer } from "../integrations/worktree.js";
 import { flushCapture, flushMemoryHome, flushMemoryHomes, pinSharedRemote, sharedRemoteFor, type MemoryHome } from "../integrations/sync.js";
 import { installMergeDriver } from "../integrations/mergeDriver.js";
@@ -108,7 +110,7 @@ import { ADR_DIR_CANDIDATES, ADR_FILE_RE, mapAdrCorpus } from "../extractors/adr
 import { applyImportedAdrReview, carryImportedAdrReview, importedAdrReviewHash, importedAdrSourceHash, isImportedAdrDecision, pendingImportedAdrReviews } from "../core/importReview.js";
 import { exportMadrCorpus, isRegenerableMadr } from "../integrations/madrExport.js";
 import { buildMadrManifest, writeMadrManifest, refreshMadrCorpus } from "../integrations/madrManifest.js";
-import { pendingEscalations, policyEscalations } from "../core/escalations.js";
+import { pendingEscalations, policyEscalations, commitRepairEscalations } from "../core/escalations.js";
 import { premiseEscalations } from "../core/premises.js";
 import { parseDocAnchors, renderDocGrounding } from "../core/docanchors.js";
 import { compareCandidates } from "../core/compare.js";
@@ -311,6 +313,8 @@ program
       const syncToOverlay = !!(opts.privateSync || opts.sharedSync);
       const h = installPostCommitHook(root, inv.shell, { private: syncToOverlay, commit: opts.autoCommit, localOnly: syncToOverlay });
       console.log(`  ✓ post-commit hook ${h.action} (learning loop)${syncToOverlay ? " — syncs to the shared overlay" : ""}${opts.autoCommit ? " — auto-commit on" : ""}`);
+      const pm = installPostMergeHook(root, inv.shell);
+      console.log(`  ✓ post-merge hook ${pm.action} (squash-merge provenance repair)`);
       const m = installMergeDriver(root, inv.shell);
       console.log(`  ✓ team merge driver ${m.action}`);
       // Auto-install the pre-commit guard by default (advisory: flags invariants
@@ -394,6 +398,14 @@ program
     const { store, root } = storeFor();
     store.json.ensureDirs();
     ensureGitignore(root); // keep the derived SQLite index out of git (idempotent)
+    // The post-merge hook only ever got installed by `hunch init`/`hunch
+    // private`/`hunch shared` — a repo that already ran init before this hook
+    // existed never receives it. `hunch index` already self-heals gitignore
+    // the same way; do the same for the hook so an upgrade doesn't require
+    // re-running init by hand. Gated on already having post-commit: `index`
+    // is not a setup command (it runs in CI, on any git repo), so it must
+    // never be what FIRST hooks a repo that never ran init at all.
+    if (isGitRepo(root) && hookStatus(root).postCommit) installPostMergeHook(root, resolveInvocation().shell);
     const res = indexRepo(store, root, { requireClean: true });
     const { counts } = store.reindex();
     const correctionSweep = new ConstitutionService(store, root).upgradeCorrections();
@@ -890,8 +902,11 @@ function beginFreshOverlaySetup(
   const sharedPointer = commonDir ? join(commonDir, "hunch", "local.json") : "";
   const configuredHooks = includeHook ? hooksDir(root) : "";
   const hookDir = configuredHooks ? (isAbsolute(configuredHooks) ? configuredHooks : join(root, configuredHooks)) : "";
-  const hookFile = hookDir ? join(hookDir, "post-commit") : "";
-  const paths = [localFile, codeGitignore, teamFile, ...(sharedPointer ? [sharedPointer] : []), ...(hookFile ? [hookFile] : [])];
+  // Setup installs post-commit AND post-merge together, so both must be in the
+  // ledger — restoring one while leaving the other pointing at a just-deleted
+  // overlay is not a rollback.
+  const hookFiles = hookDir ? [join(hookDir, "post-commit"), join(hookDir, "post-merge")] : [];
+  const paths = [localFile, codeGitignore, teamFile, ...(sharedPointer ? [sharedPointer] : []), ...hookFiles];
   const snapshots = new Map(paths.map((path) => [path, setupPathSnapshot(path)] as const));
   const parentExisted = new Map([
     [dirname(localFile), existsSync(dirname(localFile))],
@@ -910,7 +925,7 @@ function beginFreshOverlaySetup(
     markGitignoreWrite: () => mark(codeGitignore),
     markTeamWrite: () => mark(teamFile),
     markSharedPointerWrite: () => mark(sharedPointer),
-    markHookWrite: () => mark(hookFile),
+    markHookWrite: () => hookFiles.forEach(mark),
     // Migration is a one-way ownership handoff. Once public records have been
     // durably copied into this clone, a later setup failure may restore routing
     // files but must not delete the clone that now holds their surviving copy.
@@ -1140,6 +1155,8 @@ function configureOverlay(dir: string | undefined, opts: OverlaySetupOpts, mode:
     freshSetup?.markHookWrite();
     const h = installPostCommitHook(root, inv.shell, { private: true, commit: opts.autoCommit, localOnly: mode === "private" });
     hookNote = `  ✓ post-commit hook ${h.action} — captured decisions route here${opts.autoCommit ? " (auto-commit+push on)" : ""}\n`;
+    const pm = installPostMergeHook(root, inv.shell);
+    hookNote += `  ✓ post-merge hook ${pm.action} (squash-merge provenance repair)\n`;
   }
 
   // 5) one-time migration: MOVE existing public memory INTO the overlay, then make
@@ -4168,8 +4185,26 @@ program
           // further than a terminal.
           const decisions = s.advisoryRecs("decisions");
           const { recent, roadmap, pendingReview } = nowData(decisions, 3);
-          if (!decisions.length) {
-            // Fresh graph: nothing to orient on, but the operating loop still ships.
+          const escalations = pendingEscalations(decisions);
+          escalations.push(...premiseEscalations(decisions, { now: new Date().toISOString(), exists: (p) => existsSync(join(paths.root, p)) }));
+          // liveness checked against the full store even in private mode — a
+          // private-overlay decision's repair is fully answerable via
+          // `hunch repair-provenance` (which reads the full store), so it
+          // must not go silently unanswerable just because its title stays
+          // out of session transcripts. Only the id and commit shas surface.
+          escalations.push(...commitRepairEscalations(readPendingRepairs(paths.root), decisions, s.recs("decisions")));
+          try {
+            // Constitution human moments ride the same line; a broken policy store
+            // must never take session-start orientation down (fail open). Public
+            // store only — session transcripts travel further than a terminal.
+            const { ConstitutionService: CS } = await import("../constitution/service.js");
+            escalations.push(...policyEscalations(new CS(s, paths.root).list({ publicOnly: true }).map((p) => ({ ...p, last_action: p.audit.at(-1)?.action ?? null }))));
+          } catch { /* constitution unavailable */ }
+          if (!decisions.length && !escalations.length) {
+            // Fresh graph and nothing else to raise: nothing to orient on, but
+            // the operating loop still ships. A queued commit-repair escalation
+            // (checked against the full store above) is enough reason NOT to
+            // bail here even when the visible decisions list is empty.
             if (pipelineEnabled()) emitContext(provider, "SessionStart", [PIPELINE_LOOP, controllerBrief].filter(Boolean).join("\n\n"));
             return;
           }
@@ -4183,15 +4218,6 @@ program
             L.push(`Roadmap (${roadmap.length} live proposed): ${roadmap.slice(0, 3).map((r) => r.title).join(" · ")}${roadmap.length > 3 ? " · …" : ""}`);
           }
           if (pendingReview > 0) L.push(`${pendingReview} legacy un-vouched draft(s) — adopt as advisory memory with \`hunch adopt-drafts\` (new captures auto-trust).`);
-          const escalations = pendingEscalations(decisions);
-          escalations.push(...premiseEscalations(decisions, { now: new Date().toISOString(), exists: (p) => existsSync(join(paths.root, p)) }));
-          try {
-            // Constitution human moments ride the same line; a broken policy store
-            // must never take session-start orientation down (fail open). Public
-            // store only — session transcripts travel further than a terminal.
-            const { ConstitutionService: CS } = await import("../constitution/service.js");
-            escalations.push(...policyEscalations(new CS(s, paths.root).list({ publicOnly: true }).map((p) => ({ ...p, last_action: p.audit.at(-1)?.action ?? null }))));
-          } catch { /* constitution unavailable */ }
           if (escalations.length) {
             L.push(`⚖ ${escalations.length} decision(s) need YOUR call — ASK the user inline (don't queue): ${escalations.map((e) => e.question).join(" · ")}`);
           }
@@ -4799,7 +4825,7 @@ program
 // ---- escalations (the inline "ask the human" surface) ---------------------
 program
   .command("escalations")
-  .description("The decisions a human must make NOW — surfaced to be asked INLINE, never inferred: one exact imported ADR at a time, topic conflicts, stale premises, and Constitution activation calls. Normally empty. Exits non-zero when any are open.")
+  .description("The decisions a human must make NOW — surfaced to be asked INLINE (in the prompt), never a background queue. Captured memory auto-trusts on landing; this lists only what the graph genuinely can't resolve itself: topic conflicts, premise-stale decisions, one exact imported ADR at a time, a queued commit-provenance repair awaiting `--apply`, Constitution candidates awaiting review, and proposed policies whose activation is a human call. Normally empty. Exits non-zero when any are open, so an assistant/CI knows to raise them.")
   .option("--json", "emit the escalation entries as JSON (the VS Code panel's data source)")
   .action(async (opts: { json?: boolean }) => {
     const { store, root } = storeFor();
@@ -4809,6 +4835,7 @@ program
       // Premise decay rides the same inline surface: a decision whose recorded
       // reason died is a QUESTION for the human — authority never changes here.
       items.push(...premiseEscalations(decisionsForEsc, { now: new Date().toISOString(), exists: (p) => existsSync(join(root, p)) }));
+      items.push(...commitRepairEscalations(readPendingRepairs(root), decisionsForEsc));
       // Constitution moments ride the same inline surface (§59.5.3) — never a queue.
       // Fail open: a broken policy store must not take the memory escalations down.
       try {
@@ -4820,7 +4847,7 @@ program
         console.log("✓ Nothing needs your decision — memory is auto-trusted and self-consistent.");
         return;
       }
-      console.log(`${items.length} decision(s) need your call (ask inline; nothing is queued):\n`);
+      console.log(`${items.length} decision(s) need your call — asked here, never decided for you:\n`);
       for (const e of items) {
         console.log(`  ⚖ ${e.question}`);
         console.log(`      ${dim(e.detail)}`);
@@ -4948,6 +4975,187 @@ program
     }
   });
 
+// ---- repair-provenance (squash-merge commit provenance repair) ------------
+program
+  .command("repair-provenance")
+  .description("Self-repair: detect a decision's commit provenance going orphaned by a squash-merge, matched by exact related_files overlap against the newly merged commit range — zero guessing beyond that. Detection always queues the match (.hunch/pending-commit-repairs.json, local-only); --apply is required to actually rewrite it, or --only <dec_id>/--drop <dec_id> to act on one queued decision at a time. The post-merge hook runs detection automatically in the background but never passes --apply — the match signal isn't strong enough to trust an unattended write into shared team memory.")
+  .option("--apply", "rewrite provenance for every queued and freshly-matched candidate (auto-commits each touched store as a `repair` move)")
+  .option("--only <dec_id>", "with --apply, rewrite only this decision id — everything else stays queued untouched")
+  .option("--drop <dec_id>", "clear this decision id from the queue for now, without applying it — a later detection may re-queue the same match if it still holds")
+  .option("--from-hook", "invoked by the git post-merge hook")
+  .option("--quiet", "minimal output")
+  .option("--range <old..new>", "commit range to scan for replacement commits (default: ORIG_HEAD..HEAD)")
+  .action((opts: { apply?: boolean; only?: string; drop?: string; fromHook?: boolean; quiet?: boolean; range?: string }) => {
+    const { store, root } = storeFor();
+    try {
+      if (!isGitRepo(root)) { if (!opts.fromHook) fail("repair-provenance needs a git repo."); return; }
+
+      let oldRef = "ORIG_HEAD";
+      let newRef = "HEAD";
+      if (opts.range) {
+        const parts = opts.range.split("..");
+        if (parts.length !== 2 || !parts[0] || !parts[1]) { if (!opts.fromHook) fail('--range must look like "old..new"'); return; }
+        [oldRef, newRef] = parts as [string, string];
+      }
+
+      const rangeResolves = revExists(oldRef, root) && revExists(newRef, root);
+      if (!rangeResolves && opts.range) {
+        // An explicitly-given range that doesn't resolve is a usage mistake, not
+        // "no merge happened yet" — surface it. (The installed hook never passes
+        // --range, so --from-hook never reaches this branch in practice.)
+        if (!opts.fromHook) fail(`range "${oldRef}..${newRef}" does not resolve in this repository`);
+        return;
+      }
+
+      const decisions = store.recs("decisions");
+
+      // One save path for every queue mutation below — a future change to
+      // queue semantics has exactly one write call to touch, not several
+      // independently-reasoned ones. This file has twice shipped the same
+      // failure class from that fragmentation: one write site's "is this
+      // entry resolved" logic gets fixed while a sibling write site quietly
+      // keeps reasoning about the queue differently, deleting an entry the
+      // fixed site would have left alone.
+      let queue = readPendingRepairs(root);
+      const save = (next: readonly CommitRewrite[]): void => {
+        queue = [...next];
+        writePendingRepairs(root, queue);
+      };
+
+      // Prune only PROVEN-dead entries (deadRewrites: the decision is present
+      // and demonstrably moved on/superseded/rejected) — never an id merely
+      // absent from `decisions` right now, which can just mean this run
+      // checked out a branch that predates the decision, or a private
+      // overlay isn't mounted. That's the reader's transient view, not proof
+      // the match is stale, and the queue file is the one durable record of
+      // it (see repairqueue.ts) — deleting on absence would destroy it
+      // unrecoverably. This keeps the queue from accumulating an
+      // actually-dead entry that outlives any number of --only runs
+      // targeting other ids, without risking a false prune. Deferred until
+      // after --range validation so a pure usage error changes nothing.
+      const deadEntries = deadRewrites(queue, decisions);
+      // Remembered for --only below: targeting an id that was pruned THIS
+      // run is not the same usage error as targeting an id that never
+      // existed — the human's target was real and is now resolved, not
+      // unrecognized.
+      const onlyWasPruned = !!opts.only && deadEntries.some((r) => r.id === opts.only);
+      if (deadEntries.length) {
+        const deadIds = new Set(deadEntries.map((r) => r.id));
+        save(queue.filter((r) => !deadIds.has(r.id)));
+        if (!opts.quiet) console.log(`Pruned ${deadEntries.length} dead queue entr${deadEntries.length === 1 ? "y" : "ies"} (decision moved on, has no commit on record, or was superseded/rejected): ${deadEntries.map((r) => r.id).join(", ")}`);
+      }
+
+      const candidates = rangeResolves ? mergeRangeChanges(oldRef, newRef, root) : [];
+      const orphaned = candidates.length ? orphanedCommitDecisions(decisions, (sha) => commitRepairStatus(sha, newRef, root)) : [];
+      const freshPlan = candidates.length ? planCommitRepair(orphaned, candidates) : { rewrites: [], records: [] };
+
+      // Detection always queues a fresh match — local-only, never committed, so
+      // it's safe to persist unconditionally. This is what makes running
+      // opportunistically (from the hook) worth anything: the match survives
+      // past this process exiting and past ORIG_HEAD getting overwritten by the
+      // next merge, so a human can confirm it later with `--apply` alone.
+      if (freshPlan.rewrites.length) save(mergeRewrites(freshPlan.rewrites, queue));
+
+      if (opts.drop) {
+        const before = queue.length;
+        save(queue.filter((r) => r.id !== opts.drop));
+        if (!opts.quiet) {
+          console.log(queue.length === before
+            ? `Nothing queued or matched for "${opts.drop}" to drop.`
+            : `Dropped "${opts.drop}" from the queue.`);
+        }
+        if (!opts.apply) return;
+      }
+
+      if (!queue.length) {
+        if (!opts.quiet) console.log("✓ Nothing to repair — no orphaned commit reference matched unambiguously, and nothing queued from an earlier run.");
+        return;
+      }
+
+      // --only restricts the apply (or dry-run preview) to one decision id,
+      // leaving every other queued/matched candidate exactly as it was — the
+      // escalation asks a per-decision question, so the answer surface should
+      // let a human accept one without also accepting everything else queued.
+      const toApply = opts.only ? queue.filter((r) => r.id === opts.only) : queue;
+      if (opts.only && !toApply.length) {
+        if (onlyWasPruned) {
+          // Not a usage error: the human's target was real, and this run
+          // already resolved it above (see the prune's own message for why).
+          if (!opts.quiet) console.log(`"${opts.only}" was pruned earlier in this run — nothing left to do.`);
+          return;
+        }
+        if (!opts.fromHook) fail(`no queued or matched entry for "${opts.only}"`);
+        return;
+      }
+
+      // Whether a listed entry's decision is visible at all this run — a row
+      // that isn't can't actually be resolved by --apply (see
+      // resolvedRewriteIds below), so dry-run/apply output must say so
+      // instead of listing it as though --apply would act on it.
+      const visibleIds = new Set(decisions.map((d) => d.id));
+      if (!opts.apply) {
+        if (!opts.quiet) {
+          const invisibleCount = toApply.filter((r) => !visibleIds.has(r.id)).length;
+          console.log(invisibleCount
+            ? `Would repair ${toApply.length - invisibleCount} of ${toApply.length} listed:`
+            : `Would repair ${toApply.length} commit reference(s):`);
+          for (const r of toApply) console.log(`  ${r.id}  ${r.from} → ${r.to}${visibleIds.has(r.id) ? "" : "  (not visible this run — --apply would leave it queued)"}`);
+          console.log(dim("\nDry run — no decision was rewritten. Re-run with --apply."));
+        }
+        return;
+      }
+
+      const plan = { rewrites: toApply, records: [...new Set(toApply.map((r) => r.id))] };
+      const touchedHomes = new Set<MemoryHome>();
+      const appliedIds = new Set<string>();
+      for (const d of decisions) {
+        const healed = repairDecisionCommit(d, plan);
+        if (healed === d) continue;
+        const home = decisionMemoryHome(store, d.id);
+        store.putWhereItLives("decisions", healed);
+        touchedHomes.add(home);
+        appliedIds.add(d.id);
+      }
+      // Only a candidate whose decision was actually VISIBLE this run is
+      // resolved (applied, or found stale by repairDecisionCommit's own
+      // from-mismatch bail) — resolvedRewriteIds shares deadRewrites' own
+      // reasoning: an id we could not see this run is not proof of anything,
+      // so it stays queued rather than being swept up just because it was in
+      // `toApply`. This also covers --only: toApply is just the one targeted
+      // id, so an invisible target is left queued instead of deleted
+      // unresolved.
+      const resolvedIds = resolvedRewriteIds(toApply, decisions);
+      save(queue.filter((r) => !resolvedIds.has(r.id)));
+      if (!appliedIds.size) {
+        // deadRewrites already pruned any VISIBLE decision that moved on or
+        // was superseded/rejected, so a targeted id that IS visible always
+        // reaches repairDecisionCommit with a matching `from` and is always
+        // healed into a new object (appliedIds.add fires unconditionally for
+        // every visible match) — reaching here is only possible when every
+        // targeted candidate's decision was invisible this run.
+        if (!opts.quiet) {
+          console.log(`Nothing applied — none of the targeted decision(s) are visible this run (branch checkout, or a private overlay not mounted?): ${toApply.map((r) => r.id).join(", ")}. Left queued for a run where they are — or \`hunch repair-provenance --drop <dec_id>\` if a decision is gone for good.`);
+        }
+        return;
+      }
+      store.reindex();
+      const rangeLabel = rangeResolves ? `${oldRef}..${newRef}` : "queued";
+      pumpMemoryHomes(store, root, touchedHomes, `hunch: repair ${appliedIds.size} commit reference(s) after squash-merge (${rangeLabel})`);
+      if (!opts.quiet) {
+        console.log(`✓ Repaired ${appliedIds.size} commit reference(s):`);
+        for (const r of toApply) if (appliedIds.has(r.id)) console.log(`  ${r.id}  ${r.from} → ${r.to}`);
+        const stillQueued = toApply.filter((r) => !resolvedIds.has(r.id));
+        if (stillQueued.length) {
+          console.log(`\n${stillQueued.length} entr${stillQueued.length === 1 ? "y" : "ies"} not visible this run, left queued: ${stillQueued.map((r) => r.id).join(", ")} — or \`hunch repair-provenance --drop <dec_id>\` if a decision is gone for good.`);
+        }
+      }
+    } catch (err) {
+      if (!opts.fromHook) throw err;
+    } finally {
+      store.close();
+    }
+  });
+
 program
   .command("revert-move <sha>")
   .description("Undo one validated memory-only move from a clean checkout (LOCAL only, never pushed). Powers the Hunch view's 'reject move'.")
@@ -4973,7 +5181,7 @@ program
 // ---- drift (doc≠graph detector; advisory + CI-gateable) -------------------
 program
   .command("drift")
-  .description("Detect memory drift: dead refs, dangling supersedes, stale 'proposed' docs, doc≠graph anchor-stale (a file still anchored to a superseded decision), and markdown sections whose <!-- hunch:topic … dec_id --> pin points at a superseded or missing decision (AGENTS.md/CLAUDE.md as a drift surface). Exits non-zero on any anchor-stale drift or topic collision — the doc≠graph gate.")
+  .description("Detect memory drift: dead refs, dangling supersedes, stale 'proposed' docs, commit-unresolvable (a decision cites a commit that no longer resolves in this repository), doc≠graph anchor-stale (a file still anchored to a superseded decision), and markdown sections whose <!-- hunch:topic … dec_id --> pin points at a superseded or missing decision (AGENTS.md/CLAUDE.md as a drift surface). Exits non-zero on any anchor-stale drift or topic collision — the doc≠graph gate.")
   .action(() => {
     const { store, root } = storeFor();
     try {
@@ -5322,6 +5530,13 @@ program
         for (const f of premiseStale) console.log(`· ${f.id} — ${f.detail}`);
         console.log(`\nHeal: this is a HUMAN call — the decision's authority is unchanged until you make it. Re-attest (update the premise's review_by/attested), supersede via /capture, or retire the decision. Keeping it for consistency is a valid answer.\n`);
       }
+      // Every drift kind heals here — see bug_drift_heal_asymmetry above.
+      const commitUnresolvable = kind("commit-unresolvable");
+      if (commitUnresolvable.length) {
+        console.log(`${commitUnresolvable.length} decision(s) cite a commit that no longer resolves in this repository:\n`);
+        for (const f of commitUnresolvable) console.log(`· ${f.id} — ${f.detail}`);
+        console.log(`\nHeal: this is a HUMAN call — check \`hunch repair-provenance\` for a queued match (the post-merge hook detects these automatically while the commit is still resolvable, but never applies one unattended); run \`hunch repair-provenance --apply\` to confirm it, or if the commit is already gone, manually correct the decision's provenance or leave it as historical record.\n`);
+      }
       console.log(`Hunch never rewrites prose for you; this is a read-only reconciliation report.`);
     } finally {
       store.close();
@@ -5430,6 +5645,23 @@ program
     const { store, root } = storeFor();
     console.log(`Hunch root: ${root}`);
     console.log(`git repo:   ${isGitRepo(root) ? "yes" : "no"}  ${isGitRepo(root) ? `(HEAD ${headSha(root).slice(0, 8)})` : ""}`);
+    // post-commit/post-merge are the two hooks every setup path installs; a
+    // repo that ran `hunch init` before the post-merge hook existed never
+    // received it, and there was no way to discover that short of noticing a
+    // squash-merge went unrepaired. pre-commit is opt-out (`--no-enforce`),
+    // so its absence is informational only, never a warning.
+    if (isGitRepo(root)) {
+      const hooks = hookStatus(root);
+      const missing = [!hooks.postCommit && "post-commit", !hooks.postMerge && "post-merge"].filter((h): h is string => !!h);
+      // `hunch index` only ever installs post-merge onto an existing
+      // post-commit install (it never hooks an un-hooked repo — see
+      // isGitRepo(root) && hookStatus(root).postCommit above) — so the fix
+      // hint must not point there when post-commit itself is missing.
+      const fix = !hooks.postCommit ? "run `hunch init` for the full setup" : "run `hunch index` to install it";
+      console.log(`hooks:      ${missing.length
+        ? `⚠ missing ${missing.join(", ")} — ${fix}`
+        : `post-commit, post-merge installed${hooks.preCommit ? " (+ pre-commit)" : ""}`}`);
+    }
     // In unified mode the public .hunch directory is only a routing shell.
     // Report the same effective manifest that `hunch migrate` reads and stamps,
     // or every healthy code-only team clone looks permanently out of date.

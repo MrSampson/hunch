@@ -113,6 +113,23 @@ test("commitAndPushHunch DOES commit a clean memory-only (JSON) change", () => {
   } finally { cleanup(); }
 });
 
+test("commitAndPushHunch never force-adds the local-only pending-commit-repairs queue into a shared overlay", () => {
+  const { root, git, cleanup } = repo("hunch-overlay-queue-");
+  try {
+    mkdirSync(join(root, ".hunch", "decisions"), { recursive: true });
+    writeFileSync(join(root, ".hunch", "decisions", "dec_1.json"), JSON.stringify({ id: "dec_1", title: "x" }));
+    // The overlay path force-adds (-f) every .json it finds, bypassing gitignore
+    // entirely — this queue file must be excluded by name, not by ignore rules.
+    writeFileSync(join(root, ".hunch", "pending-commit-repairs.json"), JSON.stringify([{ id: "dec_1", from: "a", to: "b" }]));
+    const r = commitAndPushHunch(join(root, ".hunch"), "hunch: capture dec_1", { push: true, protectedRepoRoot: join(root, "..") });
+
+    assert.equal(r, "committed");
+    assert.match(git("ls-tree", "-r", "--name-only", "HEAD"), /decisions\/dec_1\.json/, "the real record was committed");
+    assert.doesNotMatch(git("ls-tree", "-r", "--name-only", "HEAD"), /pending-commit-repairs\.json/, "the local-only queue never rides the overlay's force-add into shared memory");
+    assert.equal(git("diff", "--cached", "--name-only"), "", "nothing left staged behind");
+  } finally { cleanup(); }
+});
+
 test("commitAndPushHunch REFUSES a JSON-only nested overlay that resolves to the code repo", () => {
   const { root, git, cleanup } = repo("hunch-nested-overlay-");
   try {
