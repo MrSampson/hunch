@@ -135,6 +135,27 @@ test("the post-merge hook's pending-commit-repairs queue is never committed, eve
   }
 });
 
+test("the post-merge hook's dropped-commit-repairs tombstone file is never committed, even on a pre-existing gitignore", () => {
+  const { root, hunch, cleanup } = repo();
+  try {
+    writeDec(hunch, "dec_before");
+    assert.equal(commitAndPushHunch(hunch, "capture 1", { push: false, protectedRepoRoot: root }), "committed");
+
+    writeFileSync(join(hunch, "dropped-commit-repairs.json"), JSON.stringify([{ id: "dec_x", from: "a" }]) + "\n");
+    writeDec(hunch, "dec_after");
+    const result = commitAndPushHunch(hunch, "capture 2", { push: false, protectedRepoRoot: root });
+    assert.equal(result, "committed");
+    assert.ok(committedDecisions(root).includes(".hunch/decisions/dec_after.json"));
+
+    const tracked = execFileSync("git", ["-C", root, "ls-files"], { encoding: "utf8" });
+    assert.ok(!tracked.includes("dropped-commit-repairs.json"), "the local-only tombstone file is never committed into shared memory");
+    const staged = execFileSync("git", ["-C", root, "diff", "--cached", "--name-only"], { encoding: "utf8" }).trim();
+    assert.equal(staged, "", "nothing is left staged behind");
+  } finally {
+    cleanup();
+  }
+});
+
 test("ensureGitignore covers the catch-log for NEW repos (#1)", async () => {
   const { root, cleanup } = repo();
   try {

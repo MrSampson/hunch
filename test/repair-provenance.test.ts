@@ -1,9 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { Decision } from "../src/core/types.js";
 import { hunchPaths } from "../src/core/paths.js";
 import { HunchStore } from "../src/store/hunchStore.js";
@@ -259,6 +261,149 @@ test("repair-provenance --drop removes one queued entry without applying anythin
     assert.equal(decA.commit, "sha_a_old", "dropping never applies a rewrite");
     assert.equal(decB.commit, "sha_b_old", "the untargeted decision is untouched");
     assert.equal(git(fixture.root, "rev-parse", "HEAD"), headBefore, "no commit was made");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance: a dropped match doesn't resurface when the identical range is re-detected — the tombstone is durable, not just a queue clear", () => {
+  const fixture = squashFixture();
+  try {
+    const detect = runCli(fixture.root, "repair-provenance", "--range", `${fixture.oldRef}..${fixture.newRef}`, "--quiet");
+    assert.equal(detect.status, 0, detect.stderr);
+    const firstQueue = readQueue(fixture.root) as { id: string; from: string; to: string }[];
+    assert.deepEqual(firstQueue.map((r) => r.id), ["dec_squash_fixture"], "detection queued the match");
+    const matchedTo = firstQueue[0]!.to;
+
+    const drop = runCli(fixture.root, "repair-provenance", "--drop", "dec_squash_fixture", "--quiet");
+    assert.equal(drop.status, 0, drop.stderr);
+    assert.deepEqual(readQueue(fixture.root), [], "the drop cleared the queue");
+
+    const redetect = runCli(fixture.root, "repair-provenance", "--range", `${fixture.oldRef}..${fixture.newRef}`, "--quiet");
+    assert.equal(redetect.status, 0, redetect.stderr);
+    assert.deepEqual(readQueue(fixture.root), [], "the identical match must not resurface once its {id, from, to} triple was dropped");
+
+    const dropped = JSON.parse(readFileSync(join(fixture.root, ".hunch", "dropped-commit-repairs.json"), "utf8")) as { id: string; from: string; to: string }[];
+    assert.deepEqual(dropped, [{ id: "dec_squash_fixture", from: fixture.origCommit, to: matchedTo }]);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance sweeps a tombstoned entry that lands in the queue by another path (e.g. a racing hook run), even without fresh detection", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    // Simulate the exact race the tombstone must survive: dec_a's {id, from, to}
+    // was already rejected once, but a concurrently-racing writer (the
+    // post-merge hook's backgrounded detection, which reads the queue/dropped
+    // files independently) re-added the identical entry to the queue afterward.
+    writeFileSync(
+      join(fixture.root, ".hunch", "dropped-commit-repairs.json"),
+      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: "sha_a_new" }], null, 2) + "\n",
+    );
+    const run = runCli(fixture.root, "repair-provenance", "--quiet");
+    assert.equal(run.status, 0, run.stderr);
+    const queue = readQueue(fixture.root) as { id: string }[];
+    assert.deepEqual(queue.map((r) => r.id), ["dec_b"], "the tombstoned entry is swept from the queue on load, regardless of how it got there");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance announces a swept already-rejected match unless --quiet", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    writeFileSync(
+      join(fixture.root, ".hunch", "dropped-commit-repairs.json"),
+      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: "sha_a_new" }], null, 2) + "\n",
+    );
+    const run = runCli(fixture.root, "repair-provenance");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /Swept 1 already-rejected match from the queue: dec_a/);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --apply --only <id-just-swept> exits 0 with an explanatory message, not a usage error", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    // dec_a is real and was queued, but its exact triple was already rejected
+    // via an earlier --drop — this run's own sweep resolves it before --only
+    // ever gets to look for it, same non-error shape as onlyWasPruned.
+    writeFileSync(
+      join(fixture.root, ".hunch", "dropped-commit-repairs.json"),
+      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: "sha_a_new" }], null, 2) + "\n",
+    );
+    // Not --quiet: distinguishes this from the OTHER exit-0 path (an id that
+    // was never queued at all) — only this one names the --drop rejection.
+    const run = runCli(fixture.root, "repair-provenance", "--apply", "--only", "dec_a");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /"dec_a" was already rejected via --drop — nothing left to do\./);
+    const decB = JSON.parse(readFileSync(fixture.decisionFile("dec_b"), "utf8")) as Decision;
+    assert.equal(decB.commit, "sha_b_old", "the untargeted decision is never touched by an --only run that resolves to nothing");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("hunch escalations never re-asks about an entry sitting in the raw queue file if it's already tombstoned — the tombstone must hold on READ, not just on repair-provenance's own write", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    // Same race as the sweep test above, but this time nobody runs
+    // repair-provenance at all before a human (or CI) checks escalations —
+    // the surface that actually gets read must not depend on repair-provenance
+    // having run first to clean up after a racing writer.
+    writeFileSync(
+      join(fixture.root, ".hunch", "dropped-commit-repairs.json"),
+      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: "sha_a_new" }], null, 2) + "\n",
+    );
+    const run = runCli(fixture.root, "escalations", "--json");
+    const items = run.stdout ? (JSON.parse(run.stdout) as { kind: string; decisionIds: string[] }[]) : [];
+    const stillAsking = items.find((i) => i.kind === "commit-repair-pending" && i.decisionIds.includes("dec_a"));
+    assert.equal(stillAsking, undefined, "dec_a's rejected match must not resurface as an escalation just because it's still sitting in the raw queue file");
+    // Positive control: dec_b's untouched match must still surface — otherwise
+    // this test would pass just as well if `escalations` crashed or emitted
+    // nothing at all, proving nothing about the tombstone filter specifically.
+    const stillAskingAboutB = items.find((i) => i.kind === "commit-repair-pending" && i.decisionIds.includes("dec_b"));
+    assert.ok(stillAskingAboutB, "dec_b's untombstoned match must still surface");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("MCP hunch_escalations never re-asks about a tombstoned entry sitting in the raw queue file — same readActivePendingRepairs path as the CLI", async () => {
+  const fixture = twoDecisionQueueFixture();
+  let client: Client | null = null;
+  try {
+    writeFileSync(
+      join(fixture.root, ".hunch", "dropped-commit-repairs.json"),
+      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: "sha_a_new" }], null, 2) + "\n",
+    );
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [tsx, cli, "mcp"],
+      cwd: fixture.root,
+      env: { ...process.env, HUNCH_PRIVATE_DIR: "", HUNCH_SYNTH_PROVIDER: "deterministic" },
+    });
+    client = new Client({ name: "repair-provenance-mcp-tombstone-test", version: "1.0.0" });
+    await client.connect(transport);
+    const result = await client.callTool({ name: "hunch_escalations", arguments: {} });
+    const text = (result.content as { type: "text"; text: string }[]).map((part) => part.text).join("\n");
+    assert.doesNotMatch(text, /dec_a/, "the tombstoned match must not resurface via the MCP tool either");
+    assert.match(text, /dec_b/, "dec_b's untombstoned match must still surface — a positive control against a tool that silently emits nothing");
+  } finally {
+    await client?.close();
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --drop <id-not-queued> writes no tombstone — there's nothing to reject", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    const run = runCli(fixture.root, "repair-provenance", "--drop", "dec_nonexistent", "--quiet");
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(existsSync(join(fixture.root, ".hunch", "dropped-commit-repairs.json")), false, "nothing was actually queued for this id, so nothing is tombstoned");
   } finally {
     fixture.cleanup();
   }
@@ -618,6 +763,31 @@ test("SessionStart orientation surfaces a queued commit-repair escalation for a 
       run.stdout,
       new RegExp(fixture.decisionId),
       "the public decisions list is empty, but the queued repair is fully answerable via the full store — SessionStart must not bail silently before checking it",
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("SessionStart orientation does NOT re-surface a private-overlay commit-repair escalation once its exact triple is tombstoned — the same private-overlay liveness path must respect --drop too", () => {
+  const fixture = privateOverlaySessionStartFixture();
+  try {
+    const queued = (JSON.parse(readFileSync(queueFile(fixture.root), "utf8")) as { id: string; from: string; to: string }[])[0]!;
+    writeFileSync(
+      join(fixture.root, ".hunch", "dropped-commit-repairs.json"),
+      JSON.stringify([{ id: queued.id, from: queued.from, to: queued.to }], null, 2) + "\n",
+    );
+    const run = spawnSync(process.execPath, [tsx, cli, "hook", "--provider", "claude"], {
+      cwd: fixture.root,
+      env: fixture.env,
+      input: JSON.stringify({ hook_event_name: "SessionStart", session_id: "s1" }),
+      encoding: "utf8",
+    });
+    assert.equal(run.status, 0, run.stderr);
+    assert.doesNotMatch(
+      run.stdout,
+      new RegExp(fixture.decisionId),
+      "the tombstoned repair must not surface here either — SessionStart shares the same readActivePendingRepairs path as `hunch escalations`, not a raw queue read",
     );
   } finally {
     fixture.cleanup();

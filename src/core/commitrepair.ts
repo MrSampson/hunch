@@ -18,6 +18,20 @@ export interface CommitRewrite {
   to: string;
 }
 
+/** A tombstone: the exact {id, from, to} rewrite a human explicitly rejected
+ *  via `--drop`. Keyed on the full triple, not just {id, from} — the human's
+ *  "no" answers the specific question the commit-repair-pending escalation
+ *  asked ("apply THIS proposed replacement, from -> to?"), not a blanket
+ *  refusal of every future replacement for this decision's still-orphaned
+ *  commit. A later merge proposing a genuinely different `to` for the same
+ *  {id, from} is a NEW proposal — not a repeat of the one that was rejected —
+ *  and surfaces normally. */
+export interface DroppedRewrite {
+  id: string;
+  from: string;
+  to: string;
+}
+
 export interface CommitRepairPlan {
   rewrites: CommitRewrite[];
   records: string[];
@@ -123,6 +137,32 @@ export function deadRewrites(queued: readonly CommitRewrite[], decisions: readon
 export function resolvedRewriteIds(toApply: readonly CommitRewrite[], decisions: readonly Decision[]): Set<string> {
   const seen = new Set(decisions.map((d) => d.id));
   return new Set(toApply.filter((r) => seen.has(r.id)).map((r) => r.id));
+}
+
+/** Remove any match whose exact {id, from, to} triple was already tombstoned
+ *  by an earlier `--drop` — otherwise a later merge that re-derives the
+ *  identical candidate would re-queue exactly what the human rejected. A
+ *  match sharing {id, from} but proposing a different `to` is unaffected: it
+ *  is a different proposal, not the rejected one.
+ *
+ *  Preserves object identity for every surviving entry (a plain filter, never
+ *  a clone or a rebuild) — repair-provenance's own action relies on this to
+ *  diff its swept-vs-active queue by reference (`queue.filter(r =>
+ *  !active.includes(r))`) rather than re-spelling the {id, from, to} key a
+ *  third time. Do not change this to normalize or reconstruct entries
+ *  without updating that call site too. */
+export function withoutDropped(rewrites: readonly CommitRewrite[], dropped: readonly DroppedRewrite[]): CommitRewrite[] {
+  if (!dropped.length) return [...rewrites];
+  const tombstoned = new Set(dropped.map((t) => `${t.id}\0${t.from}\0${t.to}`));
+  return rewrites.filter((r) => !tombstoned.has(`${r.id}\0${r.from}\0${r.to}`));
+}
+
+/** Append newly-dropped {id, from, to} triples to the tombstone list,
+ *  deduped — same append-only, dedupe-by-key shape as mergeRewrites. */
+export function addDropped(newly: readonly DroppedRewrite[], existing: readonly DroppedRewrite[]): DroppedRewrite[] {
+  const seen = new Set(existing.map((t) => `${t.id}\0${t.from}\0${t.to}`));
+  const additions = newly.filter((t) => !seen.has(`${t.id}\0${t.from}\0${t.to}`));
+  return [...existing, ...additions];
 }
 
 /** Combine a freshly-computed plan's rewrites with anything already queued

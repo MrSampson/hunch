@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readPendingRepairs, writePendingRepairs } from "../src/core/repairqueue.js";
+import { readPendingRepairs, writePendingRepairs, readDroppedRepairs, writeDroppedRepairs, readActivePendingRepairs } from "../src/core/repairqueue.js";
 
 function tmpRoot(): { root: string; cleanup(): void } {
   const root = mkdtempSync(join(tmpdir(), "hunch-repairqueue-"));
@@ -102,5 +102,95 @@ test("writePendingRepairs: writes valid, human-readable JSON to the expected pat
     writePendingRepairs(root, [{ id: "dec_1", from: "a", to: "b" }]);
     const raw = readFileSync(join(root, ".hunch", "pending-commit-repairs.json"), "utf8");
     assert.deepEqual(JSON.parse(raw), [{ id: "dec_1", from: "a", to: "b" }]);
+  } finally { cleanup(); }
+});
+
+test("readDroppedRepairs: returns an empty array when the tombstone file doesn't exist", () => {
+  const { root, cleanup } = tmpRoot();
+  try {
+    assert.deepEqual(readDroppedRepairs(root), []);
+  } finally { cleanup(); }
+});
+
+test("writeDroppedRepairs then readDroppedRepairs round-trips exactly, in a file separate from the pending queue", () => {
+  const { root, cleanup } = tmpRoot();
+  try {
+    const dropped = [{ id: "dec_1", from: "sha_old", to: "sha_rejected" }];
+    writeDroppedRepairs(root, dropped);
+    assert.deepEqual(readDroppedRepairs(root), dropped);
+    assert.deepEqual(readPendingRepairs(root), [], "the tombstone file is independent of the pending queue file");
+  } finally { cleanup(); }
+});
+
+test("readDroppedRepairs: tolerant of corrupt JSON — returns an empty array, never throws", () => {
+  const { root, cleanup } = tmpRoot();
+  try {
+    writeFileSync(join(root, ".hunch", "dropped-commit-repairs.json"), "{not valid json");
+    assert.deepEqual(readDroppedRepairs(root), []);
+  } finally { cleanup(); }
+});
+
+test("readDroppedRepairs: tolerant of a non-array JSON value — returns an empty array", () => {
+  const { root, cleanup } = tmpRoot();
+  try {
+    writeFileSync(join(root, ".hunch", "dropped-commit-repairs.json"), JSON.stringify({ not: "an array" }));
+    assert.deepEqual(readDroppedRepairs(root), []);
+  } finally { cleanup(); }
+});
+
+test("readDroppedRepairs: filters out entries missing an id, from, or to, keeps valid ones", () => {
+  const { root, cleanup } = tmpRoot();
+  try {
+    writeFileSync(
+      join(root, ".hunch", "dropped-commit-repairs.json"),
+      JSON.stringify([
+        { id: "dec_1", from: "a", to: "b" },
+        { id: "dec_no_from", to: "b" },
+        { from: "b", to: "c" },
+        { id: "dec_no_to", from: "a" },
+        { id: "", from: "c", to: "d" },
+        { id: "dec_empty_from", from: "", to: "d" },
+        { id: "dec_empty_to", from: "a", to: "" },
+        "garbage",
+        null,
+      ]),
+    );
+    assert.deepEqual(readDroppedRepairs(root), [{ id: "dec_1", from: "a", to: "b" }]);
+  } finally { cleanup(); }
+});
+
+test("writeDroppedRepairs([]) clears the tombstone file", () => {
+  const { root, cleanup } = tmpRoot();
+  try {
+    writeDroppedRepairs(root, [{ id: "dec_1", from: "a", to: "b" }]);
+    writeDroppedRepairs(root, []);
+    assert.deepEqual(readDroppedRepairs(root), []);
+  } finally { cleanup(); }
+});
+
+test("readActivePendingRepairs: an entry with no tombstone passes through unchanged", () => {
+  const { root, cleanup } = tmpRoot();
+  try {
+    writePendingRepairs(root, [{ id: "dec_1", from: "a", to: "b" }]);
+    assert.deepEqual(readActivePendingRepairs(root), [{ id: "dec_1", from: "a", to: "b" }]);
+  } finally { cleanup(); }
+});
+
+test("readActivePendingRepairs: hides an entry whose exact {id, from, to} was rejected via --drop, even though it's still sitting in the raw queue file", () => {
+  const { root, cleanup } = tmpRoot();
+  try {
+    writePendingRepairs(root, [{ id: "dec_a", from: "sha_old", to: "sha_new" }, { id: "dec_b", from: "x", to: "y" }]);
+    writeDroppedRepairs(root, [{ id: "dec_a", from: "sha_old", to: "sha_new" }]);
+    assert.deepEqual(readActivePendingRepairs(root), [{ id: "dec_b", from: "x", to: "y" }]);
+    assert.deepEqual(readPendingRepairs(root), [{ id: "dec_a", from: "sha_old", to: "sha_new" }, { id: "dec_b", from: "x", to: "y" }], "the raw queue file itself is untouched — this is a read-time filter, not a mutation");
+  } finally { cleanup(); }
+});
+
+test("readActivePendingRepairs: a genuinely different `to` for a tombstoned {id, from} still passes through", () => {
+  const { root, cleanup } = tmpRoot();
+  try {
+    writePendingRepairs(root, [{ id: "dec_a", from: "sha_old", to: "sha_different_candidate" }]);
+    writeDroppedRepairs(root, [{ id: "dec_a", from: "sha_old", to: "sha_rejected_candidate" }]);
+    assert.deepEqual(readActivePendingRepairs(root), [{ id: "dec_a", from: "sha_old", to: "sha_different_candidate" }]);
   } finally { cleanup(); }
 });
