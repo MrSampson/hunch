@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Decision } from "../src/core/types.js";
@@ -259,6 +259,39 @@ test("repair-provenance --drop removes one queued entry without applying anythin
     assert.equal(decA.commit, "sha_a_old", "dropping never applies a rewrite");
     assert.equal(decB.commit, "sha_b_old", "the untargeted decision is untouched");
     assert.equal(git(fixture.root, "rev-parse", "HEAD"), headBefore, "no commit was made");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance: a dropped match doesn't resurface when the identical range is re-detected — the tombstone is durable, not just a queue clear", () => {
+  const fixture = squashFixture();
+  try {
+    const detect = runCli(fixture.root, "repair-provenance", "--range", `${fixture.oldRef}..${fixture.newRef}`, "--quiet");
+    assert.equal(detect.status, 0, detect.stderr);
+    assert.deepEqual(readQueue(fixture.root).map((r) => (r as { id: string }).id), ["dec_squash_fixture"], "detection queued the match");
+
+    const drop = runCli(fixture.root, "repair-provenance", "--drop", "dec_squash_fixture", "--quiet");
+    assert.equal(drop.status, 0, drop.stderr);
+    assert.deepEqual(readQueue(fixture.root), [], "the drop cleared the queue");
+
+    const redetect = runCli(fixture.root, "repair-provenance", "--range", `${fixture.oldRef}..${fixture.newRef}`, "--quiet");
+    assert.equal(redetect.status, 0, redetect.stderr);
+    assert.deepEqual(readQueue(fixture.root), [], "the identical match must not resurface once its {id, from} pairing was dropped");
+
+    const dropped = JSON.parse(readFileSync(join(fixture.root, ".hunch", "dropped-commit-repairs.json"), "utf8")) as { id: string; from: string }[];
+    assert.deepEqual(dropped, [{ id: "dec_squash_fixture", from: fixture.origCommit }]);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --drop <id-not-queued> writes no tombstone — there's nothing to reject", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    const run = runCli(fixture.root, "repair-provenance", "--drop", "dec_nonexistent", "--quiet");
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(existsSync(join(fixture.root, ".hunch", "dropped-commit-repairs.json")), false, "nothing was actually queued for this id, so nothing is tombstoned");
   } finally {
     fixture.cleanup();
   }

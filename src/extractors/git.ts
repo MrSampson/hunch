@@ -794,10 +794,12 @@ function isDerivedStoreArtifact(relativeName: string): boolean {
   return /^[^/]+\.sqlite[^/]*$/i.test(relativeName)
     || relativeName.split("/").some((segment) => segment.includes(".tmp"))
     || relativeName === "events.log"
-    // The post-merge hook's detected-but-unconfirmed repair queue (repairqueue.ts):
-    // clone-local scratch, never a memory record — must never ride a public flush's
-    // `git add .` or an overlay's force-add allowlist into shared/pushed memory.
-    || relativeName === "pending-commit-repairs.json";
+    // The post-merge hook's detected-but-unconfirmed repair queue and its
+    // rejected-match tombstones (repairqueue.ts): clone-local scratch, never a
+    // memory record — must never ride a public flush's `git add .` or an
+    // overlay's force-add allowlist into shared/pushed memory.
+    || relativeName === "pending-commit-repairs.json"
+    || relativeName === "dropped-commit-repairs.json";
 }
 
 /** Enumerate ordinary JSON files already contained under an overlay. Push-capable

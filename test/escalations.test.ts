@@ -100,9 +100,9 @@ test("commitRepairEscalations: a queued match surfaces as one inline question na
   assert.match(items[0]!.question, /one newly-merged commit touches all its related files/);
   assert.equal(items[0]!.detail, "sha_old → sha_new");
   assert.match(items[0]!.resolution, /repair-provenance --apply --only dec_1/, "gives a copy-pasteable command targeting just this decision");
-  assert.match(items[0]!.resolution, /--drop dec_1/, "also offers clearing just this one from the queue");
-  assert.doesNotMatch(items[0]!.resolution, /discard.*without applying/, "drop isn't durable — a later detection can re-queue the same match, so the wording must not imply it's gone for good");
-  assert.match(items[0]!.resolution, /re-queue/, "must say a later detection can bring it back if the match still holds");
+  assert.match(items[0]!.resolution, /--drop dec_1/, "also offers rejecting just this one from the queue");
+  assert.match(items[0]!.resolution, /tombstoned durably/, "--drop is durable — the wording must say so, not imply it's a mere queue clear");
+  assert.match(items[0]!.resolution, /won't resurface/, "must say the identical match won't come back");
 });
 
 test("commitRepairEscalations: a queued entry whose decision no longer exists asks nothing — not a permanently unanswerable question", () => {

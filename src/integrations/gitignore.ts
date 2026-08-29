@@ -31,6 +31,9 @@ const ENTRIES = [
   // repairs — clone-local scratch state, never committed (`hunch repair-provenance
   // --apply` confirms and clears it).
   ".hunch/pending-commit-repairs.json",
+  // Tombstones for commit-repair matches a human rejected via `--drop` — clone-local
+  // scratch state, same discipline as the queue above.
+  ".hunch/dropped-commit-repairs.json",
   // A local PRIVATE overlay store (HUNCH_PRIVATE_DIR) for sensitive memory — never
   // committed. This is the conventional in-repo path; point the env elsewhere for a
   // fully separate private repo.

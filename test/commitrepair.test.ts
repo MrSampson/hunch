@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites, liveRewrites, deadRewrites, resolvedRewriteIds } from "../src/core/commitrepair.js";
+import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites, liveRewrites, deadRewrites, resolvedRewriteIds, withoutDropped, addDropped } from "../src/core/commitrepair.js";
 import type { Decision } from "../src/core/types.js";
 import type { CommitCandidate, CommitRepairStatus } from "../src/extractors/git.js";
 
@@ -185,6 +185,38 @@ test("resolvedRewriteIds: a mix resolves only the visible ones", () => {
     { id: "dec_invisible", from: "sha_old", to: "sha_new" },
   ];
   assert.deepEqual(resolvedRewriteIds(toApply, decisions), new Set(["dec_visible"]));
+});
+
+test("withoutDropped: removes a fresh match whose {id, from} pairing was already tombstoned, regardless of `to`", () => {
+  const fresh = [
+    { id: "dec_dropped", from: "sha_old", to: "sha_candidate" },
+    { id: "dec_kept", from: "sha_old2", to: "sha_new2" },
+  ];
+  const dropped = [{ id: "dec_dropped", from: "sha_old" }];
+  assert.deepEqual(withoutDropped(fresh, dropped), [{ id: "dec_kept", from: "sha_old2", to: "sha_new2" }]);
+});
+
+test("withoutDropped: a tombstone for a different `from` on the same id doesn't suppress an unrelated match", () => {
+  const fresh = [{ id: "dec_1", from: "sha_current", to: "sha_new" }];
+  const dropped = [{ id: "dec_1", from: "sha_stale_other" }];
+  assert.deepEqual(withoutDropped(fresh, dropped), fresh);
+});
+
+test("withoutDropped: empty tombstone list is a no-op", () => {
+  const fresh = [{ id: "dec_1", from: "a", to: "b" }];
+  assert.deepEqual(withoutDropped(fresh, []), fresh);
+});
+
+test("addDropped: appends a newly-dropped {id, from} pairing", () => {
+  const existing = [{ id: "dec_old", from: "sha_a" }];
+  const newly = [{ id: "dec_new", from: "sha_b" }];
+  assert.deepEqual(addDropped(newly, existing), [{ id: "dec_old", from: "sha_a" }, { id: "dec_new", from: "sha_b" }]);
+});
+
+test("addDropped: never duplicates an already-tombstoned {id, from} pairing", () => {
+  const existing = [{ id: "dec_1", from: "sha_a" }];
+  const newly = [{ id: "dec_1", from: "sha_a" }];
+  assert.deepEqual(addDropped(newly, existing), existing);
 });
 
 test("deadRewrites: an entry whose PRESENT decision moved on, or is superseded/rejected, is dead", () => {

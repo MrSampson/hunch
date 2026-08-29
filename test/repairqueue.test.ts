@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readPendingRepairs, writePendingRepairs } from "../src/core/repairqueue.js";
+import { readPendingRepairs, writePendingRepairs, readDroppedRepairs, writeDroppedRepairs } from "../src/core/repairqueue.js";
 
 function tmpRoot(): { root: string; cleanup(): void } {
   const root = mkdtempSync(join(tmpdir(), "hunch-repairqueue-"));
@@ -102,5 +102,66 @@ test("writePendingRepairs: writes valid, human-readable JSON to the expected pat
     writePendingRepairs(root, [{ id: "dec_1", from: "a", to: "b" }]);
     const raw = readFileSync(join(root, ".hunch", "pending-commit-repairs.json"), "utf8");
     assert.deepEqual(JSON.parse(raw), [{ id: "dec_1", from: "a", to: "b" }]);
+  } finally { cleanup(); }
+});
+
+test("readDroppedRepairs: returns an empty array when the tombstone file doesn't exist", () => {
+  const { root, cleanup } = tmpRoot();
+  try {
+    assert.deepEqual(readDroppedRepairs(root), []);
+  } finally { cleanup(); }
+});
+
+test("writeDroppedRepairs then readDroppedRepairs round-trips exactly, in a file separate from the pending queue", () => {
+  const { root, cleanup } = tmpRoot();
+  try {
+    const dropped = [{ id: "dec_1", from: "sha_old" }];
+    writeDroppedRepairs(root, dropped);
+    assert.deepEqual(readDroppedRepairs(root), dropped);
+    assert.deepEqual(readPendingRepairs(root), [], "the tombstone file is independent of the pending queue file");
+  } finally { cleanup(); }
+});
+
+test("readDroppedRepairs: tolerant of corrupt JSON — returns an empty array, never throws", () => {
+  const { root, cleanup } = tmpRoot();
+  try {
+    writeFileSync(join(root, ".hunch", "dropped-commit-repairs.json"), "{not valid json");
+    assert.deepEqual(readDroppedRepairs(root), []);
+  } finally { cleanup(); }
+});
+
+test("readDroppedRepairs: tolerant of a non-array JSON value — returns an empty array", () => {
+  const { root, cleanup } = tmpRoot();
+  try {
+    writeFileSync(join(root, ".hunch", "dropped-commit-repairs.json"), JSON.stringify({ not: "an array" }));
+    assert.deepEqual(readDroppedRepairs(root), []);
+  } finally { cleanup(); }
+});
+
+test("readDroppedRepairs: filters out entries missing an id or from, keeps valid ones", () => {
+  const { root, cleanup } = tmpRoot();
+  try {
+    writeFileSync(
+      join(root, ".hunch", "dropped-commit-repairs.json"),
+      JSON.stringify([
+        { id: "dec_1", from: "a" },
+        { id: "dec_no_from" },
+        { from: "b" },
+        { id: "", from: "c" },
+        { id: "dec_empty_from", from: "" },
+        "garbage",
+        null,
+      ]),
+    );
+    assert.deepEqual(readDroppedRepairs(root), [{ id: "dec_1", from: "a" }]);
+  } finally { cleanup(); }
+});
+
+test("writeDroppedRepairs([]) clears the tombstone file", () => {
+  const { root, cleanup } = tmpRoot();
+  try {
+    writeDroppedRepairs(root, [{ id: "dec_1", from: "a" }]);
+    writeDroppedRepairs(root, []);
+    assert.deepEqual(readDroppedRepairs(root), []);
   } finally { cleanup(); }
 });

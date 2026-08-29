@@ -42,8 +42,8 @@ import {
 import { isGitRepo, isGitRepoRoot, sameGitPublication, sameRemoteUrl, canonicalRemoteUrl, repositoryUsesRemote, headSha, isolatedHeadSha, logSince, lastChangeDate, firstCommitForFile, stagedFiles, workingFiles, commitFiles, asOfDate, stagedDiff, workingDiff, commitDiff, rangeFiles, rangeDiff, rangeSubjects, revExists, revParse, commitAndPushHunch, pullHunchStatus, syncExistingHunch, gitUntrackCached, gitCommonDir, hooksDir, isLinkedWorktree, mainWorktreeRoot, gitMemoryLog, memoryMoveDiff, revertMemoryMove, pushCurrentBranch, commitChanges, commitRepairStatus, mergeRangeChanges, type HunchPullStatus } from "../extractors/git.js";
 import { parseMemoryLog, type MemoryMove } from "../core/memorylog.js";
 import { renamesOf, planRepair, repairDecision, repairConstraint, type RepairPlan } from "../core/repair.js";
-import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites, deadRewrites, resolvedRewriteIds, type CommitRewrite } from "../core/commitrepair.js";
-import { readPendingRepairs, writePendingRepairs } from "../core/repairqueue.js";
+import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites, deadRewrites, resolvedRewriteIds, withoutDropped, addDropped, type CommitRewrite, type DroppedPair } from "../core/commitrepair.js";
+import { readPendingRepairs, writePendingRepairs, readDroppedRepairs, writeDroppedRepairs } from "../core/repairqueue.js";
 import { planPolicyRepair, repairPolicySpec, type PolicyBindingRewrite } from "../constitution/repairPolicies.js";
 import { writeTeamConfig, ensureTeamOverlay, readTeamConfig, safeGitUrl, safeTeamRef, overlayMatchesTeamRemote, advertisedTeamRemoteContract, boundedTeamGitEnv, cloneValidatedTeamOverlay, explicitTeamRemoteContract, teamRemoteContract } from "../integrations/team.js";
 import { runbookId, decisionId } from "../core/ids.js";
@@ -4981,7 +4981,7 @@ program
   .description("Self-repair: detect a decision's commit provenance going orphaned by a squash-merge, matched by exact related_files overlap against the newly merged commit range — zero guessing beyond that. Detection always queues the match (.hunch/pending-commit-repairs.json, local-only); --apply is required to actually rewrite it, or --only <dec_id>/--drop <dec_id> to act on one queued decision at a time. The post-merge hook runs detection automatically in the background but never passes --apply — the match signal isn't strong enough to trust an unattended write into shared team memory.")
   .option("--apply", "rewrite provenance for every queued and freshly-matched candidate (auto-commits each touched store as a `repair` move)")
   .option("--only <dec_id>", "with --apply, rewrite only this decision id — everything else stays queued untouched")
-  .option("--drop <dec_id>", "clear this decision id from the queue for now, without applying it — a later detection may re-queue the same match if it still holds")
+  .option("--drop <dec_id>", "reject the queued match for this decision id, without applying it — tombstoned durably, so an identical future match for the same still-orphaned commit won't resurface (a genuinely different candidate still can)")
   .option("--from-hook", "invoked by the git post-merge hook")
   .option("--quiet", "minimal output")
   .option("--range <old..new>", "commit range to scan for replacement commits (default: ORIG_HEAD..HEAD)")
@@ -5022,6 +5022,15 @@ program
         writePendingRepairs(root, queue);
       };
 
+      // Tombstones for {id, from} pairings a human already rejected via
+      // --drop — durable across runs so detection re-deriving the identical
+      // match on a later merge doesn't re-queue what was already rejected.
+      let dropped = readDroppedRepairs(root);
+      const saveDropped = (next: readonly DroppedPair[]): void => {
+        dropped = [...next];
+        writeDroppedRepairs(root, dropped);
+      };
+
       // Prune only PROVEN-dead entries (deadRewrites: the decision is present
       // and demonstrably moved on/superseded/rejected) — never an id merely
       // absent from `decisions` right now, which can just mean this run
@@ -5054,15 +5063,26 @@ program
       // opportunistically (from the hook) worth anything: the match survives
       // past this process exiting and past ORIG_HEAD getting overwritten by the
       // next merge, so a human can confirm it later with `--apply` alone.
-      if (freshPlan.rewrites.length) save(mergeRewrites(freshPlan.rewrites, queue));
+      // A match whose {id, from} pairing was already tombstoned by an earlier
+      // --drop is filtered out first — the human already rejected exactly this
+      // still-orphaned commit, and a later merge re-deriving it independently
+      // isn't a reason to ask again.
+      const freshRewrites = withoutDropped(freshPlan.rewrites, dropped);
+      if (freshRewrites.length) save(mergeRewrites(freshRewrites, queue));
 
       if (opts.drop) {
         const before = queue.length;
+        const target = queue.find((r) => r.id === opts.drop);
         save(queue.filter((r) => r.id !== opts.drop));
+        // Tombstone only when something real was actually queued for this id —
+        // an id that was never queued has no {from} to record, and "nothing
+        // queued" is a usage-mistake signal that shouldn't quietly create a
+        // tombstone file.
+        if (target) saveDropped(addDropped([{ id: target.id, from: target.from }], dropped));
         if (!opts.quiet) {
           console.log(queue.length === before
             ? `Nothing queued or matched for "${opts.drop}" to drop.`
-            : `Dropped "${opts.drop}" from the queue.`);
+            : `Dropped "${opts.drop}" from the queue — the same match won't resurface on its own; a genuinely different candidate for this decision still can.`);
         }
         if (!opts.apply) return;
       }

@@ -99,7 +99,7 @@ export function commitRepairEscalations(queued: readonly CommitRewrite[], decisi
         decisionIds: [r.id],
         question: `${r.id}${title ? ` ("${title}")` : ""}'s commit is no longer reachable from HEAD (likely squash-merged away), and one newly-merged commit touches all its related files — apply the proposed replacement?`,
         detail: `${r.from} → ${r.to}`,
-        resolution: `hunch repair-provenance --apply --only ${r.id} to accept just this one, --drop ${r.id} to clear it from the queue for now (a later detection may re-queue the same match if it still holds), or leave it queued to decide later`,
+        resolution: `hunch repair-provenance --apply --only ${r.id} to accept just this one, --drop ${r.id} to reject it (tombstoned durably — this same match won't resurface, though a genuinely different candidate still can), or leave it queued to decide later`,
       };
     });
 }
