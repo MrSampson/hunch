@@ -269,7 +269,9 @@ test("repair-provenance: a dropped match doesn't resurface when the identical ra
   try {
     const detect = runCli(fixture.root, "repair-provenance", "--range", `${fixture.oldRef}..${fixture.newRef}`, "--quiet");
     assert.equal(detect.status, 0, detect.stderr);
-    assert.deepEqual(readQueue(fixture.root).map((r) => (r as { id: string }).id), ["dec_squash_fixture"], "detection queued the match");
+    const firstQueue = readQueue(fixture.root) as { id: string; from: string; to: string }[];
+    assert.deepEqual(firstQueue.map((r) => r.id), ["dec_squash_fixture"], "detection queued the match");
+    const matchedTo = firstQueue[0]!.to;
 
     const drop = runCli(fixture.root, "repair-provenance", "--drop", "dec_squash_fixture", "--quiet");
     assert.equal(drop.status, 0, drop.stderr);
@@ -277,10 +279,30 @@ test("repair-provenance: a dropped match doesn't resurface when the identical ra
 
     const redetect = runCli(fixture.root, "repair-provenance", "--range", `${fixture.oldRef}..${fixture.newRef}`, "--quiet");
     assert.equal(redetect.status, 0, redetect.stderr);
-    assert.deepEqual(readQueue(fixture.root), [], "the identical match must not resurface once its {id, from} pairing was dropped");
+    assert.deepEqual(readQueue(fixture.root), [], "the identical match must not resurface once its {id, from, to} triple was dropped");
 
-    const dropped = JSON.parse(readFileSync(join(fixture.root, ".hunch", "dropped-commit-repairs.json"), "utf8")) as { id: string; from: string }[];
-    assert.deepEqual(dropped, [{ id: "dec_squash_fixture", from: fixture.origCommit }]);
+    const dropped = JSON.parse(readFileSync(join(fixture.root, ".hunch", "dropped-commit-repairs.json"), "utf8")) as { id: string; from: string; to: string }[];
+    assert.deepEqual(dropped, [{ id: "dec_squash_fixture", from: fixture.origCommit, to: matchedTo }]);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance sweeps a tombstoned entry that lands in the queue by another path (e.g. a racing hook run), even without fresh detection", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    // Simulate the exact race the tombstone must survive: dec_a's {id, from, to}
+    // was already rejected once, but a concurrently-racing writer (the
+    // post-merge hook's backgrounded detection, which reads the queue/dropped
+    // files independently) re-added the identical entry to the queue afterward.
+    writeFileSync(
+      join(fixture.root, ".hunch", "dropped-commit-repairs.json"),
+      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: "sha_a_new" }], null, 2) + "\n",
+    );
+    const run = runCli(fixture.root, "repair-provenance", "--quiet");
+    assert.equal(run.status, 0, run.stderr);
+    const queue = readQueue(fixture.root) as { id: string }[];
+    assert.deepEqual(queue.map((r) => r.id), ["dec_b"], "the tombstoned entry is swept from the queue on load, regardless of how it got there");
   } finally {
     fixture.cleanup();
   }

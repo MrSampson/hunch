@@ -187,18 +187,24 @@ test("resolvedRewriteIds: a mix resolves only the visible ones", () => {
   assert.deepEqual(resolvedRewriteIds(toApply, decisions), new Set(["dec_visible"]));
 });
 
-test("withoutDropped: removes a fresh match whose {id, from} pairing was already tombstoned, regardless of `to`", () => {
+test("withoutDropped: removes a fresh match that exactly matches a tombstoned {id, from, to} triple", () => {
   const fresh = [
-    { id: "dec_dropped", from: "sha_old", to: "sha_candidate" },
+    { id: "dec_dropped", from: "sha_old", to: "sha_rejected" },
     { id: "dec_kept", from: "sha_old2", to: "sha_new2" },
   ];
-  const dropped = [{ id: "dec_dropped", from: "sha_old" }];
+  const dropped = [{ id: "dec_dropped", from: "sha_old", to: "sha_rejected" }];
   assert.deepEqual(withoutDropped(fresh, dropped), [{ id: "dec_kept", from: "sha_old2", to: "sha_new2" }]);
+});
+
+test("withoutDropped: a genuinely different `to` for the same {id, from} is a NEW proposal, not suppressed", () => {
+  const fresh = [{ id: "dec_1", from: "sha_orphaned", to: "sha_different_candidate" }];
+  const dropped = [{ id: "dec_1", from: "sha_orphaned", to: "sha_rejected_candidate" }];
+  assert.deepEqual(withoutDropped(fresh, dropped), fresh);
 });
 
 test("withoutDropped: a tombstone for a different `from` on the same id doesn't suppress an unrelated match", () => {
   const fresh = [{ id: "dec_1", from: "sha_current", to: "sha_new" }];
-  const dropped = [{ id: "dec_1", from: "sha_stale_other" }];
+  const dropped = [{ id: "dec_1", from: "sha_stale_other", to: "sha_new" }];
   assert.deepEqual(withoutDropped(fresh, dropped), fresh);
 });
 
@@ -207,16 +213,28 @@ test("withoutDropped: empty tombstone list is a no-op", () => {
   assert.deepEqual(withoutDropped(fresh, []), fresh);
 });
 
-test("addDropped: appends a newly-dropped {id, from} pairing", () => {
-  const existing = [{ id: "dec_old", from: "sha_a" }];
-  const newly = [{ id: "dec_new", from: "sha_b" }];
-  assert.deepEqual(addDropped(newly, existing), [{ id: "dec_old", from: "sha_a" }, { id: "dec_new", from: "sha_b" }]);
+test("addDropped: appends a newly-dropped {id, from, to} triple", () => {
+  const existing = [{ id: "dec_old", from: "sha_a", to: "sha_a2" }];
+  const newly = [{ id: "dec_new", from: "sha_b", to: "sha_b2" }];
+  assert.deepEqual(addDropped(newly, existing), [
+    { id: "dec_old", from: "sha_a", to: "sha_a2" },
+    { id: "dec_new", from: "sha_b", to: "sha_b2" },
+  ]);
 });
 
-test("addDropped: never duplicates an already-tombstoned {id, from} pairing", () => {
-  const existing = [{ id: "dec_1", from: "sha_a" }];
-  const newly = [{ id: "dec_1", from: "sha_a" }];
+test("addDropped: never duplicates an already-tombstoned exact triple", () => {
+  const existing = [{ id: "dec_1", from: "sha_a", to: "sha_a2" }];
+  const newly = [{ id: "dec_1", from: "sha_a", to: "sha_a2" }];
   assert.deepEqual(addDropped(newly, existing), existing);
+});
+
+test("addDropped: a different `to` for the same {id, from} is recorded as its OWN tombstone, not deduped away", () => {
+  const existing = [{ id: "dec_1", from: "sha_a", to: "sha_old_rejected" }];
+  const newly = [{ id: "dec_1", from: "sha_a", to: "sha_new_rejected" }];
+  assert.deepEqual(addDropped(newly, existing), [
+    { id: "dec_1", from: "sha_a", to: "sha_old_rejected" },
+    { id: "dec_1", from: "sha_a", to: "sha_new_rejected" },
+  ]);
 });
 
 test("deadRewrites: an entry whose PRESENT decision moved on, or is superseded/rejected, is dead", () => {

@@ -115,7 +115,7 @@ test("readDroppedRepairs: returns an empty array when the tombstone file doesn't
 test("writeDroppedRepairs then readDroppedRepairs round-trips exactly, in a file separate from the pending queue", () => {
   const { root, cleanup } = tmpRoot();
   try {
-    const dropped = [{ id: "dec_1", from: "sha_old" }];
+    const dropped = [{ id: "dec_1", from: "sha_old", to: "sha_rejected" }];
     writeDroppedRepairs(root, dropped);
     assert.deepEqual(readDroppedRepairs(root), dropped);
     assert.deepEqual(readPendingRepairs(root), [], "the tombstone file is independent of the pending queue file");
@@ -138,29 +138,31 @@ test("readDroppedRepairs: tolerant of a non-array JSON value — returns an empt
   } finally { cleanup(); }
 });
 
-test("readDroppedRepairs: filters out entries missing an id or from, keeps valid ones", () => {
+test("readDroppedRepairs: filters out entries missing an id, from, or to, keeps valid ones", () => {
   const { root, cleanup } = tmpRoot();
   try {
     writeFileSync(
       join(root, ".hunch", "dropped-commit-repairs.json"),
       JSON.stringify([
-        { id: "dec_1", from: "a" },
-        { id: "dec_no_from" },
-        { from: "b" },
-        { id: "", from: "c" },
-        { id: "dec_empty_from", from: "" },
+        { id: "dec_1", from: "a", to: "b" },
+        { id: "dec_no_from", to: "b" },
+        { from: "b", to: "c" },
+        { id: "dec_no_to", from: "a" },
+        { id: "", from: "c", to: "d" },
+        { id: "dec_empty_from", from: "", to: "d" },
+        { id: "dec_empty_to", from: "a", to: "" },
         "garbage",
         null,
       ]),
     );
-    assert.deepEqual(readDroppedRepairs(root), [{ id: "dec_1", from: "a" }]);
+    assert.deepEqual(readDroppedRepairs(root), [{ id: "dec_1", from: "a", to: "b" }]);
   } finally { cleanup(); }
 });
 
 test("writeDroppedRepairs([]) clears the tombstone file", () => {
   const { root, cleanup } = tmpRoot();
   try {
-    writeDroppedRepairs(root, [{ id: "dec_1", from: "a" }]);
+    writeDroppedRepairs(root, [{ id: "dec_1", from: "a", to: "b" }]);
     writeDroppedRepairs(root, []);
     assert.deepEqual(readDroppedRepairs(root), []);
   } finally { cleanup(); }

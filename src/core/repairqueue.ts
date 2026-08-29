@@ -9,15 +9,17 @@
  * later (`hunch repair-provenance --apply`) without losing it.
  *
  * `.hunch/dropped-commit-repairs.json` is the sibling tombstone file: a human
- * rejecting a queued match via `--drop` records the {id, from} pairing here,
- * durably, so detection re-deriving the identical match on a later merge
- * doesn't re-queue what was already rejected (see commitrepair.ts's
- * withoutDropped). Same local-only, gitignored discipline as the queue.
+ * rejecting a queued match via `--drop` records the exact {id, from, to}
+ * triple here, durably, so detection re-deriving the identical match on a
+ * later merge doesn't re-queue what was already rejected — a genuinely
+ * different replacement (`to`) for the same still-orphaned commit is a new
+ * proposal and still surfaces (see commitrepair.ts's withoutDropped). Same
+ * local-only, gitignored discipline as the queue.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "./io.js";
-import type { CommitRewrite, DroppedPair } from "./commitrepair.js";
+import type { CommitRewrite, DroppedRewrite } from "./commitrepair.js";
 
 function queuePath(root: string): string {
   return join(root, ".hunch", "pending-commit-repairs.json");
@@ -48,10 +50,12 @@ function isCommitRewrite(value: unknown): value is CommitRewrite {
     && to !== from;
 }
 
-function isDroppedPair(value: unknown): value is DroppedPair {
+function isDroppedRewrite(value: unknown): value is DroppedRewrite {
   if (!value || typeof value !== "object") return false;
-  const { id, from } = value as DroppedPair;
-  return typeof id === "string" && !!id && typeof from === "string" && !!from;
+  const { id, from, to } = value as DroppedRewrite;
+  return typeof id === "string" && !!id
+    && typeof from === "string" && !!from
+    && typeof to === "string" && !!to;
 }
 
 /** Tolerant read: a missing or corrupt queue file is treated as empty — this
@@ -72,17 +76,17 @@ export function writePendingRepairs(root: string, rewrites: readonly CommitRewri
 }
 
 /** Tolerant read, same discipline as readPendingRepairs. */
-export function readDroppedRepairs(root: string): DroppedPair[] {
+export function readDroppedRepairs(root: string): DroppedRewrite[] {
   const path = droppedPath(root);
   if (!existsSync(path)) return [];
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-    return Array.isArray(parsed) ? parsed.filter(isDroppedPair) : [];
+    return Array.isArray(parsed) ? parsed.filter(isDroppedRewrite) : [];
   } catch {
     return [];
   }
 }
 
-export function writeDroppedRepairs(root: string, dropped: readonly DroppedPair[]): void {
+export function writeDroppedRepairs(root: string, dropped: readonly DroppedRewrite[]): void {
   writeFileAtomic(droppedPath(root), JSON.stringify(dropped, null, 2) + "\n");
 }
