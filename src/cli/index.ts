@@ -43,7 +43,7 @@ import { isGitRepo, isGitRepoRoot, sameGitPublication, sameRemoteUrl, canonicalR
 import { parseMemoryLog, type MemoryMove } from "../core/memorylog.js";
 import { renamesOf, planRepair, repairDecision, repairConstraint, type RepairPlan } from "../core/repair.js";
 import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites, deadRewrites, resolvedRewriteIds, withoutDropped, addDropped, withheldForUnresolvableTo, type CommitRewrite, type DroppedRewrite } from "../core/commitrepair.js";
-import { readPendingRepairs, writePendingRepairs, readDroppedRepairs, writeDroppedRepairs, readActivePendingRepairs } from "../core/repairqueue.js";
+import { readPendingRepairs, writePendingRepairs, readDroppedRepairs, writeDroppedRepairs, readActivePendingRepairs, withheldRewriteIds } from "../core/repairqueue.js";
 import { planPolicyRepair, repairPolicySpec, type PolicyBindingRewrite } from "../constitution/repairPolicies.js";
 import { writeTeamConfig, ensureTeamOverlay, readTeamConfig, safeGitUrl, safeTeamRef, overlayMatchesTeamRemote, advertisedTeamRemoteContract, boundedTeamGitEnv, cloneValidatedTeamOverlay, explicitTeamRemoteContract, teamRemoteContract } from "../integrations/team.js";
 import { runbookId, decisionId } from "../core/ids.js";
@@ -4192,7 +4192,8 @@ program
           // `hunch repair-provenance` (which reads the full store), so it
           // must not go silently unanswerable just because its title stays
           // out of session transcripts. Only the id and commit shas surface.
-          escalations.push(...commitRepairEscalations(readActivePendingRepairs(paths.root), decisions, s.recs("decisions")));
+          const sessionStartQueue = readActivePendingRepairs(paths.root);
+          escalations.push(...commitRepairEscalations(sessionStartQueue, decisions, s.recs("decisions"), withheldRewriteIds(paths.root, sessionStartQueue)));
           try {
             // Constitution human moments ride the same line; a broken policy store
             // must never take session-start orientation down (fail open). Public
@@ -4835,7 +4836,8 @@ program
       // Premise decay rides the same inline surface: a decision whose recorded
       // reason died is a QUESTION for the human — authority never changes here.
       items.push(...premiseEscalations(decisionsForEsc, { now: new Date().toISOString(), exists: (p) => existsSync(join(root, p)) }));
-      items.push(...commitRepairEscalations(readActivePendingRepairs(root), decisionsForEsc));
+      const escalationsQueue = readActivePendingRepairs(root);
+      items.push(...commitRepairEscalations(escalationsQueue, decisionsForEsc, decisionsForEsc, withheldRewriteIds(root, escalationsQueue)));
       // Constitution moments ride the same inline surface (§59.5.3) — never a queue.
       // Fail open: a broken policy store must not take the memory escalations down.
       try {

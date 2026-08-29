@@ -19,7 +19,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "./io.js";
-import { withoutDropped, type CommitRewrite, type DroppedRewrite } from "./commitrepair.js";
+import { withoutDropped, withheldForUnresolvableTo, type CommitRewrite, type DroppedRewrite } from "./commitrepair.js";
+import { commitsExist } from "../extractors/git.js";
 
 function queuePath(root: string): string {
   return join(root, ".hunch", "pending-commit-repairs.json");
@@ -110,4 +111,19 @@ export function writeDroppedRepairs(root: string, dropped: readonly DroppedRewri
  *  re-surfaces as if the human never answered it. */
 export function readActivePendingRepairs(root: string): CommitRewrite[] {
   return withoutDropped(readPendingRepairs(root), readDroppedRepairs(root));
+}
+
+/** Ids of `queued` entries whose proposed `to` doesn't resolve to a real
+ *  commit in this repository — the same withheldForUnresolvableTo gate
+ *  `repair-provenance --apply` itself runs before writing, surfaced here so
+ *  a READ-ONLY consumer (hunch escalations, hunch_now/hunch_escalations,
+ *  SessionStart orientation) can tell a permanently-stuck entry apart from
+ *  one `--apply` can still resolve, instead of advertising a
+ *  `--apply --only <id>` that's guaranteed to no-op forever. `null` from
+ *  commitsExist (the check itself failed to run) is treated as fail-open —
+ *  same discipline as the apply path — so nothing is misreported as
+ *  withheld just because the check couldn't run. */
+export function withheldRewriteIds(root: string, queued: readonly CommitRewrite[]): Set<string> {
+  const existing = commitsExist(queued.map((r) => r.to), root);
+  return new Set(withheldForUnresolvableTo(queued, existing).withheld.map((r) => r.id));
 }

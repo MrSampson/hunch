@@ -131,3 +131,43 @@ test("commitRepairEscalations: without a third argument, liveness still defaults
   assert.equal(items.length, 1);
   assert.match(items[0]!.question, /Add the feature/);
 });
+
+test("commitRepairEscalations: without a fourth argument, no entry is treated as withheld (backward compatible)", () => {
+  const decs = [D({ id: "dec_1", title: "Add the feature", commit: "sha_old" })];
+  const items = commitRepairEscalations([{ id: "dec_1", from: "sha_old", to: "sha_new" }], decs);
+  assert.match(items[0]!.resolution, /--apply --only dec_1 to accept/);
+});
+
+test("commitRepairEscalations: a withheld entry (its `to` doesn't resolve here) still asks, but never advertises --apply --only as a working resolution", () => {
+  const decs = [D({ id: "dec_1", title: "Add the feature", commit: "sha_old" })];
+  const items = commitRepairEscalations(
+    [{ id: "dec_1", from: "sha_old", to: "sha_ghost" }],
+    decs,
+    decs,
+    new Set(["dec_1"]),
+  );
+  assert.equal(items.length, 1, "a withheld entry still needs a human — it still escalates");
+  assert.equal(items[0]!.kind, "commit-repair-pending");
+  assert.match(items[0]!.question, /doesn't resolve in this repository/);
+  assert.match(items[0]!.question, /reject it\?/);
+  assert.doesNotMatch(items[0]!.resolution, /--apply --only dec_1 to accept/, "must never advertise an action that's guaranteed to no-op forever");
+  assert.match(items[0]!.resolution, /--drop dec_1/, "the only working resolution — --drop — must still be named");
+});
+
+test("commitRepairEscalations: withheldIds is keyed by id, so an untouched sibling in the same batch keeps the ordinary (apply-works) wording", () => {
+  const decs = [
+    D({ id: "dec_a", title: "Decision A", commit: "sha_a_old" }),
+    D({ id: "dec_b", title: "Decision B", commit: "sha_b_old" }),
+  ];
+  const items = commitRepairEscalations(
+    [{ id: "dec_a", from: "sha_a_old", to: "sha_ghost" }, { id: "dec_b", from: "sha_b_old", to: "sha_b_new" }],
+    decs,
+    decs,
+    new Set(["dec_a"]),
+  );
+  const forA = items.find((i) => i.decisionIds.includes("dec_a"))!;
+  const forB = items.find((i) => i.decisionIds.includes("dec_b"))!;
+  assert.match(forA.question, /doesn't resolve in this repository/);
+  assert.doesNotMatch(forB.question, /doesn't resolve in this repository/, "dec_b was never withheld — must not inherit dec_a's wording");
+  assert.match(forB.resolution, /--apply --only dec_b to accept/);
+});
