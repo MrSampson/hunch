@@ -188,7 +188,15 @@ export function mergeRewrites(fresh: readonly CommitRewrite[], queued: readonly 
  *  auto-committed into shared team memory. `withheld` entries must stay
  *  queued (never deleted, never passed to repairDecisionCommit) — the queue
  *  file is the one durable record of the match, same reasoning as
- *  deadRewrites/resolvedRewriteIds. */
+ *  deadRewrites/resolvedRewriteIds.
+ *
+ *  Both returned arrays preserve object identity (never clones or rebuilds
+ *  an entry) — the CLI's queue sweep and its "still queued" reporting both
+ *  key a `Set` off the exact objects in `withheld`, by reference, precisely
+ *  because a corrupted queue file can carry two entries sharing an id (one
+ *  resolvable, one not): an id alone can't tell them apart. Do not change
+ *  this to normalize or reconstruct entries without updating those call
+ *  sites too — same caveat withoutDropped's own docstring carries. */
 export function withheldForUnresolvableTo(toApply: readonly CommitRewrite[], existing: Set<string> | null): { applicable: CommitRewrite[]; withheld: CommitRewrite[] } {
   if (existing === null) return { applicable: [...toApply], withheld: [] };
   const applicable: CommitRewrite[] = [];

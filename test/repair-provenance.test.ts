@@ -771,6 +771,28 @@ test("repair-provenance --apply reports an invisible decision AND a withheld ent
   }
 });
 
+test("repair-provenance --apply classifies a SINGLE entry that is both invisible AND withheld as invisible only, matching the dry-run's own precedence, not both at once", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    rmSync(fixture.decisionFile("dec_a")); // invisible
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: "sha_a_ghost" }, { id: "dec_b", from: "sha_b_old", to: fixture.shaBNew }], null, 2) + "\n",
+    );
+    const dry = runCli(fixture.root, "repair-provenance");
+    assert.equal(dry.status, 0, dry.stderr);
+    assert.match(dry.stdout, /dec_a.*not visible this run/, "dry run classifies dec_a as invisible");
+    assert.doesNotMatch(dry.stdout, /dec_a.*doesn't resolve in this repository/, "dry run must not ALSO classify it as withheld — one reason per entry");
+
+    const run = runCli(fixture.root, "repair-provenance", "--apply", "--only", "dec_a");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /are visible this run.*dec_a/s, "apply agrees with the dry run: invisible, not withheld");
+    assert.doesNotMatch(run.stdout, /doesn't resolve in this repository/, "must not print the withheld message for an entry already classified as invisible — no contradictory 'won't self-heal' advice for a decision that might become visible again");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("repair-provenance --apply survives a corrupted queue with two entries sharing an id — the withheld sibling is never deleted or misreported as repaired (#48)", () => {
   const fixture = twoDecisionQueueFixture();
   try {
@@ -785,8 +807,14 @@ test("repair-provenance --apply survives a corrupted queue with two entries shar
         { id: "dec_a", from: "sha_a_old", to: "sha_a_ghost" },
       ], null, 2) + "\n",
     );
-    const run = runCli(fixture.root, "repair-provenance", "--apply", "--quiet");
+    // Deliberately NOT --quiet: a human reading the output must learn the
+    // withheld sibling is still there, not just find it surviving on disk —
+    // an id-keyed report (rather than the sweep's own object-keyed check)
+    // would see `dec_a` fully resolved and print nothing about it at all.
+    const run = runCli(fixture.root, "repair-provenance", "--apply");
     assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /Repaired 1 commit reference/);
+    assert.match(run.stdout, /doesn't resolve in this repository: dec_a/, "the withheld sibling must be reported as still queued, not silently dropped from the summary just because its sibling resolved");
 
     const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
     assert.equal(decA.commit, fixture.shaANew, "the resolvable sibling is applied");

@@ -39,11 +39,15 @@ function isCommitRewrite(value: unknown): value is CommitRewrite {
   // `d.commit === mine.from` guard already makes a garbage `from` inert (it
   // can never match a real decision). A garbage `to` is caught elsewhere,
   // not here: `hunch repair-provenance --apply` runs commitsExist against
-  // every queued `to` before repairDecisionCommit ever sees it, and leaves
-  // a non-resolving entry queued rather than applying it
-  // (withheldForUnresolvableTo, src/core/commitrepair.ts). This filter stays
-  // shape-only on purpose — the existence check needs a repository to run
-  // against, which this read-only queue loader doesn't have.
+  // every `to` it's actually about to act on (the whole queue, or just the
+  // one entry `--only <id>` targets) before repairDecisionCommit ever sees
+  // it, and leaves a non-resolving entry queued rather than applying it
+  // (withheldForUnresolvableTo, src/core/commitrepair.ts) — with the caveat
+  // that commitsExist itself fails OPEN if the check can't run at all (not a
+  // git repo, git missing, timeout), same as drift.ts's own use of it. This
+  // filter stays shape-only on purpose — the existence check needs a
+  // repository to run against, which this read-only queue loader doesn't
+  // have.
   return typeof id === "string" && !!id
     && typeof from === "string" && !!from
     && typeof to === "string" && !!to

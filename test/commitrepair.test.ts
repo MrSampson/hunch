@@ -295,3 +295,9 @@ test("withheldForUnresolvableTo: preserves object identity for applicable entrie
   const result = withheldForUnresolvableTo([entry], new Set(["sha_real"]));
   assert.equal(result.applicable[0], entry);
 });
+
+test("withheldForUnresolvableTo: preserves object identity for withheld entries too — the CLI's queue sweep keys a Set off these exact references to survive a duplicate-id corrupted queue", () => {
+  const entry = { id: "dec_1", from: "a", to: "sha_ghost" };
+  const result = withheldForUnresolvableTo([entry], new Set());
+  assert.equal(result.withheld[0], entry, "must be the SAME object reference, not an equal-but-rebuilt copy");
+});
