@@ -733,6 +733,71 @@ test("repair-provenance --apply (no --only) applies the resolvable entry and lea
   }
 });
 
+test("repair-provenance dry run marks a withheld entry distinctly from an invisible one, and the preview count matches what --apply can actually do (#48)", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: "sha_a_ghost" }, { id: "dec_b", from: "sha_b_old", to: fixture.shaBNew }], null, 2) + "\n",
+    );
+    const run = runCli(fixture.root, "repair-provenance");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /Would repair 1 of 2 listed/, "one of the two would be withheld, so the preview must not overclaim both are repairable");
+    assert.match(run.stdout, /dec_a.*doesn't resolve in this repository/, "dec_a's row is marked with the withheld reason");
+    assert.doesNotMatch(run.stdout, /dec_a.*not visible this run/, "dec_a's decision IS visible — must not be marked invisible");
+    assert.doesNotMatch(run.stdout, /dec_b.*doesn't resolve in this repository/, "dec_b's `to` DOES resolve — its row must not be marked withheld");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --apply reports an invisible decision AND a withheld entry together, not one masking the other (#48)", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    rmSync(fixture.decisionFile("dec_a")); // invisible: decision gone from this run's view
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([{ id: "dec_a", from: "sha_a_old", to: fixture.shaANew }, { id: "dec_b", from: "sha_b_old", to: "sha_b_ghost" }], null, 2) + "\n",
+    );
+    const run = runCli(fixture.root, "repair-provenance", "--apply");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /are visible this run.*dec_a/s, "the invisible reason must still name dec_a");
+    assert.match(run.stdout, /doesn't resolve in this repository.*dec_b/s, "the withheld reason must still name dec_b — must not be swallowed by the invisible branch");
+
+    const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string }[];
+    assert.deepEqual(queue.map((r) => r.id).sort(), ["dec_a", "dec_b"], "neither entry is deleted — nothing was actually applied");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --apply survives a corrupted queue with two entries sharing an id — the withheld sibling is never deleted or misreported as repaired (#48)", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    // Not a shape the write path ever produces itself — this is exactly the
+    // "corrupted queue file" scenario the existence check exists to defend
+    // against. Same id, same `from`, two different proposed `to`s: one real,
+    // one a ghost.
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaANew },
+        { id: "dec_a", from: "sha_a_old", to: "sha_a_ghost" },
+      ], null, 2) + "\n",
+    );
+    const run = runCli(fixture.root, "repair-provenance", "--apply", "--quiet");
+    assert.equal(run.status, 0, run.stderr);
+
+    const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
+    assert.equal(decA.commit, fixture.shaANew, "the resolvable sibling is applied");
+
+    const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string; to: string }[];
+    assert.deepEqual(queue, [{ id: "dec_a", from: "sha_a_old", to: "sha_a_ghost" }], "the withheld sibling survives in the queue — an id-keyed sweep must not delete it just because its sibling resolved");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("repair-provenance --from-hook is silent and exits 0 when there's no ORIG_HEAD to react to", () => {
   const root = mkdtempSync(join(tmpdir(), "hunch-squash-noop-"));
   try {

@@ -37,13 +37,13 @@ function isCommitRewrite(value: unknown): value is CommitRewrite {
   // Deliberately NOT a hex-shape check: from/to are opaque strings elsewhere
   // in this codebase's test fixtures, and repairDecisionCommit's own
   // `d.commit === mine.from` guard already makes a garbage `from` inert (it
-  // can never match a real decision). A garbage `to`, however, is NOT
-  // validated anywhere on the path that matters most — applying a queued
-  // entry with no fresh range to resolve against (the normal "confirm a
-  // match from an earlier run" case) never calls commitRepairStatus or
-  // commitsExist at all, so an untrustworthy `to` would be written straight
-  // into a decision's commit field and evidence. That gap is real and is
-  // tracked separately, not closed here.
+  // can never match a real decision). A garbage `to` is caught elsewhere,
+  // not here: `hunch repair-provenance --apply` runs commitsExist against
+  // every queued `to` before repairDecisionCommit ever sees it, and leaves
+  // a non-resolving entry queued rather than applying it
+  // (withheldForUnresolvableTo, src/core/commitrepair.ts). This filter stays
+  // shape-only on purpose — the existence check needs a repository to run
+  // against, which this read-only queue loader doesn't have.
   return typeof id === "string" && !!id
     && typeof from === "string" && !!from
     && typeof to === "string" && !!to
