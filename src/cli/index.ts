@@ -5114,8 +5114,13 @@ program
       // unrecognized.
       const onlyWasPruned = !!opts.only && deadEntries.some((r) => r.id === opts.only);
       if (deadEntries.length) {
-        const deadIds = new Set(deadEntries.map((r) => r.id));
-        save(queue.filter((r) => !deadIds.has(r.id)));
+        // Object identity, not id — a corrupted queue file can carry a dead
+        // entry and a still-live one sharing an id (#53); deadRewrites
+        // already preserves identity via a plain filter, so pruning by id
+        // here would destroy the live sibling right alongside its dead
+        // namesake instead of leaving it for repairDecisionCommit to apply.
+        const deadSet = new Set(deadEntries);
+        save(queue.filter((r) => !deadSet.has(r)));
         if (!opts.quiet) console.log(`Pruned ${deadEntries.length} dead queue entr${deadEntries.length === 1 ? "y" : "ies"} (decision moved on, has no commit on record, or was superseded/rejected): ${deadEntries.map((r) => r.id).join(", ")}`);
       }
 
@@ -5138,8 +5143,15 @@ program
 
       if (opts.drop) {
         const before = queue.length;
+        // `.find` is deliberately the same first-match-by-id rule pickRewrite
+        // uses to decide which same-id entry would actually apply (#53) — a
+        // corrupted queue file can carry two entries sharing an id, and
+        // dropping by id would destroy the untargeted sibling too, with no
+        // tombstone recording what it was. Filtering by object identity (not
+        // `r.id !== opts.drop`) removes only the one entry actually dropped;
+        // any other entry sharing the id is untouched and stays queued.
         const target = queue.find((r) => r.id === opts.drop);
-        save(queue.filter((r) => r.id !== opts.drop));
+        save(queue.filter((r) => r !== target));
         // Tombstone only when something real was actually queued for this id —
         // an id that was never queued has no {from, to} to record, and
         // "nothing queued" is a usage-mistake signal that shouldn't quietly
@@ -5346,8 +5358,11 @@ program
           // what "duplicate" means) — listing ids would just repeat one
           // value, so name the `to` each one proposed instead. No
           // `--drop <dec_id>` pointer, unlike the other two buckets: `--drop`
-          // is id-keyed and would remove every sibling sharing this id, not
-          // just this one (#53).
+          // targets the first queued match for an id (the same one
+          // pickRewrite would apply), which by now is the winning sibling
+          // that's already gone from the queue, not the losing one named
+          // here — pointing at `--drop <dec_id>` would read as an offer to
+          // reject this exact entry when it can't (#53).
           console.log(`\n${stillDuplicate.length} entr${stillDuplicate.length === 1 ? "y" : "ies"} left queued — a sibling entry for the same decision was applied instead (only the first queued match per decision is ever applied): ${stillDuplicate.map((r) => `${r.id} (${r.to})`).join(", ")}`);
         }
       }
