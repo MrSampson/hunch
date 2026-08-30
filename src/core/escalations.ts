@@ -20,7 +20,7 @@
  */
 import type { Decision } from "./types.js";
 import { topicCollisions } from "./topics.js";
-import { liveRewrites, type CommitRewrite } from "./commitrepair.js";
+import { liveRewrites, firstFor, type CommitRewrite } from "./commitrepair.js";
 import { importedAdrReviewHash, importedAdrSourceHash, pendingImportedAdrReviews } from "./importReview.js";
 
 export type EscalationKind = "topic-conflict" | "imported-adr-review" | "policy-candidate" | "policy-proposal" | "policy-repaired" | "premise-stale" | "commit-repair-pending";
@@ -111,6 +111,21 @@ export function commitRepairEscalations(queued: readonly CommitRewrite[], decisi
       const title = byId.get(r.id)?.title;
       const named = `${r.id}${title ? ` ("${title}")` : ""}`;
       const base = { kind: "commit-repair-pending" as const, topic: r.id, decisionIds: [r.id], detail: `${r.from} → ${r.to}` };
+      if (firstFor(queued, r.id) !== r) {
+        // A duplicate-id queue (corrupted file, hand edit, or a bug upstream —
+        // #53/#55/#56/#58): this entry shares its id with a sibling queued
+        // ahead of it. `--apply --only <id>`/`--drop <id>` both resolve to
+        // firstFor(queued, id) — the sibling, never this entry
+        // (src/core/commitrepair.ts) — so neither is actually actionable
+        // against what's shown here. Checked before withheld/ordinary below:
+        // it doesn't matter whether THIS entry's own `to` resolves, since
+        // acting on its id can't reach it either way (#59).
+        return {
+          ...base,
+          question: `${named} has a second queued replacement candidate (${r.from} → ${r.to}) sitting behind a sibling entry for the same decision — leave it queued until the sibling resolves?`,
+          resolution: `not directly actionable by id while the sibling is queued: \`hunch repair-provenance --apply\`/\`--drop ${r.id}\` both act on the first-queued match for this id, never this one. Resolve the sibling first (apply it, or \`--drop ${r.id}\` to reject it) — once it's gone, this entry becomes the live match and can be accepted or rejected the normal way.`,
+        };
+      }
       if (withheld.has(r)) {
         return {
           ...base,
