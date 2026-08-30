@@ -20,7 +20,7 @@
  */
 import type { Decision } from "./types.js";
 import { topicCollisions } from "./topics.js";
-import { liveRewrites, firstFor, type CommitRewrite } from "./commitrepair.js";
+import { liveRewrites, deadRewrites, firstFor, type CommitRewrite } from "./commitrepair.js";
 import { importedAdrReviewHash, importedAdrSourceHash, pendingImportedAdrReviews } from "./importReview.js";
 
 export type EscalationKind = "topic-conflict" | "imported-adr-review" | "policy-candidate" | "policy-proposal" | "policy-repaired" | "premise-stale" | "commit-repair-pending";
@@ -106,24 +106,53 @@ export function pendingEscalations(decisions: readonly Decision[]): Escalation[]
  *  this function and withheldRewrites, so identity holds. */
 export function commitRepairEscalations(queued: readonly CommitRewrite[], decisions: readonly Decision[], live: readonly Decision[] = decisions, withheld: ReadonlySet<CommitRewrite> = new Set()): Escalation[] {
   const byId = new Map(decisions.map((d) => [d.id, d] as const));
+  // Mirrors the queue state --apply/--drop actually see (src/cli/index.ts): dead
+  // entries (deadRewrites) are pruned via `save()` before either command ever
+  // reads `queue`, so a duplicate-id check against the RAW `queued` array can
+  // name an entry that's already gone by the time a human acts (#59).
+  const deadSet = new Set(deadRewrites(queued, live));
+  const survivors = queued.filter((q) => !deadSet.has(q));
+  // What `--drop <id>` targets (src/cli/index.ts: `firstFor(queue, opts.drop)`
+  // on the post-prune queue) — --drop doesn't care whether an entry's `to`
+  // resolves, so a withheld entry can still be the drop target.
+  const dropTarget = (id: string): CommitRewrite | undefined => firstFor(survivors, id);
+  // What `--apply --only <id>` targets: its plan is built from
+  // withheldForUnresolvableTo's `applicable` half (src/cli/index.ts:
+  // `plan.rewrites = applicable`), which excludes withheld entries entirely —
+  // so the apply-target can differ from the drop-target when an earlier
+  // survivor for the same id is withheld.
+  const applyTarget = (id: string): CommitRewrite | undefined => survivors.find((q) => q.id === id && !withheld.has(q));
   return liveRewrites(queued, live)
     .map((r) => {
       const title = byId.get(r.id)?.title;
       const named = `${r.id}${title ? ` ("${title}")` : ""}`;
       const base = { kind: "commit-repair-pending" as const, topic: r.id, decisionIds: [r.id], detail: `${r.from} → ${r.to}` };
-      if (firstFor(queued, r.id) !== r) {
+      const isDropTarget = dropTarget(r.id) === r;
+      const isApplyTarget = applyTarget(r.id) === r;
+      if (!isDropTarget && !isApplyTarget) {
         // A duplicate-id queue (corrupted file, hand edit, or a bug upstream —
-        // #53/#55/#56/#58): this entry shares its id with a sibling queued
-        // ahead of it. `--apply --only <id>`/`--drop <id>` both resolve to
-        // firstFor(queued, id) — the sibling, never this entry
-        // (src/core/commitrepair.ts) — so neither is actually actionable
-        // against what's shown here. Checked before withheld/ordinary below:
-        // it doesn't matter whether THIS entry's own `to` resolves, since
-        // acting on its id can't reach it either way (#59).
+        // #53/#55/#56/#58): an earlier survivor for this id is what BOTH
+        // commands would act on, never this entry (#59). If this entry is
+        // itself withheld, say so too — that fact doesn't disappear just
+        // because it's also unreachable by id right now, and it means this
+        // entry stays drop-only even once it's next in line.
+        const alsoWithheld = withheld.has(r)
+          ? " — and its own proposed replacement doesn't resolve here either, so even once it's next in line it can only ever be dropped, never applied"
+          : "";
         return {
           ...base,
-          question: `${named} has a second queued replacement candidate (${r.from} → ${r.to}) sitting behind a sibling entry for the same decision — leave it queued until the sibling resolves?`,
-          resolution: `not directly actionable by id while the sibling is queued: \`hunch repair-provenance --apply\`/\`--drop ${r.id}\` both act on the first-queued match for this id, never this one. Resolve the sibling first (apply it, or \`--drop ${r.id}\` to reject it) — once it's gone, this entry becomes the live match and can be accepted or rejected the normal way.`,
+          question: `${named} has a further queued replacement candidate (${r.from} → ${r.to}) sitting behind another entry for the same decision — leave it queued for now?`,
+          resolution: `not directly actionable by id right now: \`hunch repair-provenance --apply --only ${r.id}\`/\`hunch repair-provenance --drop ${r.id}\` both act on an entry queued ahead of it, never this one${alsoWithheld}. Resolving that entry (apply or drop it) brings this one back into consideration on the next run.`,
+        };
+      }
+      if (!isDropTarget) {
+        // isApplyTarget is true here: this entry IS what --apply --only would
+        // apply, but an earlier, WITHHELD sibling for the same id sits ahead
+        // of it, so --drop <id> would tombstone that sibling instead (#59).
+        return {
+          ...base,
+          question: `${named}'s commit is no longer reachable from HEAD (likely squash-merged away), and one newly-merged commit touches all its related files — apply the proposed replacement?`,
+          resolution: `hunch repair-provenance --apply --only ${r.id} to accept just this one — but \`--drop ${r.id}\` won't reject THIS entry: an earlier queued sibling for the same id (whose own replacement doesn't resolve here) sits ahead of it and would be tombstoned instead.`,
         };
       }
       if (withheld.has(r)) {
