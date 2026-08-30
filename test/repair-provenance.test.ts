@@ -308,6 +308,39 @@ test("repair-provenance --drop removes one queued entry without applying anythin
   }
 });
 
+test("repair-provenance --drop <id> --apply in one invocation never applies an identical {id, from, to} sibling it just tombstoned (#53 follow-up)", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    // A corrupted queue file, or a hand edit, can carry two IDENTICAL
+    // entries for the same id. --drop's own object-identity fix (#53)
+    // removes and tombstones only the first one by reference — the second,
+    // duplicate-in-substance entry is still sitting in the queue this same
+    // invocation goes on to --apply, which would rewrite the exact triple
+    // the human just rejected in the same command.
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaANew },
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaANew },
+      ], null, 2) + "\n",
+    );
+
+    const run = runCli(fixture.root, "repair-provenance", "--drop", "dec_a", "--apply", "--quiet");
+    assert.equal(run.status, 0, run.stderr);
+
+    const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
+    assert.equal(decA.commit, "sha_a_old", "the rejected rewrite must never be applied, even by an identical sibling in the same run");
+
+    const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string }[];
+    assert.deepEqual(queue, [], "the tombstoned sibling must not survive in the queue either");
+
+    const dropped = JSON.parse(readFileSync(join(fixture.root, ".hunch", "dropped-commit-repairs.json"), "utf8")) as { id: string; from: string; to: string }[];
+    assert.deepEqual(dropped, [{ id: "dec_a", from: "sha_a_old", to: fixture.shaANew }], "the tombstone is written exactly once, not duplicated for the swept sibling");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("repair-provenance --drop <id> on a duplicate-id queue only removes the entry that would actually apply, leaving the untargeted sibling queued and tombstoning just the one dropped (#53)", () => {
   const fixture = twoDecisionQueueFixture();
   try {

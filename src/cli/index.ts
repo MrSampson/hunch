@@ -5156,7 +5156,17 @@ program
         // an id that was never queued has no {from, to} to record, and
         // "nothing queued" is a usage-mistake signal that shouldn't quietly
         // create a tombstone file.
-        if (target) saveDropped(addDropped([{ id: target.id, from: target.from, to: target.to }], dropped));
+        if (target) {
+          saveDropped(addDropped([{ id: target.id, from: target.from, to: target.to }], dropped));
+          // An identical {id, from, to} sibling (a corrupted queue file, a
+          // hand edit) is now tombstoned but still sitting in the queue this
+          // run just saved above — the load-time sweep near the top of this
+          // action already promises the queue file can never carry a
+          // tombstoned entry, so re-run it here. Without this, --apply later
+          // in this same invocation would happily write the exact rewrite
+          // the human just rejected (#53 follow-up).
+          save(withoutDropped(queue, dropped));
+        }
         if (!opts.quiet) {
           console.log(queue.length === before
             ? `Nothing queued or matched for "${opts.drop}" to drop.`
