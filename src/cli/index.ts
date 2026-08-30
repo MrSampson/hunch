@@ -42,7 +42,7 @@ import {
 import { isGitRepo, isGitRepoRoot, sameGitPublication, sameRemoteUrl, canonicalRemoteUrl, repositoryUsesRemote, headSha, isolatedHeadSha, logSince, lastChangeDate, firstCommitForFile, stagedFiles, workingFiles, commitFiles, asOfDate, stagedDiff, workingDiff, commitDiff, rangeFiles, rangeDiff, rangeSubjects, revExists, revParse, commitAndPushHunch, pullHunchStatus, syncExistingHunch, gitUntrackCached, gitCommonDir, hooksDir, isLinkedWorktree, mainWorktreeRoot, gitMemoryLog, memoryMoveDiff, revertMemoryMove, pushCurrentBranch, commitChanges, commitRepairStatus, mergeRangeChanges, commitsExist, type HunchPullStatus } from "../extractors/git.js";
 import { parseMemoryLog, type MemoryMove } from "../core/memorylog.js";
 import { renamesOf, planRepair, repairDecision, repairConstraint, type RepairPlan } from "../core/repair.js";
-import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites, deadRewrites, resolvedRewriteIds, withoutDropped, addDropped, withheldForUnresolvableTo, type CommitRewrite, type DroppedRewrite } from "../core/commitrepair.js";
+import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, pickRewrite, mergeRewrites, deadRewrites, resolvedRewriteIds, withoutDropped, addDropped, withheldForUnresolvableTo, type CommitRewrite, type DroppedRewrite } from "../core/commitrepair.js";
 import { readPendingRepairs, writePendingRepairs, readDroppedRepairs, writeDroppedRepairs, readActivePendingRepairs, withheldRewrites } from "../core/repairqueue.js";
 import { planPolicyRepair, repairPolicySpec, type PolicyBindingRewrite } from "../constitution/repairPolicies.js";
 import { writeTeamConfig, ensureTeamOverlay, readTeamConfig, safeGitUrl, safeTeamRef, overlayMatchesTeamRemote, advertisedTeamRemoteContract, boundedTeamGitEnv, cloneValidatedTeamOverlay, explicitTeamRemoteContract, teamRemoteContract } from "../integrations/team.js";
@@ -5180,19 +5180,42 @@ program
       const existingTargets = commitsExist(toApply.map((r) => r.to), root);
       const { applicable, withheld } = withheldForUnresolvableTo(toApply, existingTargets);
       const withheldSet = new Set(withheld);
+      // The plan --apply would act on if it ran right now — built here, before
+      // the dry-run branch, so the preview reasons about the exact same plan
+      // repairDecisionCommit would. `pickRewrite` (src/core/commitrepair.ts) is
+      // the one place that decides which entry wins when `applicable` carries
+      // two sharing a decision id (a corrupted queue file, a hand edit): first
+      // match, by construction. `wasChosen` asks that same question by object
+      // identity rather than re-deriving it, so this file and commitrepair.ts
+      // can never independently drift on which entry "won" (#51).
+      const plan = { rewrites: applicable, records: [...new Set(applicable.map((r) => r.id))] };
+      const applicableSet = new Set(applicable);
+      const wasChosen = (r: CommitRewrite): boolean => pickRewrite(plan, r.id) === r;
       // Whether an entry will still be sitting in the queue after this run,
       // and why — computed ONCE and shared by the dry-run preview, the queue
       // sweep, and the post-apply "left queued" report, so the three can
       // never independently drift out of sync about the same entry (they
-      // did, twice, across two review rounds, before this was unified).
-      // Invisible takes precedence over withheld when an entry is somehow
-      // both: of the two, only invisibility can resolve itself once a later
-      // run can see the decision again — a `to` that doesn't exist here
-      // never starts existing on its own, so withheld is the more useful
-      // label whenever it's the ONLY reason, but must not eclipse a
-      // genuinely invisible decision.
-      const reasonQueued = (r: CommitRewrite): "invisible" | "withheld" | null =>
-        !visibleIds.has(r.id) ? "invisible" : withheldSet.has(r) ? "withheld" : null;
+      // did, twice, across two review rounds, before this was unified). The
+      // sweep walks the FULL `queue`, not just `toApply` — under --only, an
+      // untargeted id's entries never entered `applicable` at all, so
+      // `wasChosen` would read "not chosen" for them too. Gating "duplicate"
+      // on `applicableSet.has(r)` keeps the label meaning what it says: a
+      // SIBLING actually competed for this exact id and lost, not merely
+      // "this id wasn't this run's `applicable` set for some other reason."
+      //
+      // Precedence, most to least eclipsing: invisible, then withheld, then
+      // duplicate. Invisible and withheld can each resolve on their own (a
+      // later run sees the decision, or its `to` starts existing) or never
+      // will (withheld, permanently, unless dropped) — "duplicate" is neither:
+      // it means a SIBLING entry for the same id already won and got applied,
+      // which repairDecisionCommit's own from-mismatch bail already makes true
+      // by the time anything downstream would check it, so it's only worth
+      // naming for entries that are otherwise resolvable.
+      const reasonQueued = (r: CommitRewrite): "invisible" | "withheld" | "duplicate" | null =>
+        !visibleIds.has(r.id) ? "invisible"
+          : withheldSet.has(r) ? "withheld"
+          : applicableSet.has(r) && !wasChosen(r) ? "duplicate"
+          : null;
       const staysQueued = (r: CommitRewrite): boolean => reasonQueued(r) !== null;
 
       if (!opts.apply) {
@@ -5205,6 +5228,7 @@ program
             const reason = reasonQueued(r);
             const label = reason === "invisible" ? "not visible this run — --apply would leave it queued"
               : reason === "withheld" ? "proposed replacement commit doesn't resolve in this repository — --apply would leave it queued"
+              : reason === "duplicate" ? "another queued entry for this same decision would be applied instead — --apply would leave this one queued"
               : null;
             console.log(`  ${r.id}  ${r.from} → ${r.to}${label ? `  (${label})` : ""}`);
           }
@@ -5213,7 +5237,6 @@ program
         return;
       }
 
-      const plan = { rewrites: applicable, records: [...new Set(applicable.map((r) => r.id))] };
       const touchedHomes = new Set<MemoryHome>();
       const appliedIds = new Set<string>();
       for (const d of decisions) {
@@ -5225,21 +5248,23 @@ program
         appliedIds.add(d.id);
       }
       // Only a candidate whose decision was actually VISIBLE this run AND
-      // whose `to` resolved in this repository is resolved (applied, or
-      // found stale by repairDecisionCommit's own from-mismatch bail) —
-      // resolvedRewriteIds shares deadRewrites' own reasoning: an id we
-      // could not see this run, or whose replacement doesn't exist, is not
-      // proof of anything, so it stays queued rather than being swept up
-      // just because it was in `toApply`. This also covers --only: toApply
-      // is just the one targeted id, so an invisible or unresolvable target
-      // is left queued instead of deleted unresolved.
+      // whose `to` resolved in this repository AND wasn't beaten out by a
+      // same-id sibling is resolved (applied, or found stale by
+      // repairDecisionCommit's own from-mismatch bail) — resolvedRewriteIds
+      // shares deadRewrites' own reasoning: an id we could not see this run,
+      // or whose replacement doesn't exist, is not proof of anything, so it
+      // stays queued rather than being swept up just because it was in
+      // `toApply`. This also covers --only: toApply is just the one targeted
+      // id, so an invisible, unresolvable, or beaten-out target is left
+      // queued instead of deleted unresolved.
       //
-      // `staysQueued` (OBJECT identity for the withheld half, via
-      // `withheldSet.has(r)`) is OR'd in ahead of the id-keyed
-      // `!resolvedIds.has(r.id)`: a corrupted queue file could carry two
-      // entries sharing an id (one resolvable, one not) — an id-keyed check
-      // alone would treat the pair as one unit and delete/misreport the
-      // withheld sibling just because the other one resolved.
+      // `staysQueued` (OBJECT identity for both the withheld half, via
+      // `withheldSet.has(r)`, and the duplicate half, via `wasChosen`) is
+      // OR'd in ahead of the id-keyed `!resolvedIds.has(r.id)`: a corrupted
+      // queue file could carry two entries sharing an id — one resolvable,
+      // one not, or both resolvable — and an id-keyed check alone would treat
+      // the pair as one unit, deleting/misreporting whichever entry didn't
+      // actually get applied (#48, #51).
       const resolvedIds = resolvedRewriteIds(applicable, decisions);
       save(queue.filter((r) => staysQueued(r) || !resolvedIds.has(r.id)));
       if (!appliedIds.size) {
@@ -5270,15 +5295,29 @@ program
       pumpMemoryHomes(store, root, touchedHomes, `hunch: repair ${appliedIds.size} commit reference(s) after squash-merge (${rangeLabel})`);
       if (!opts.quiet) {
         console.log(`✓ Repaired ${appliedIds.size} commit reference(s):`);
-        for (const r of applicable) if (appliedIds.has(r.id)) console.log(`  ${r.id}  ${r.from} → ${r.to}`);
+        // `wasChosen` restricts this to the one entry per id that
+        // repairDecisionCommit actually wrote — `appliedIds` alone is keyed by
+        // decision id, so without it a same-id sibling that never got written
+        // would print here too (#51).
+        for (const r of applicable) if (appliedIds.has(r.id) && wasChosen(r)) console.log(`  ${r.id}  ${r.from} → ${r.to}`);
         const stillQueued = toApply.filter((r) => staysQueued(r) || !resolvedIds.has(r.id));
         const stillInvisible = stillQueued.filter((r) => reasonQueued(r) === "invisible");
         const stillWithheld = stillQueued.filter((r) => reasonQueued(r) === "withheld");
+        const stillDuplicate = stillQueued.filter((r) => reasonQueued(r) === "duplicate");
         if (stillInvisible.length) {
           console.log(`\n${stillInvisible.length} entr${stillInvisible.length === 1 ? "y" : "ies"} not visible this run, left queued: ${stillInvisible.map((r) => r.id).join(", ")} — or \`hunch repair-provenance --drop <dec_id>\` if a decision is gone for good.`);
         }
         if (stillWithheld.length) {
           console.log(`\n${stillWithheld.length} entr${stillWithheld.length === 1 ? "y" : "ies"} left queued — the proposed replacement commit doesn't resolve in this repository: ${stillWithheld.map((r) => r.id).join(", ")} — \`hunch repair-provenance --drop <dec_id>\` to reject it.`);
+        }
+        if (stillDuplicate.length) {
+          // Every entry here shares its id with the sibling that won (that's
+          // what "duplicate" means) — listing ids would just repeat one
+          // value, so name the `to` each one proposed instead. No
+          // `--drop <dec_id>` pointer, unlike the other two buckets: `--drop`
+          // is id-keyed and would remove every sibling sharing this id, not
+          // just this one (#53).
+          console.log(`\n${stillDuplicate.length} entr${stillDuplicate.length === 1 ? "y" : "ies"} left queued — a sibling entry for the same decision was applied instead (only the first queued match per decision is ever applied): ${stillDuplicate.map((r) => `${r.id} (${r.to})`).join(", ")}`);
         }
       }
     } catch (err) {

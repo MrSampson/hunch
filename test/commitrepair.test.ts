@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, mergeRewrites, liveRewrites, deadRewrites, resolvedRewriteIds, withoutDropped, addDropped, withheldForUnresolvableTo } from "../src/core/commitrepair.js";
+import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, pickRewrite, mergeRewrites, liveRewrites, deadRewrites, resolvedRewriteIds, withoutDropped, addDropped, withheldForUnresolvableTo } from "../src/core/commitrepair.js";
 import type { Decision } from "../src/core/types.js";
 import type { CommitCandidate, CommitRepairStatus } from "../src/extractors/git.js";
 
@@ -111,6 +111,19 @@ test("repairDecisionCommit: bails atomically when the record's commit moved on s
   });
   const plan = { rewrites: [{ id: "dec_1", from: "sha_old", to: "sha_new" }], records: ["dec_1"] };
   assert.equal(repairDecisionCommit(d, plan), d);
+});
+
+test("pickRewrite: returns the first entry for a decision id, matching repairDecisionCommit's own pick when a plan carries same-id duplicates", () => {
+  const first = { id: "dec_1", from: "sha_old", to: "sha_new" };
+  const second = { id: "dec_1", from: "sha_old", to: "sha_other" };
+  const plan = { rewrites: [first, second], records: ["dec_1"] };
+  assert.equal(pickRewrite(plan, "dec_1"), first, "first match wins, by object identity");
+  assert.notEqual(pickRewrite(plan, "dec_1"), second);
+});
+
+test("pickRewrite: returns undefined when no entry matches the id", () => {
+  const plan = { rewrites: [{ id: "dec_other", from: "sha_a", to: "sha_b" }], records: ["dec_other"] };
+  assert.equal(pickRewrite(plan, "dec_1"), undefined);
 });
 
 test("mergeRewrites: a fresh match overrides a queued match for the same decision", () => {

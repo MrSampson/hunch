@@ -205,6 +205,20 @@ export function withheldForUnresolvableTo(toApply: readonly CommitRewrite[], exi
   return { applicable, withheld };
 }
 
+/** The one rule for which queued rewrite wins when a plan carries more than one
+ *  entry for the same decision id (a corrupted queue file, a hand edit, or a
+ *  bug upstream — planCommitRepair itself never produces this): first match,
+ *  by construction. repairDecisionCommit uses this to decide what to WRITE;
+ *  a caller that needs to know which entry WOULD be picked without writing
+ *  anything (the CLI's --apply summary and queue sweep) calls this same
+ *  function, so the two can never independently drift on which entry "won" —
+ *  this file's own duplicate-id queue handling has drifted between call
+ *  sites twice already (see withoutDropped's and withheldForUnresolvableTo's
+ *  own docstrings). */
+export function pickRewrite(plan: CommitRepairPlan, id: string): CommitRewrite | undefined {
+  return plan.rewrites.find((r) => r.id === id);
+}
+
 /** Pure: rewrite `commit` for one decision, and its matching `commit:<sha>`
  *  evidence entry too if one is present (replaceExact is a no-op when the
  *  evidence array never cited the old sha) — or return the same reference
@@ -212,7 +226,7 @@ export function withheldForUnresolvableTo(toApply: readonly CommitRewrite[], exi
  *  built (its commit no longer equals the plan's `from`), bail entirely
  *  rather than applying a now-stale match. */
 export function repairDecisionCommit(d: Decision, plan: CommitRepairPlan): Decision {
-  const mine = plan.rewrites.find((r) => r.id === d.id);
+  const mine = pickRewrite(plan, d.id);
   if (!mine || d.commit !== mine.from) return d;
   const evidence = replaceExact(d.provenance.evidence, `commit:${mine.from}`, `commit:${mine.to}`);
   return {
