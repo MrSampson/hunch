@@ -178,9 +178,13 @@ export function addDropped(newly: readonly DroppedRewrite[], existing: readonly 
  *  otherwise carry a SECOND entry sharing that id; overriding by id alone
  *  would silently destroy that still-queued sibling too, with no tombstone
  *  and no way to recover it, even though it was never the entry that would
- *  have been applied. Any such sibling is left queued and untouched — a
- *  later run's own fresh detection or an explicit --drop can still resolve
- *  it. */
+ *  have been applied. Any such sibling is left queued and untouched. It
+ *  converges on its own via the dead-entry prune (deadRewrites) once --apply
+ *  has moved the decision past the sibling's `from` — never via a later
+ *  fresh detection, which by this same first-match rule always overrides
+ *  the fresh entry sitting ahead of it, and never via a single --drop,
+ *  which targets that same first match; a second explicit --drop reaches
+ *  the sibling directly. */
 export function mergeRewrites(fresh: readonly CommitRewrite[], queued: readonly CommitRewrite[]): CommitRewrite[] {
   const overridden = new Set<CommitRewrite>();
   for (const r of fresh) {
