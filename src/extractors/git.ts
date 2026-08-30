@@ -1668,6 +1668,35 @@ export function isLinkedWorktree(cwd: string): boolean {
   return norm(own) !== norm(common);
 }
 
+/** Every worktree of this repo (the main checkout AND every linked one), as absolute
+ *  paths — parsed from `git worktree list --porcelain`. Named for what it returns, not
+ *  `linkedWorktreePaths`: unlike `isLinkedWorktree`, this deliberately includes the main
+ *  checkout, since callers need it for self-exclusion. Lets a write tool guess where an
+ *  auto-commit actually belongs when its own evidence (e.g. a decision's related_files)
+ *  doesn't exist at the resolved root but does exist in a sibling worktree (issue #54:
+ *  a caller working in a linked worktree that forgets to pass the cwd hint). Empty on
+ *  any error / non-repo. */
+export function worktreePaths(root: string): string[] {
+  const out = gitSafe(["worktree", "list", "--porcelain"], root);
+  if (!out) return [];
+  const paths: string[] = [];
+  for (const line of out.split("\n")) {
+    if (line.startsWith("worktree ")) paths.push(line.slice("worktree ".length).trim());
+  }
+  return paths;
+}
+
+/** True when `root`'s OWN history has ever tracked `file` at HEAD. Distinguishes an
+ *  ordinary delete/rename recorded correctly at the resolved root (the file is gone
+ *  here because THIS checkout removed it, and a sibling worktree that branched earlier
+ *  simply predates the change) from a genuine misroute (issue #54 review, C1: without
+ *  this check, deleting or renaming a related_files entry at the correct root was
+ *  itself read as evidence the write belonged in whichever sibling still had the old
+ *  path — refusing a correct write and pointing the caller at the wrong worktree). */
+export function pathKnownToHistory(root: string, file: string): boolean {
+  return !!gitSafe(["rev-list", "-n", "1", "HEAD", "--", file], root);
+}
+
 /** Current branch name (e.g. "main", "feat/x"), or "" in detached HEAD / non-repo.
  *  Stamped onto auto-captured decisions so branch-scoped work stays filterable. */
 export function currentBranch(cwd: string): string {

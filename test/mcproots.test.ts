@@ -11,7 +11,7 @@ import { ListRootsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { HunchStore } from "../src/store/hunchStore.js";
 import { decisionId } from "../src/core/ids.js";
 import { resolveActiveRoot } from "../src/mcp/roots.js";
-import { buildServerWithRootControl, wireClientRoots } from "../src/mcp/server.js";
+import { buildServerWithRootControl, wireClientRoots, misroutedWorktreeCandidates } from "../src/mcp/server.js";
 
 function git(root: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
@@ -47,6 +47,98 @@ function repoWithWorktree(): { root: string; worktree: string; cleanup: () => vo
     },
   };
 }
+
+function repoWithTwoWorktrees(): { root: string; worktreeA: string; worktreeB: string; cleanup: () => void } {
+  const root = repo();
+  const worktreeA = `${root}-wtA`;
+  const worktreeB = `${root}-wtB`;
+  git(root, "worktree", "add", "-q", "-b", "feature-a", worktreeA);
+  git(root, "worktree", "add", "-q", "-b", "feature-b", worktreeB);
+  return {
+    root,
+    worktreeA,
+    worktreeB,
+    cleanup: () => {
+      for (const wt of [worktreeA, worktreeB]) {
+        try { git(root, "worktree", "remove", "--force", wt); } catch { /* best effort */ }
+        try { rmSync(wt, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+      }
+      try { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+    },
+  };
+}
+
+test("misroutedWorktreeCandidates: direct unit coverage (issue #54 review, I2)", () => {
+  // No related_files: never suspicious, regardless of where anything lives.
+  {
+    const fixture = repoWithWorktree();
+    try {
+      assert.deepEqual(misroutedWorktreeCandidates(fixture.root, []), []);
+    } finally {
+      fixture.cleanup();
+    }
+  }
+  // related_files present at the root: not a misroute, whatever siblings hold.
+  {
+    const fixture = repoWithWorktree();
+    try {
+      assert.deepEqual(misroutedWorktreeCandidates(fixture.root, ["app.ts"]), []);
+    } finally {
+      fixture.cleanup();
+    }
+  }
+  // related_files absent everywhere: no plausible alternative, so not a misroute.
+  {
+    const fixture = repoWithWorktree();
+    try {
+      assert.deepEqual(misroutedWorktreeCandidates(fixture.root, ["never-existed.ts"]), []);
+    } finally {
+      fixture.cleanup();
+    }
+  }
+  // related_files absent at root but present in exactly one sibling: that sibling.
+  {
+    const fixture = repoWithWorktree();
+    writeFileSync(join(fixture.worktree, "only-there.ts"), "export const x = 1;\n");
+    try {
+      assert.deepEqual(misroutedWorktreeCandidates(fixture.root, ["only-there.ts"]), [fixture.worktree]);
+    } finally {
+      fixture.cleanup();
+    }
+  }
+  // related_files absent at root but present in TWO siblings: both, not a guess.
+  {
+    const fixture = repoWithTwoWorktrees();
+    writeFileSync(join(fixture.worktreeA, "shared.ts"), "export const a = 1;\n");
+    writeFileSync(join(fixture.worktreeB, "shared.ts"), "export const b = 1;\n");
+    try {
+      const candidates = misroutedWorktreeCandidates(fixture.root, ["shared.ts"]).sort();
+      assert.deepEqual(candidates, [fixture.worktreeA, fixture.worktreeB].sort());
+    } finally {
+      fixture.cleanup();
+    }
+  }
+  // related_files absent at root because THIS checkout deleted it: not a misroute,
+  // even though a sibling that branched before the delete still has it (issue #54
+  // review, C1 — the case a plain existence check can't tell apart from a real one).
+  {
+    const root = repo();
+    writeFileSync(join(root, "legacy.ts"), "export const legacy = 1;\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-qm", "add legacy.ts");
+    const worktree = `${root}-wt`;
+    git(root, "worktree", "add", "-q", "-b", "feature-roots", worktree);
+    git(root, "rm", "-q", "legacy.ts");
+    git(root, "commit", "-qm", "drop legacy.ts");
+    try {
+      assert.deepEqual(misroutedWorktreeCandidates(root, ["legacy.ts"]), []);
+    } finally {
+      try { git(root, "worktree", "remove", "--force", worktree); } catch { /* best effort */ }
+      try { rmSync(worktree, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+      try { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+    }
+  }
+});
 
 async function until(predicate: () => boolean, timeoutMs = 3_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -413,6 +505,154 @@ test("a cwd hint that would change roots is refused while another request is in 
 
   releaseSearch();
   await inFlight;
+});
+
+test("a capture about a file deleted at the resolved root is not treated as a misroute (issue #54 review, C1)", async (t) => {
+  const root = repo();
+  writeFileSync(join(root, "legacy.ts"), "export const legacy = 1;\n");
+  git(root, "add", "-A");
+  git(root, "commit", "-qm", "add legacy.ts");
+  const worktree = `${root}-wt`;
+  git(root, "worktree", "add", "-q", "-b", "feature-roots", worktree);
+  // Delete it at the root AFTER branching the worktree, so the worktree (which
+  // predates the delete) still has it on disk — the exact shape a plain
+  // existence check can't tell apart from a genuine misroute.
+  git(root, "rm", "-q", "legacy.ts");
+  git(root, "commit", "-qm", "drop legacy.ts");
+
+  const control = buildServerWithRootControl(root);
+  const client = new Client({ name: "misroute-delete-test", version: "0.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  t.after(async () => {
+    await client.close().catch(() => {});
+    await control.server.close().catch(() => {});
+    try { git(root, "worktree", "remove", "--force", worktree); } catch { /* best effort */ }
+    try { rmSync(worktree, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+    try { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+  });
+
+  await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
+
+  const title = "drop legacy module";
+  const result = await client.callTool({
+    name: "hunch_record_decision",
+    arguments: {
+      decision: { title, context: "removing dead code", decision: "Delete legacy.ts", related_files: ["legacy.ts"] },
+    },
+  }) as { isError?: boolean };
+
+  assert.equal(!!result.isError, false, "a decision about a file this checkout deleted itself must not be refused as a misroute");
+  const filename = `${decisionId(`manual:${title}`)}.json`;
+  assert.equal(existsSync(join(root, ".hunch", "decisions", filename)), true, "must land at the (correct) root, not be blocked");
+});
+
+test("a capture whose related_files only exist in a linked worktree is refused when no cwd hint was passed (issue #54)", async (t) => {
+  const fixture = repoWithWorktree();
+  writeFileSync(join(fixture.worktree, "worktree-only.ts"), "export const onlyHere = 1;\n");
+  const control = buildServerWithRootControl(fixture.root);
+  const client = new Client({ name: "misroute-guard-test", version: "0.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  t.after(async () => {
+    await client.close().catch(() => {});
+    await control.server.close().catch(() => {});
+    fixture.cleanup();
+  });
+
+  await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
+
+  const title = "misrouted capture";
+  const result = await client.callTool({
+    name: "hunch_record_decision",
+    arguments: {
+      decision: {
+        title,
+        context: "work done entirely in the linked worktree",
+        decision: "Change worktree-only.ts",
+        related_files: ["worktree-only.ts"],
+      },
+      // Deliberately no `cwd` — the exact failure mode reported in issue #54: a
+      // subagent working in its own worktree never supplies the hint.
+    },
+  }) as { content: Array<{ text: string }>; isError?: boolean };
+
+  assert.equal(result.isError, true, "should refuse rather than silently commit to the wrong root");
+  const text = result.content.map((c) => c.text ?? "").join("\n");
+  assert.ok(text.includes(fixture.worktree), `refusal should name the likely-correct worktree: ${text}`);
+  assert.ok(/cwd/.test(text), `refusal should tell the caller to pass cwd: ${text}`);
+
+  const filename = `${decisionId(`manual:${title}`)}.json`;
+  assert.equal(existsSync(join(fixture.root, ".hunch", "decisions", filename)), false, "must not land on the primary checkout");
+  assert.equal(existsSync(join(fixture.worktree, ".hunch", "decisions", filename)), false, "must not silently guess the worktree either — the caller must retry with cwd");
+});
+
+test("a capture whose related_files match TWO sibling worktrees names both instead of confidently guessing one", async (t) => {
+  const fixture = repoWithTwoWorktrees();
+  writeFileSync(join(fixture.worktreeA, "shared-name.ts"), "export const a = 1;\n");
+  writeFileSync(join(fixture.worktreeB, "shared-name.ts"), "export const b = 2;\n");
+  const control = buildServerWithRootControl(fixture.root);
+  const client = new Client({ name: "misroute-ambiguous-test", version: "0.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  t.after(async () => {
+    await client.close().catch(() => {});
+    await control.server.close().catch(() => {});
+    fixture.cleanup();
+  });
+
+  await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
+
+  const title = "ambiguous capture";
+  const result = await client.callTool({
+    name: "hunch_record_decision",
+    arguments: {
+      decision: {
+        title,
+        context: "matches two sibling worktrees",
+        decision: "Change shared-name.ts",
+        related_files: ["shared-name.ts"],
+      },
+    },
+  }) as { content: Array<{ text: string }>; isError?: boolean };
+
+  assert.equal(result.isError, true, "should still refuse rather than guess between two equally plausible worktrees");
+  const text = result.content.map((c) => c.text ?? "").join("\n");
+  assert.ok(text.includes(fixture.worktreeA), `refusal should name worktree A as a candidate: ${text}`);
+  assert.ok(text.includes(fixture.worktreeB), `refusal should name worktree B as a candidate: ${text}`);
+  assert.ok(!/cwd:"/.test(text), `refusal must not issue a single confident cwd directive when two candidates are equally plausible: ${text}`);
+
+  const filename = `${decisionId(`manual:${title}`)}.json`;
+  assert.equal(existsSync(join(fixture.root, ".hunch", "decisions", filename)), false);
+  assert.equal(existsSync(join(fixture.worktreeA, ".hunch", "decisions", filename)), false, "must not guess worktree A");
+  assert.equal(existsSync(join(fixture.worktreeB, ".hunch", "decisions", filename)), false, "must not guess worktree B");
+});
+
+test("a capture with related_files that don't exist in any worktree still succeeds (no false positive)", async (t) => {
+  const fixture = repoWithWorktree();
+  const control = buildServerWithRootControl(fixture.root);
+  const client = new Client({ name: "misroute-guard-negative-test", version: "0.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  t.after(async () => {
+    await client.close().catch(() => {});
+    await control.server.close().catch(() => {});
+    fixture.cleanup();
+  });
+
+  await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
+
+  const result = await client.callTool({
+    name: "hunch_record_decision",
+    arguments: {
+      decision: {
+        title: "future-file capture",
+        context: "decision precedes the file it will touch",
+        decision: "Plan to add not-yet-created.ts",
+        related_files: ["not-yet-created.ts"],
+      },
+    },
+  }) as { isError?: boolean };
+  assert.equal(!!result.isError, false, "no plausible alternate worktree means proceed as before");
+
+  const filename = `${decisionId("manual:future-file capture")}.json`;
+  assert.equal(existsSync(join(fixture.root, ".hunch", "decisions", filename)), true, "must actually land at root, not just avoid erroring");
 });
 
 test("a cwd hint that fails to activate (invalid team.json) reports the error and leaves the previous root active", async (t) => {
