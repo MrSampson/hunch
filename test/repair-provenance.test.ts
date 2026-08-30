@@ -951,13 +951,46 @@ test("repair-provenance --apply survives a corrupted queue with two entries shar
     const run = runCli(fixture.root, "repair-provenance", "--apply");
     assert.equal(run.status, 0, run.stderr);
     assert.match(run.stdout, /Repaired 1 commit reference/, "only the first sibling was actually applied");
-    assert.doesNotMatch(run.stdout, new RegExp(fixture.shaBNew), "the second, never-applied sibling must not be listed under 'Repaired'");
+    assert.doesNotMatch(run.stdout, new RegExp(`→ ${fixture.shaBNew}`), "the second, never-applied sibling must not be listed under 'Repaired'");
+    assert.match(run.stdout, new RegExp(`left queued — a sibling entry for the same decision was applied instead.*dec_a \\(${fixture.shaBNew}\\)`), "the never-applied sibling must be reported as still queued, not silently left in the file");
 
     const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
     assert.equal(decA.commit, fixture.shaANew, "the first sibling is the one actually written");
 
     const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string; to: string }[];
     assert.deepEqual(queue, [{ id: "dec_a", from: "sha_a_old", to: fixture.shaBNew }], "the never-applied second sibling stays queued, not swept just because its id resolved via the first");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance: a same-id duplicate self-heals on the next run once its winning sibling has been applied", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaANew },
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaBNew },
+      ], null, 2) + "\n",
+    );
+    const first = runCli(fixture.root, "repair-provenance", "--apply");
+    assert.equal(first.status, 0, first.stderr);
+    assert.match(first.stdout, /Repaired 1 commit reference/);
+
+    // The leftover sibling's `from` (sha_a_old) no longer matches dec_a's
+    // now-current commit (shaANew) — deadRewrites correctly prunes it as
+    // stale on the very next run, converging the queue to empty without a
+    // human needing to intervene.
+    const second = runCli(fixture.root, "repair-provenance", "--apply");
+    assert.equal(second.status, 0, second.stderr);
+    assert.match(second.stdout, /Pruned 1 dead queue entry/);
+
+    const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
+    assert.equal(decA.commit, fixture.shaANew, "final state: the winning sibling's rewrite, unchanged since run 1");
+
+    const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8"));
+    assert.deepEqual(queue, [], "the queue converges to empty on its own");
   } finally {
     fixture.cleanup();
   }

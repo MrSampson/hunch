@@ -5189,12 +5189,20 @@ program
       // identity rather than re-deriving it, so this file and commitrepair.ts
       // can never independently drift on which entry "won" (#51).
       const plan = { rewrites: applicable, records: [...new Set(applicable.map((r) => r.id))] };
+      const applicableSet = new Set(applicable);
       const wasChosen = (r: CommitRewrite): boolean => pickRewrite(plan, r.id) === r;
       // Whether an entry will still be sitting in the queue after this run,
       // and why — computed ONCE and shared by the dry-run preview, the queue
       // sweep, and the post-apply "left queued" report, so the three can
       // never independently drift out of sync about the same entry (they
-      // did, twice, across two review rounds, before this was unified).
+      // did, twice, across two review rounds, before this was unified). The
+      // sweep walks the FULL `queue`, not just `toApply` — under --only, an
+      // untargeted id's entries never entered `applicable` at all, so
+      // `wasChosen` would read "not chosen" for them too. Gating "duplicate"
+      // on `applicableSet.has(r)` keeps the label meaning what it says: a
+      // SIBLING actually competed for this exact id and lost, not merely
+      // "this id wasn't this run's `applicable` set for some other reason."
+      //
       // Precedence, most to least eclipsing: invisible, then withheld, then
       // duplicate. Invisible and withheld can each resolve on their own (a
       // later run sees the decision, or its `to` starts existing) or never
@@ -5204,7 +5212,10 @@ program
       // by the time anything downstream would check it, so it's only worth
       // naming for entries that are otherwise resolvable.
       const reasonQueued = (r: CommitRewrite): "invisible" | "withheld" | "duplicate" | null =>
-        !visibleIds.has(r.id) ? "invisible" : withheldSet.has(r) ? "withheld" : !wasChosen(r) ? "duplicate" : null;
+        !visibleIds.has(r.id) ? "invisible"
+          : withheldSet.has(r) ? "withheld"
+          : applicableSet.has(r) && !wasChosen(r) ? "duplicate"
+          : null;
       const staysQueued = (r: CommitRewrite): boolean => reasonQueued(r) !== null;
 
       if (!opts.apply) {
@@ -5300,7 +5311,13 @@ program
           console.log(`\n${stillWithheld.length} entr${stillWithheld.length === 1 ? "y" : "ies"} left queued — the proposed replacement commit doesn't resolve in this repository: ${stillWithheld.map((r) => r.id).join(", ")} — \`hunch repair-provenance --drop <dec_id>\` to reject it.`);
         }
         if (stillDuplicate.length) {
-          console.log(`\n${stillDuplicate.length} entr${stillDuplicate.length === 1 ? "y" : "ies"} left queued — a sibling entry for the same decision id was applied instead (only the first queued match per decision is ever applied): ${stillDuplicate.map((r) => r.id).join(", ")}`);
+          // Every entry here shares its id with the sibling that won (that's
+          // what "duplicate" means) — listing ids would just repeat one
+          // value, so name the `to` each one proposed instead. No
+          // `--drop <dec_id>` pointer, unlike the other two buckets: `--drop`
+          // is id-keyed and would remove every sibling sharing this id, not
+          // just this one (#53).
+          console.log(`\n${stillDuplicate.length} entr${stillDuplicate.length === 1 ? "y" : "ies"} left queued — a sibling entry for the same decision was applied instead (only the first queued match per decision is ever applied): ${stillDuplicate.map((r) => `${r.id} (${r.to})`).join(", ")}`);
         }
       }
     } catch (err) {
