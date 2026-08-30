@@ -2,6 +2,64 @@
 
 ## Unreleased
 
+## 1.20.2 — 2026-08-29
+
+### Snapshot deletion is durable without risking source
+
+Private and shared memory sync now carries stale JSON record deletions after first proving that the
+memory overlay is a standalone Git repository distinct from the protected code repository. This
+closes the durability gap where a graph snapshot was correct on disk but an obsolete per-record
+component remained in remote history and left the local memory repository dirty.
+
+The boundary stays fail-closed: public-repository deletion, `local.json`, derived artifacts,
+non-JSON paths, copies, type changes, and anything outside the exact Hunch subtree are still
+refused. Snapshot ID churn is inspected as an exact add plus delete instead of trusting Git's
+heuristic rename presentation.
+
+## 1.20.1 — 2026-08-29
+
+### Reviewed landscapes stay current safely
+
+A reviewed Engineering Landscape can now be re-reviewed at a newer exact Git revision without
+weakening the no-overwrite guard. `hunch landscape adopt --all --refresh-reviewed` replays the prior
+full review from immutable history, proves the exact stored bytes and repository identity, and then
+replaces only those proven adoption records.
+
+Partial selections, hand edits, forged review IDs, missing history, same-revision conflicts, and
+foreign repositories remain fail-closed.
+
+## 1.20.0 — 2026-08-28
+
+### One verified memory path from reason to result
+
+Stable 1.20 promotes the complete release-candidate line to npm's `latest` channel. Reviewed
+repository landscapes and role-shaped context travel in Hunch's native, content-addressed delivery
+envelope; an exact code change can then be bound to later usefulness evidence without allowing that
+evidence to grant ranking, promotion, policy, or enforcement authority.
+
+PHP repositories and existing ADR corpora now enter the same graph and lifecycle model as the rest
+of the codebase. Bulk graph snapshots make that practical on production-sized repositories, while
+source, provenance, currentness, omissions, and review state remain explicit throughout delivery.
+
+### Assistant instructions now use the real context argument
+
+Generated grounding now documents `hunch_context(target)`, matching the MCP schema, so an agent can
+copy the signature without sending an invalid `target_or_task` argument. Existing managed grounding
+files self-heal on refresh. Fixed #95.
+
+### Config safety checks now cover config writers, not local Git hooks
+
+The raw-write guard remains blocking for the modules that merge user MCP, provider, and grounding
+configuration, but no longer flags the marker-based local Git hook installer. Fixed #94.
+
+### Shared decisions no longer disappear behind a transient pull backoff
+
+An already-running MCP process now rechecks shared team memory before claiming that an exact topic
+has no current decision. A transient Git failure may still leave known local decisions readable,
+but an unconfirmed miss is an explicit error rather than a false “never captured” answer; once the
+store recovers, the same client bypasses backoff and receives the teammate's decision without a
+restart.
+
 ## 1.20.0-rc.6 — 2026-08-28
 
 ### Delivery adapts to the work without changing authority
