@@ -145,6 +145,14 @@ test("mergeRewrites: empty inputs produce an empty result", () => {
   assert.deepEqual(mergeRewrites([], []), []);
 });
 
+test("mergeRewrites: a fresh match on a duplicate-id queue overrides only the entry pickRewrite would pick, leaving the untargeted sibling queued (#56)", () => {
+  const fresh = [{ id: "dec_1", from: "sha_old", to: "sha_fresh" }];
+  const first = { id: "dec_1", from: "sha_old", to: "sha_stale_1" };
+  const second = { id: "dec_1", from: "sha_old", to: "sha_stale_2" };
+  const queued = [first, second];
+  assert.deepEqual(mergeRewrites(fresh, queued), [fresh[0], second], "only the first-match sibling is overridden; the second survives untouched");
+});
+
 test("liveRewrites: drops an entry whose decision no longer exists or whose commit already moved on", () => {
   const decisions = [
     D({ id: "dec_current", commit: "sha_old" }),

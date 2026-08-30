@@ -166,13 +166,28 @@ export function addDropped(newly: readonly DroppedRewrite[], existing: readonly 
 }
 
 /** Combine a freshly-computed plan's rewrites with anything already queued
- *  (src/core/repairqueue.ts) from an earlier detection, deduped by decision id.
- *  A fresh match — computed just now, against the current range — overrides a
- *  queued one for the same decision; queued entries no longer reachable are
- *  simply not repeated by the fresh scan. */
+ *  (src/core/repairqueue.ts) from an earlier detection. A fresh match —
+ *  computed just now, against the current range — overrides a queued one for
+ *  the same decision; queued entries no longer reachable are simply not
+ *  repeated by the fresh scan.
+ *
+ *  Overrides by object identity, targeting exactly the one queued entry
+ *  pickRewrite would pick (first match by id) — same first-match-wins rule
+ *  --drop and the dead-entry prune already apply elsewhere in this command
+ *  (#53). A corrupted queue file, a hand edit, or a bug upstream could
+ *  otherwise carry a SECOND entry sharing that id; overriding by id alone
+ *  would silently destroy that still-queued sibling too, with no tombstone
+ *  and no way to recover it, even though it was never the entry that would
+ *  have been applied. Any such sibling is left queued and untouched — a
+ *  later run's own fresh detection or an explicit --drop can still resolve
+ *  it. */
 export function mergeRewrites(fresh: readonly CommitRewrite[], queued: readonly CommitRewrite[]): CommitRewrite[] {
-  const freshIds = new Set(fresh.map((r) => r.id));
-  return [...fresh, ...queued.filter((r) => !freshIds.has(r.id))];
+  const overridden = new Set<CommitRewrite>();
+  for (const r of fresh) {
+    const first = queued.find((q) => q.id === r.id);
+    if (first) overridden.add(first);
+  }
+  return [...fresh, ...queued.filter((r) => !overridden.has(r))];
 }
 
 /** Partition the entries --apply is about to act on by whether their proposed
