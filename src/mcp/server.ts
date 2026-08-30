@@ -18,7 +18,7 @@ import { decisionId, findingId } from "../core/ids.js";
 import { buildCorrectionConstraint } from "../core/correction.js";
 import { knownRepoDeps } from "../synthesis/tripwires.js";
 import { refreshExistingGrounding } from "../integrations/providers.js";
-import { revParse, asOfDate, revExists, lastChangeDate, rangeFiles, rangeDiff, commitFiles, commitDiff, stagedFiles, stagedDiff, workingFiles, workingDiff, pullHunchStatus, sameRemoteUrl, currentBranch, type HunchPullStatus } from "../extractors/git.js";
+import { revParse, asOfDate, revExists, lastChangeDate, rangeFiles, rangeDiff, commitFiles, commitDiff, stagedFiles, stagedDiff, workingFiles, workingDiff, pullHunchStatus, sameRemoteUrl, currentBranch, linkedWorktreePaths, type HunchPullStatus } from "../extractors/git.js";
 import { flushCapture, flushMemoryHome, pinSharedRemote } from "../integrations/sync.js";
 import { advertisedTeamRemoteContract, ensureTeamOverlay, overlayMatchesTeamRemote, readTeamConfig, teamRemoteContract, teamSharedRef } from "../integrations/team.js";
 import { formatStructure } from "../core/format.js";
@@ -151,6 +151,27 @@ const publicHomeNote = (
 const destinationNote = (destRoot: string): string => {
   const branch = currentBranch(destRoot);
   return ` [captured${branch ? ` on branch ${branch}` : ""} in ${destRoot}]`;
+};
+
+/** Issue #54: the #20/#66 cwd-hint fallback only helps when the CALLER remembers to
+ *  pass it — a subagent spawned straight into its own linked worktree has no reason
+ *  to think of the session's "starting directory" as different from its own, so the
+ *  hint is silently omitted and the write lands wherever `root` last was (often the
+ *  primary checkout, on its default branch). This is the last-resort backstop: when a
+ *  decision names related_files that don't exist at the resolved root but DO exist in
+ *  exactly the kind of place this bug lands them in — a sibling linked worktree — that
+ *  worktree is named as the corrected `cwd` and the write is refused rather than risked.
+ *  Silent when related_files is empty or when no sibling worktree does any better,
+ *  so a decision that legitimately precedes its code (no files yet) is unaffected. */
+const misroutedWorktreeHint = (root: string, relatedFiles: readonly string[]): string | null => {
+  if (!relatedFiles.length) return null;
+  if (relatedFiles.some((f) => existsSync(join(root, f)))) return null;
+  const here = canonicalRootPath(root);
+  for (const candidate of linkedWorktreePaths(root)) {
+    if (canonicalRootPath(candidate) === here) continue;
+    if (relatedFiles.some((f) => existsSync(join(candidate, f)))) return candidate;
+  }
+  return null;
 };
 
 /** Where a capture keyed to `home` actually lands: the private overlay directory when
@@ -1357,6 +1378,14 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
     },
     async ({ decision, capture_token }): Promise<ToolResult> => {
       try {
+        const misroute = misroutedWorktreeHint(root, (decision.related_files ?? []).map(toPosixTarget));
+        if (misroute) {
+          return err(
+            `Refusing to record "${decision.title}" in ${root}${currentBranch(root) ? ` (branch ${currentBranch(root)})` : ""}: ` +
+            `none of its related_files exist there, but they do in the linked worktree ${misroute}. This call is very likely ` +
+            `missing the cwd argument (issue #54) — retry with cwd:"${misroute}", or wherever this decision's work actually happened.`,
+          );
+        }
         // Commit-keyed on the CANONICAL full sha (resolved via git rev-parse), so a
         // human passing the short sha they see in `commit` produces the SAME id as
         // the auto-sync path (which keys on the full sha) — UPGRADING the auto-draft

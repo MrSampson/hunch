@@ -415,6 +415,72 @@ test("a cwd hint that would change roots is refused while another request is in 
   await inFlight;
 });
 
+test("a capture whose related_files only exist in a linked worktree is refused when no cwd hint was passed (issue #54)", async (t) => {
+  const fixture = repoWithWorktree();
+  writeFileSync(join(fixture.worktree, "worktree-only.ts"), "export const onlyHere = 1;\n");
+  const control = buildServerWithRootControl(fixture.root);
+  const client = new Client({ name: "misroute-guard-test", version: "0.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  t.after(async () => {
+    await client.close().catch(() => {});
+    await control.server.close().catch(() => {});
+    fixture.cleanup();
+  });
+
+  await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
+
+  const title = "misrouted capture";
+  const result = await client.callTool({
+    name: "hunch_record_decision",
+    arguments: {
+      decision: {
+        title,
+        context: "work done entirely in the linked worktree",
+        decision: "Change worktree-only.ts",
+        related_files: ["worktree-only.ts"],
+      },
+      // Deliberately no `cwd` — the exact failure mode reported in issue #54: a
+      // subagent working in its own worktree never supplies the hint.
+    },
+  }) as { content: Array<{ text: string }>; isError?: boolean };
+
+  assert.equal(result.isError, true, "should refuse rather than silently commit to the wrong root");
+  const text = result.content.map((c) => c.text ?? "").join("\n");
+  assert.ok(text.includes(fixture.worktree), `refusal should name the likely-correct worktree: ${text}`);
+  assert.ok(/cwd/.test(text), `refusal should tell the caller to pass cwd: ${text}`);
+
+  const filename = `${decisionId(`manual:${title}`)}.json`;
+  assert.equal(existsSync(join(fixture.root, ".hunch", "decisions", filename)), false, "must not land on the primary checkout");
+  assert.equal(existsSync(join(fixture.worktree, ".hunch", "decisions", filename)), false, "must not silently guess the worktree either — the caller must retry with cwd");
+});
+
+test("a capture with related_files that don't exist in any worktree still succeeds (no false positive)", async (t) => {
+  const fixture = repoWithWorktree();
+  const control = buildServerWithRootControl(fixture.root);
+  const client = new Client({ name: "misroute-guard-negative-test", version: "0.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  t.after(async () => {
+    await client.close().catch(() => {});
+    await control.server.close().catch(() => {});
+    fixture.cleanup();
+  });
+
+  await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
+
+  const result = await client.callTool({
+    name: "hunch_record_decision",
+    arguments: {
+      decision: {
+        title: "future-file capture",
+        context: "decision precedes the file it will touch",
+        decision: "Plan to add not-yet-created.ts",
+        related_files: ["not-yet-created.ts"],
+      },
+    },
+  }) as { isError?: boolean };
+  assert.equal(!!result.isError, false, "no plausible alternate worktree means proceed as before");
+});
+
 test("a cwd hint that fails to activate (invalid team.json) reports the error and leaves the previous root active", async (t) => {
   const fixture = repoWithWorktree();
   const invalid = repo("hunch-roots-invalid-team-cwd-");

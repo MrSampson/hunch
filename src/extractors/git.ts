@@ -1668,6 +1668,22 @@ export function isLinkedWorktree(cwd: string): boolean {
   return norm(own) !== norm(common);
 }
 
+/** Every worktree linked to this repo (including the one queried), as absolute paths —
+ *  parsed from `git worktree list --porcelain`. Lets a write tool guess where an
+ *  auto-commit actually belongs when its own evidence (e.g. a decision's related_files)
+ *  doesn't exist at the resolved root but does exist in a sibling worktree (issue #54:
+ *  a caller working in a linked worktree that forgets to pass the cwd hint). Empty on
+ *  any error / non-repo. */
+export function linkedWorktreePaths(root: string): string[] {
+  const out = gitSafe(["worktree", "list", "--porcelain"], root);
+  if (!out) return [];
+  const paths: string[] = [];
+  for (const line of out.split("\n")) {
+    if (line.startsWith("worktree ")) paths.push(line.slice("worktree ".length).trim());
+  }
+  return paths;
+}
+
 /** Current branch name (e.g. "main", "feat/x"), or "" in detached HEAD / non-repo.
  *  Stamped onto auto-captured decisions so branch-scoped work stays filterable. */
 export function currentBranch(cwd: string): string {
