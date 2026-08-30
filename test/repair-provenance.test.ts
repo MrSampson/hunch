@@ -963,6 +963,56 @@ test("repair-provenance --apply survives a corrupted queue with two entries shar
   }
 });
 
+test("repair-provenance dry run marks a same-id duplicate distinctly, and the preview count matches what --apply can actually do (#51)", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaANew },
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaBNew },
+      ], null, 2) + "\n",
+    );
+    const dry = runCli(fixture.root, "repair-provenance");
+    assert.equal(dry.status, 0, dry.stderr);
+    assert.match(dry.stdout, /Would repair 1 of 2 listed/, "one of the two duplicates would stay queued, so the preview must not overclaim both are repairable");
+    assert.match(dry.stdout, new RegExp(`dec_a.*${fixture.shaBNew}.*another queued entry`), "the second sibling's row is marked with the duplicate reason");
+    assert.doesNotMatch(dry.stdout, new RegExp(`dec_a.*${fixture.shaANew}.*another queued entry`), "the first (winning) sibling's row must not be marked duplicate");
+
+    const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
+    assert.equal(decA.commit, "sha_a_old", "dry run never writes anything");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --apply --only <id> targeting a same-id duplicate applies the first sibling and leaves the second queued (#51)", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaANew },
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaBNew },
+        { id: "dec_b", from: "sha_b_old", to: fixture.shaBNew },
+      ], null, 2) + "\n",
+    );
+    const run = runCli(fixture.root, "repair-provenance", "--apply", "--only", "dec_a");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /Repaired 1 commit reference/);
+
+    const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
+    assert.equal(decA.commit, fixture.shaANew, "the first dec_a sibling is applied");
+    const decB = JSON.parse(readFileSync(fixture.decisionFile("dec_b"), "utf8")) as Decision;
+    assert.equal(decB.commit, "sha_b_old", "dec_b is untouched — --only restricted the run to dec_a");
+
+    const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string; to: string }[];
+    assert.deepEqual(queue.map((r) => `${r.id}:${r.to}`).sort(), [`dec_a:${fixture.shaBNew}`, `dec_b:${fixture.shaBNew}`].sort(), "the never-applied dec_a sibling and the untargeted dec_b entry both survive in the queue");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("repair-provenance --from-hook is silent and exits 0 when there's no ORIG_HEAD to react to", () => {
   const root = mkdtempSync(join(tmpdir(), "hunch-squash-noop-"));
   try {
