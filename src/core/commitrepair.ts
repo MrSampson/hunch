@@ -172,19 +172,24 @@ export function addDropped(newly: readonly DroppedRewrite[], existing: readonly 
  *  repeated by the fresh scan.
  *
  *  Overrides by object identity, targeting exactly the one queued entry
- *  pickRewrite would pick (first match by id) — same first-match-wins rule
- *  --drop and the dead-entry prune already apply elsewhere in this command
- *  (#53). A corrupted queue file, a hand edit, or a bug upstream could
- *  otherwise carry a SECOND entry sharing that id; overriding by id alone
- *  would silently destroy that still-queued sibling too, with no tombstone
- *  and no way to recover it, even though it was never the entry that would
- *  have been applied. Any such sibling is left queued and untouched. It
- *  converges on its own via the dead-entry prune (deadRewrites) once --apply
- *  has moved the decision past the sibling's `from` — never via a later
- *  fresh detection, which by this same first-match rule always overrides
- *  the fresh entry sitting ahead of it, and never via a single --drop,
- *  which targets that same first match; a second explicit --drop reaches
- *  the sibling directly. */
+ *  pickRewrite would pick (first match by id) — the same first-match rule
+ *  --drop applies, and the same identity-not-id targeting the dead-entry
+ *  prune applies (#53; the prune itself removes every provably-dead entry,
+ *  not just a first match). A corrupted queue file, a hand edit, or a bug
+ *  upstream could otherwise carry a SECOND entry sharing that id; overriding
+ *  by id alone would silently destroy that still-queued sibling too, with no
+ *  tombstone and no way to recover it, even though it was never the entry
+ *  that would have been applied. Any such sibling is left queued and
+ *  untouched.
+ *
+ *  How a survivor resolves: the dead-entry prune (deadRewrites), once
+ *  --apply has moved the decision past the sibling's `from`; or a --drop
+ *  whose tombstone matches the sibling's exact {id, from, to} — the same
+ *  --drop that dropped the fresh entry, when the sibling happens to share
+ *  its triple (the drop's own re-sweep, withoutDropped, catches it too), a
+ *  second explicit --drop otherwise. NOT a later fresh detection: by this
+ *  same first-match rule it always overrides the fresh entry sitting ahead
+ *  of it, never the sibling. */
 export function mergeRewrites(fresh: readonly CommitRewrite[], queued: readonly CommitRewrite[]): CommitRewrite[] {
   const overridden = new Set<CommitRewrite>();
   for (const r of fresh) {
