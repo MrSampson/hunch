@@ -48,6 +48,26 @@ function repoWithWorktree(): { root: string; worktree: string; cleanup: () => vo
   };
 }
 
+function repoWithTwoWorktrees(): { root: string; worktreeA: string; worktreeB: string; cleanup: () => void } {
+  const root = repo();
+  const worktreeA = `${root}-wtA`;
+  const worktreeB = `${root}-wtB`;
+  git(root, "worktree", "add", "-q", "-b", "feature-a", worktreeA);
+  git(root, "worktree", "add", "-q", "-b", "feature-b", worktreeB);
+  return {
+    root,
+    worktreeA,
+    worktreeB,
+    cleanup: () => {
+      for (const wt of [worktreeA, worktreeB]) {
+        try { git(root, "worktree", "remove", "--force", wt); } catch { /* best effort */ }
+        try { rmSync(wt, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+      }
+      try { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+    },
+  };
+}
+
 async function until(predicate: () => boolean, timeoutMs = 3_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
@@ -452,6 +472,45 @@ test("a capture whose related_files only exist in a linked worktree is refused w
   const filename = `${decisionId(`manual:${title}`)}.json`;
   assert.equal(existsSync(join(fixture.root, ".hunch", "decisions", filename)), false, "must not land on the primary checkout");
   assert.equal(existsSync(join(fixture.worktree, ".hunch", "decisions", filename)), false, "must not silently guess the worktree either — the caller must retry with cwd");
+});
+
+test("a capture whose related_files match TWO sibling worktrees names both instead of confidently guessing one", async (t) => {
+  const fixture = repoWithTwoWorktrees();
+  writeFileSync(join(fixture.worktreeA, "shared-name.ts"), "export const a = 1;\n");
+  writeFileSync(join(fixture.worktreeB, "shared-name.ts"), "export const b = 2;\n");
+  const control = buildServerWithRootControl(fixture.root);
+  const client = new Client({ name: "misroute-ambiguous-test", version: "0.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  t.after(async () => {
+    await client.close().catch(() => {});
+    await control.server.close().catch(() => {});
+    fixture.cleanup();
+  });
+
+  await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
+
+  const title = "ambiguous capture";
+  const result = await client.callTool({
+    name: "hunch_record_decision",
+    arguments: {
+      decision: {
+        title,
+        context: "matches two sibling worktrees",
+        decision: "Change shared-name.ts",
+        related_files: ["shared-name.ts"],
+      },
+    },
+  }) as { content: Array<{ text: string }>; isError?: boolean };
+
+  assert.equal(result.isError, true, "should still refuse rather than guess between two equally plausible worktrees");
+  const text = result.content.map((c) => c.text ?? "").join("\n");
+  assert.ok(text.includes(fixture.worktreeA), `refusal should name worktree A as a candidate: ${text}`);
+  assert.ok(text.includes(fixture.worktreeB), `refusal should name worktree B as a candidate: ${text}`);
+
+  const filename = `${decisionId(`manual:${title}`)}.json`;
+  assert.equal(existsSync(join(fixture.root, ".hunch", "decisions", filename)), false);
+  assert.equal(existsSync(join(fixture.worktreeA, ".hunch", "decisions", filename)), false, "must not guess worktree A");
+  assert.equal(existsSync(join(fixture.worktreeB, ".hunch", "decisions", filename)), false, "must not guess worktree B");
 });
 
 test("a capture with related_files that don't exist in any worktree still succeeds (no false positive)", async (t) => {

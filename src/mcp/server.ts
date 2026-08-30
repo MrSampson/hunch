@@ -159,19 +159,30 @@ const destinationNote = (destRoot: string): string => {
  *  hint is silently omitted and the write lands wherever `root` last was (often the
  *  primary checkout, on its default branch). This is the last-resort backstop: when a
  *  decision names related_files that don't exist at the resolved root but DO exist in
- *  exactly the kind of place this bug lands them in — a sibling linked worktree — that
- *  worktree is named as the corrected `cwd` and the write is refused rather than risked.
- *  Silent when related_files is empty or when no sibling worktree does any better,
- *  so a decision that legitimately precedes its code (no files yet) is unaffected. */
-const misroutedWorktreeHint = (root: string, relatedFiles: readonly string[]): string | null => {
-  if (!relatedFiles.length) return null;
-  if (relatedFiles.some((f) => existsSync(join(root, f)))) return null;
+ *  exactly the kind of place this bug lands them in — a sibling linked worktree — every
+ *  such worktree is named as a candidate `cwd` and the write is refused rather than
+ *  risked. Returns every match rather than the first: two sibling worktrees can
+ *  plausibly share a same-named untracked file from unrelated concurrent work, and
+ *  confidently naming just one would let a caller that blindly retries as instructed
+ *  land in the WRONG worktree — the same failure mode one level removed. Empty when
+ *  related_files is empty or no sibling worktree does any better, so a decision that
+ *  legitimately precedes its code (no files yet) is unaffected.
+ *
+ *  Coverage boundary: only checks related_files as passed in THIS call, not values
+ *  inherited from an existing record on re-record/supersede — a call that omits
+ *  related_files to rely on inheritance won't trip this guard even if it's happening
+ *  in the wrong worktree. That's a deliberate tradeoff against false positives on
+ *  stale evidence, not full coverage of every misrouted write. */
+const misroutedWorktreeCandidates = (root: string, relatedFiles: readonly string[]): string[] => {
+  if (!relatedFiles.length) return [];
+  if (relatedFiles.some((f) => existsSync(join(root, f)))) return [];
   const here = canonicalRootPath(root);
+  const candidates: string[] = [];
   for (const candidate of linkedWorktreePaths(root)) {
     if (canonicalRootPath(candidate) === here) continue;
-    if (relatedFiles.some((f) => existsSync(join(candidate, f)))) return candidate;
+    if (relatedFiles.some((f) => existsSync(join(candidate, f)))) candidates.push(candidate);
   }
-  return null;
+  return candidates;
 };
 
 /** Where a capture keyed to `home` actually lands: the private overlay directory when
@@ -1378,12 +1389,20 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
     },
     async ({ decision, capture_token }): Promise<ToolResult> => {
       try {
-        const misroute = misroutedWorktreeHint(root, (decision.related_files ?? []).map(toPosixTarget));
-        if (misroute) {
+        const misroutes = misroutedWorktreeCandidates(root, (decision.related_files ?? []).map(toPosixTarget));
+        if (misroutes.length) {
+          const branch = currentBranch(root);
+          const plural = misroutes.length > 1;
+          const where = plural
+            ? `they do in these linked worktrees: ${misroutes.join(", ")}`
+            : `they do in the linked worktree ${misroutes[0]}`;
+          const retry = plural
+            ? `retry with cwd pointing at whichever of those is actually correct`
+            : `retry with cwd:"${misroutes[0]}"`;
           return err(
-            `Refusing to record "${decision.title}" in ${root}${currentBranch(root) ? ` (branch ${currentBranch(root)})` : ""}: ` +
-            `none of its related_files exist there, but they do in the linked worktree ${misroute}. This call is very likely ` +
-            `missing the cwd argument (issue #54) — retry with cwd:"${misroute}", or wherever this decision's work actually happened.`,
+            `Refusing to record "${decision.title}" in ${root}${branch ? ` (branch ${branch})` : ""}: ` +
+            `none of its related_files exist there, but ${where}. This call is very likely missing the cwd ` +
+            `argument (issue #54) — ${retry}, or wherever this decision's work actually happened.`,
           );
         }
         // Commit-keyed on the CANONICAL full sha (resolved via git rev-parse), so a

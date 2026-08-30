@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { gitCommonDir, isLinkedWorktree, currentBranch, commitAndPushHunch, pullHunchStatus, stableRepositoryName } from "../src/extractors/git.js";
+import { gitCommonDir, isLinkedWorktree, currentBranch, commitAndPushHunch, pullHunchStatus, stableRepositoryName, linkedWorktreePaths } from "../src/extractors/git.js";
 import { HunchStore } from "../src/store/hunchStore.js";
 import { hunchPaths } from "../src/core/paths.js";
 import { ensureSharedOverlayPointer } from "../src/integrations/worktree.js";
@@ -41,6 +41,40 @@ test("git helpers: currentBranch / gitCommonDir / isLinkedWorktree on the main c
     assert.ok(gitCommonDir(root).replace(/\/$/, "").endsWith(".git"), "common dir is the repo .git");
     assert.equal(isLinkedWorktree(root), false, "the main checkout is not a linked worktree");
   } finally {
+    cleanup();
+  }
+});
+
+test("linkedWorktreePaths: a repo with no linked worktrees returns just itself", () => {
+  const { root, cleanup } = tempRepo();
+  try {
+    assert.deepEqual(linkedWorktreePaths(root), [resolve(root)]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("linkedWorktreePaths: a non-repo directory returns empty", () => {
+  const notARepo = mkdtempSync(join(tmpdir(), "hunch-not-a-repo-"));
+  try {
+    assert.deepEqual(linkedWorktreePaths(notARepo), []);
+  } finally {
+    rmSync(notARepo, { recursive: true, force: true });
+  }
+});
+
+test("linkedWorktreePaths: lists the main checkout plus every linked worktree", () => {
+  const { root, cleanup } = tempRepo();
+  const wt = `${root}-wt`;
+  try {
+    g(root, "worktree", "add", "-q", "-b", "feat", wt);
+    const paths = linkedWorktreePaths(root).map((p) => resolve(p));
+    assert.equal(paths.length, 2);
+    assert.ok(paths.includes(resolve(root)), "includes the main checkout");
+    assert.ok(paths.includes(resolve(wt)), "includes the linked worktree");
+  } finally {
+    try { g(root, "worktree", "remove", "--force", wt); } catch { /* best-effort */ }
+    rmSync(wt, { recursive: true, force: true });
     cleanup();
   }
 });
