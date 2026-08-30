@@ -5143,14 +5143,15 @@ program
 
       if (opts.drop) {
         const before = queue.length;
-        // firstFor is deliberately the same first-match-by-id rule
-        // pickRewrite/mergeRewrites use to decide which same-id entry would
-        // actually apply (#53, #56) — a corrupted queue file can carry two
-        // entries sharing an id, and dropping by id would destroy the
-        // untargeted sibling too, with no tombstone recording what it was.
-        // Filtering by object identity (not `r.id !== opts.drop`) removes
-        // only the one entry actually dropped; any other entry sharing the
-        // id is untouched and stays queued.
+        // firstFor is the single first-match-by-id rule — the same one
+        // pickRewrite and mergeRewrites go through (#53, #56, #58) — to
+        // decide which same-id entry would actually apply. A corrupted
+        // queue file can carry two entries sharing an id, and dropping by
+        // id would destroy the untargeted sibling too, with no tombstone
+        // recording what it was. Filtering by object identity (not
+        // `r.id !== opts.drop`) removes only the one entry actually
+        // dropped; any other entry sharing the id is untouched and stays
+        // queued.
         const target = firstFor(queue, opts.drop);
         save(queue.filter((r) => r !== target));
         // Tombstone only when something real was actually queued for this id —
@@ -5236,12 +5237,13 @@ program
       const withheldSet = new Set(withheld);
       // The plan --apply would act on if it ran right now — built here, before
       // the dry-run branch, so the preview reasons about the exact same plan
-      // repairDecisionCommit would. `pickRewrite` (src/core/commitrepair.ts) is
-      // the one place that decides which entry wins when `applicable` carries
-      // two sharing a decision id (a corrupted queue file, a hand edit): first
-      // match, by construction. `wasChosen` asks that same question by object
-      // identity rather than re-deriving it, so this file and commitrepair.ts
-      // can never independently drift on which entry "won" (#51).
+      // repairDecisionCommit would. `pickRewrite` (src/core/commitrepair.ts, a
+      // plan-scoped `firstFor`) decides which entry wins when `applicable`
+      // carries two sharing a decision id (a corrupted queue file, a hand
+      // edit): first match, by construction. `wasChosen` asks that same
+      // question by object identity rather than re-deriving it, so this file
+      // and commitrepair.ts can never independently drift on which entry
+      // "won" (#51, #58).
       const plan = { rewrites: applicable, records: [...new Set(applicable.map((r) => r.id))] };
       const applicableSet = new Set(applicable);
       const wasChosen = (r: CommitRewrite): boolean => pickRewrite(plan, r.id) === r;
