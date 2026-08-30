@@ -403,6 +403,68 @@ test("repair-provenance --drop <id> on a duplicate-id queue only removes the ent
   }
 });
 
+test("hunch escalations' apply-target wording for a duplicate-id queue (withheld-first, resolvable-second) matches what --apply --only actually applies (#59, mr-complexity-reviewer round 2)", () => {
+  // The escalation's own wording is a MODEL of what --apply --only/--drop
+  // target — src/core/escalations.ts derives it independently of the CLI's
+  // real targeting logic (withheldForUnresolvableTo, deadRewrites,
+  // firstFor). A unit test asserting escalations.ts against its own model
+  // can't catch the two from drifting apart; only running the real CLI can.
+  const fixture = twoDecisionQueueFixture();
+  try {
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([
+        { id: "dec_a", from: "sha_a_old", to: "0123456789abcdef0123456789abcdef01234567" }, // withheld: queued FIRST, never resolves
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaANew }, // resolvable: queued second
+      ], null, 2) + "\n",
+    );
+
+    const escRun = runCli(fixture.root, "escalations", "--json");
+    assert.equal(escRun.status, 1, "escalations exits non-zero when something needs a human decision");
+    const items = JSON.parse(escRun.stdout) as { detail: string; resolution: string }[];
+    const forResolvable = items.find((i) => i.detail === `sha_a_old → ${fixture.shaANew}`)!;
+    assert.ok(forResolvable, "the resolvable (second-queued) entry surfaces its own escalation");
+    assert.match(forResolvable.resolution, /--apply --only dec_a to accept/, "escalations says --apply --only works for the resolvable entry, despite it not being first-queued");
+
+    const run = runCli(fixture.root, "repair-provenance", "--apply", "--only", "dec_a", "--quiet");
+    assert.equal(run.status, 0, run.stderr);
+    const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
+    assert.equal(decA.commit, fixture.shaANew, "--apply --only dec_a really does apply the resolvable (second-queued, non-withheld) entry, exactly as escalations said it would");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("hunch escalations' drop-target wording for the same duplicate-id queue matches what --drop actually tombstones — it's the FIRST-queued (withheld) entry, not the resolvable one --apply --only would apply (#59, mr-complexity-reviewer round 2)", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([
+        { id: "dec_a", from: "sha_a_old", to: "0123456789abcdef0123456789abcdef01234567" }, // withheld: queued FIRST — the real --drop target
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaANew }, // resolvable: queued second
+        { id: "dec_b", from: "sha_b_old", to: fixture.shaBNew }, // untargeted — must survive the drop untouched
+      ], null, 2) + "\n",
+    );
+
+    const escRun = runCli(fixture.root, "escalations", "--json");
+    const items = JSON.parse(escRun.stdout) as { detail: string; resolution: string }[];
+    const forResolvable = items.find((i) => i.detail === `sha_a_old → ${fixture.shaANew}`)!;
+    assert.doesNotMatch(forResolvable.resolution, /--drop dec_a to reject it \(tombstoned durably/, "escalations must not claim --drop dec_a rejects the resolvable entry — it targets the withheld one instead");
+
+    const run = runCli(fixture.root, "repair-provenance", "--drop", "dec_a", "--quiet");
+    assert.equal(run.status, 0, run.stderr);
+
+    const dropped = JSON.parse(readFileSync(join(fixture.root, ".hunch", "dropped-commit-repairs.json"), "utf8")) as { id: string; from: string; to: string }[];
+    assert.deepEqual(dropped, [{ id: "dec_a", from: "sha_a_old", to: "0123456789abcdef0123456789abcdef01234567" }], "--drop dec_a tombstones the first-queued (withheld) entry, exactly as escalations said it would");
+
+    const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string; to: string }[];
+    assert.deepEqual(queue.map((r) => r.to), [fixture.shaANew, fixture.shaBNew], "the resolvable dec_a sibling and the untargeted dec_b entry both survive the drop");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("repair-provenance: a dropped match doesn't resurface when the identical range is re-detected — the tombstone is durable, not just a queue clear", () => {
   const fixture = squashFixture();
   try {

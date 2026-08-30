@@ -106,10 +106,16 @@ export function pendingEscalations(decisions: readonly Decision[]): Escalation[]
  *  this function and withheldRewrites, so identity holds. */
 export function commitRepairEscalations(queued: readonly CommitRewrite[], decisions: readonly Decision[], live: readonly Decision[] = decisions, withheld: ReadonlySet<CommitRewrite> = new Set()): Escalation[] {
   const byId = new Map(decisions.map((d) => [d.id, d] as const));
-  // Mirrors the queue state --apply/--drop actually see (src/cli/index.ts): dead
-  // entries (deadRewrites) are pruned via `save()` before either command ever
-  // reads `queue`, so a duplicate-id check against the RAW `queued` array can
-  // name an entry that's already gone by the time a human acts (#59).
+  // Mirrors two of the three queue transformations --apply/--drop actually see
+  // (src/cli/index.ts): dead entries (deadRewrites) are pruned via `save()`
+  // before either command ever reads `queue`, so a duplicate-id check against
+  // the RAW `queued` array can name an entry that's already gone by the time a
+  // human acts (#59). Deliberately does NOT model the fresh-detection merge
+  // (mergeRewrites) that also runs before either command: a fresh match can
+  // silently evict firstFor(queue, id) with no tombstone. That gap predates
+  // this fix (see #56) and isn't new here — it just means a queue whose first
+  // entry is about to be evicted by a fresh match still reads as the ordinary,
+  // ask-normally case rather than something rarer.
   const deadSet = new Set(deadRewrites(queued, live));
   const survivors = queued.filter((q) => !deadSet.has(q));
   // What `--drop <id>` targets (src/cli/index.ts: `firstFor(queue, opts.drop)`
@@ -120,13 +126,17 @@ export function commitRepairEscalations(queued: readonly CommitRewrite[], decisi
   // withheldForUnresolvableTo's `applicable` half (src/cli/index.ts:
   // `plan.rewrites = applicable`), which excludes withheld entries entirely —
   // so the apply-target can differ from the drop-target when an earlier
-  // survivor for the same id is withheld.
-  const applyTarget = (id: string): CommitRewrite | undefined => survivors.find((q) => q.id === id && !withheld.has(q));
+  // survivor for the same id is withheld. Routed through the shared `firstFor`
+  // rather than hand-rolled, so this can't independently drift from
+  // commitrepair.ts's own first-match rule (already drifted three times
+  // across call sites there — #51/#53/#56 — before firstFor consolidated it).
+  const applyTarget = (id: string): CommitRewrite | undefined => firstFor(survivors.filter((q) => !withheld.has(q)), id);
   return liveRewrites(queued, live)
     .map((r) => {
       const title = byId.get(r.id)?.title;
       const named = `${r.id}${title ? ` ("${title}")` : ""}`;
       const base = { kind: "commit-repair-pending" as const, topic: r.id, decisionIds: [r.id], detail: `${r.from} → ${r.to}` };
+      const applyQuestion = `${named}'s commit is no longer reachable from HEAD (likely squash-merged away), and one newly-merged commit touches all its related files — apply the proposed replacement?`;
       const isDropTarget = dropTarget(r.id) === r;
       const isApplyTarget = applyTarget(r.id) === r;
       if (!isDropTarget && !isApplyTarget) {
@@ -134,15 +144,23 @@ export function commitRepairEscalations(queued: readonly CommitRewrite[], decisi
         // #53/#55/#56/#58): an earlier survivor for this id is what BOTH
         // commands would act on, never this entry (#59). If this entry is
         // itself withheld, say so too — that fact doesn't disappear just
-        // because it's also unreachable by id right now, and it means this
-        // entry stays drop-only even once it's next in line.
+        // because it's also unreachable by id right now, and it stays
+        // drop-only even once it's next in line (never permanently: a fresh
+        // detection run can still supersede it with a resolvable match, same
+        // as the ordinary withheld branch below).
         const alsoWithheld = withheld.has(r)
-          ? " — and its own proposed replacement doesn't resolve here either, so even once it's next in line it can only ever be dropped, never applied"
+          ? " — and its own proposed replacement doesn't resolve here either, so even once it's next in line it stays drop-only unless a fresh detection run supersedes it with a resolvable match"
           : "";
         return {
           ...base,
           question: `${named} has a further queued replacement candidate (${r.from} → ${r.to}) sitting behind another entry for the same decision — leave it queued for now?`,
-          resolution: `not directly actionable by id right now: \`hunch repair-provenance --apply --only ${r.id}\`/\`hunch repair-provenance --drop ${r.id}\` both act on an entry queued ahead of it, never this one${alsoWithheld}. Resolving that entry (apply or drop it) brings this one back into consideration on the next run.`,
+          // Dropping the entry ahead brings this one back into play on the next
+          // run (deadRewrites can no longer see a reason to prune it). Applying
+          // it does the OPPOSITE for this entry: repairDecisionCommit moves the
+          // decision's `commit` past the `from` both entries share, so the next
+          // run's deadRewrites prunes THIS entry as stale — it is never
+          // reconsidered, not "resolved the normal way".
+          resolution: `not directly actionable by id right now: \`hunch repair-provenance --apply --only ${r.id}\`/\`hunch repair-provenance --drop ${r.id}\` both act on an entry queued ahead of it, never this one${alsoWithheld}. Dropping that entry brings this one back into consideration on the next run; applying it instead retires this one as stale, since the decision moves past the \`from\` both entries share.`,
         };
       }
       if (!isDropTarget) {
@@ -151,11 +169,15 @@ export function commitRepairEscalations(queued: readonly CommitRewrite[], decisi
         // of it, so --drop <id> would tombstone that sibling instead (#59).
         return {
           ...base,
-          question: `${named}'s commit is no longer reachable from HEAD (likely squash-merged away), and one newly-merged commit touches all its related files — apply the proposed replacement?`,
+          question: applyQuestion,
           resolution: `hunch repair-provenance --apply --only ${r.id} to accept just this one — but \`--drop ${r.id}\` won't reject THIS entry: an earlier queued sibling for the same id (whose own replacement doesn't resolve here) sits ahead of it and would be tombstoned instead.`,
         };
       }
-      if (withheld.has(r)) {
+      if (!isApplyTarget) {
+        // isDropTarget is true here, so this can only mean withheld.has(r):
+        // a non-withheld first survivor is always its own apply-target too
+        // (nothing withheld can precede it if it isn't withheld itself), so
+        // isDropTarget && !isApplyTarget and "withheld" are the same fact.
         return {
           ...base,
           question: `${named}'s commit is no longer reachable from HEAD (likely squash-merged away), and the queued replacement commit doesn't resolve in this repository (corrupted queue entry, or the commit has since been garbage-collected) — reject it?`,
@@ -164,7 +186,7 @@ export function commitRepairEscalations(queued: readonly CommitRewrite[], decisi
       }
       return {
         ...base,
-        question: `${named}'s commit is no longer reachable from HEAD (likely squash-merged away), and one newly-merged commit touches all its related files — apply the proposed replacement?`,
+        question: applyQuestion,
         resolution: `hunch repair-provenance --apply --only ${r.id} to accept just this one, --drop ${r.id} to reject it (tombstoned durably — this same match won't resurface, though a genuinely different candidate still can), or leave it queued to decide later`,
       };
     });
