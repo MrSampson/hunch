@@ -172,15 +172,14 @@ export function addDropped(newly: readonly DroppedRewrite[], existing: readonly 
  *  repeated by the fresh scan.
  *
  *  Overrides by object identity, targeting exactly the one queued entry
- *  pickRewrite would pick (first match by id) — the same first-match rule
- *  --drop applies, and the same identity-not-id targeting the dead-entry
- *  prune applies (#53; the prune itself removes every provably-dead entry,
- *  not just a first match). A corrupted queue file, a hand edit, or a bug
- *  upstream could otherwise carry a SECOND entry sharing that id; overriding
- *  by id alone would silently destroy that still-queued sibling too, with no
- *  tombstone and no way to recover it, even though it was never the entry
- *  that would have been applied. Any such sibling is left queued and
- *  untouched.
+ *  firstFor (id) would pick — the same first-match rule --drop applies, and
+ *  the same identity-not-id targeting the dead-entry prune applies (#53; the
+ *  prune itself removes every provably-dead entry, not just a first match).
+ *  A corrupted queue file, a hand edit, or a bug upstream could otherwise
+ *  carry a SECOND entry sharing that id; overriding by id alone would
+ *  silently destroy that still-queued sibling too, with no tombstone and no
+ *  way to recover it, even though it was never the entry that would have
+ *  been applied. Any such sibling is left queued and untouched.
  *
  *  How a survivor resolves: the dead-entry prune (deadRewrites), once
  *  --apply has moved the decision past the sibling's `from`; or a --drop
@@ -193,7 +192,7 @@ export function addDropped(newly: readonly DroppedRewrite[], existing: readonly 
 export function mergeRewrites(fresh: readonly CommitRewrite[], queued: readonly CommitRewrite[]): CommitRewrite[] {
   const overridden = new Set<CommitRewrite>();
   for (const r of fresh) {
-    const first = queued.find((q) => q.id === r.id);
+    const first = firstFor(queued, r.id);
     if (first) overridden.add(first);
   }
   return [...fresh, ...queued.filter((r) => !overridden.has(r))];
@@ -229,18 +228,25 @@ export function withheldForUnresolvableTo(toApply: readonly CommitRewrite[], exi
   return { applicable, withheld };
 }
 
-/** The one rule for which queued rewrite wins when a plan carries more than one
- *  entry for the same decision id (a corrupted queue file, a hand edit, or a
- *  bug upstream — planCommitRepair itself never produces this): first match,
- *  by construction. repairDecisionCommit uses this to decide what to WRITE;
- *  a caller that needs to know which entry WOULD be picked without writing
- *  anything (the CLI's --apply summary and queue sweep) calls this same
- *  function, so the two can never independently drift on which entry "won" —
- *  this file's own duplicate-id queue handling has drifted between call
- *  sites twice already (see withoutDropped's and withheldForUnresolvableTo's
- *  own docstrings). */
+/** The one rule for which entry wins when more than one shares a decision id
+ *  (a corrupted queue file, a hand edit, or a bug upstream): first match, by
+ *  construction. Every caller goes through here so no two can independently
+ *  drift on which entry "won" — this file's own duplicate-id queue handling
+ *  has drifted between call sites three times already (see withoutDropped's,
+ *  withheldForUnresolvableTo's, and mergeRewrites' own docstrings). */
+export function firstFor(entries: readonly CommitRewrite[], id: string): CommitRewrite | undefined {
+  return entries.find((r) => r.id === id);
+}
+
+/** pickRewrite is firstFor scoped to a plan's own rewrites (planCommitRepair
+ *  itself never produces same-id duplicates, but a plan carrying them isn't
+ *  ruled out here — see firstFor). repairDecisionCommit uses this to decide
+ *  what to WRITE; a caller that needs to know which entry WOULD be picked
+ *  without writing anything (the CLI's --apply summary and queue sweep)
+ *  calls this same function, so the two can never independently drift on
+ *  which entry "won". */
 export function pickRewrite(plan: CommitRepairPlan, id: string): CommitRewrite | undefined {
-  return plan.rewrites.find((r) => r.id === id);
+  return firstFor(plan.rewrites, id);
 }
 
 /** Pure: rewrite `commit` for one decision, and its matching `commit:<sha>`

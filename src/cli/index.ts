@@ -42,7 +42,7 @@ import {
 import { isGitRepo, isGitRepoRoot, sameGitPublication, sameRemoteUrl, canonicalRemoteUrl, repositoryUsesRemote, headSha, isolatedHeadSha, logSince, lastChangeDate, firstCommitForFile, stagedFiles, workingFiles, commitFiles, asOfDate, stagedDiff, workingDiff, commitDiff, rangeFiles, rangeDiff, rangeSubjects, revExists, revParse, commitAndPushHunch, pullHunchStatus, syncExistingHunch, gitUntrackCached, gitCommonDir, hooksDir, isLinkedWorktree, mainWorktreeRoot, gitMemoryLog, memoryMoveDiff, revertMemoryMove, pushCurrentBranch, commitChanges, commitRepairStatus, mergeRangeChanges, commitsExist, type HunchPullStatus } from "../extractors/git.js";
 import { parseMemoryLog, type MemoryMove } from "../core/memorylog.js";
 import { renamesOf, planRepair, repairDecision, repairConstraint, type RepairPlan } from "../core/repair.js";
-import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, pickRewrite, mergeRewrites, deadRewrites, resolvedRewriteIds, withoutDropped, addDropped, withheldForUnresolvableTo, type CommitRewrite, type DroppedRewrite } from "../core/commitrepair.js";
+import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, pickRewrite, mergeRewrites, firstFor, deadRewrites, resolvedRewriteIds, withoutDropped, addDropped, withheldForUnresolvableTo, type CommitRewrite, type DroppedRewrite } from "../core/commitrepair.js";
 import { readPendingRepairs, writePendingRepairs, readDroppedRepairs, writeDroppedRepairs, readActivePendingRepairs, withheldRewrites } from "../core/repairqueue.js";
 import { planPolicyRepair, repairPolicySpec, type PolicyBindingRewrite } from "../constitution/repairPolicies.js";
 import { writeTeamConfig, ensureTeamOverlay, readTeamConfig, safeGitUrl, safeTeamRef, overlayMatchesTeamRemote, advertisedTeamRemoteContract, boundedTeamGitEnv, cloneValidatedTeamOverlay, explicitTeamRemoteContract, teamRemoteContract } from "../integrations/team.js";
@@ -5143,14 +5143,15 @@ program
 
       if (opts.drop) {
         const before = queue.length;
-        // `.find` is deliberately the same first-match-by-id rule pickRewrite
-        // uses to decide which same-id entry would actually apply (#53) — a
-        // corrupted queue file can carry two entries sharing an id, and
-        // dropping by id would destroy the untargeted sibling too, with no
-        // tombstone recording what it was. Filtering by object identity (not
-        // `r.id !== opts.drop`) removes only the one entry actually dropped;
-        // any other entry sharing the id is untouched and stays queued.
-        const target = queue.find((r) => r.id === opts.drop);
+        // firstFor is deliberately the same first-match-by-id rule
+        // pickRewrite/mergeRewrites use to decide which same-id entry would
+        // actually apply (#53, #56) — a corrupted queue file can carry two
+        // entries sharing an id, and dropping by id would destroy the
+        // untargeted sibling too, with no tombstone recording what it was.
+        // Filtering by object identity (not `r.id !== opts.drop`) removes
+        // only the one entry actually dropped; any other entry sharing the
+        // id is untouched and stays queued.
+        const target = firstFor(queue, opts.drop);
         save(queue.filter((r) => r !== target));
         // Tombstone only when something real was actually queued for this id —
         // an id that was never queued has no {from, to} to record, and
