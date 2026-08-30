@@ -308,6 +308,73 @@ test("repair-provenance --drop removes one queued entry without applying anythin
   }
 });
 
+test("repair-provenance --drop <id> --apply in one invocation never applies an identical {id, from, to} sibling it just tombstoned (#53 follow-up)", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    // A corrupted queue file, or a hand edit, can carry two IDENTICAL
+    // entries for the same id. --drop's own object-identity fix (#53)
+    // removes and tombstones only the first one by reference — the second,
+    // duplicate-in-substance entry is still sitting in the queue this same
+    // invocation goes on to --apply, which would rewrite the exact triple
+    // the human just rejected in the same command.
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaANew },
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaANew },
+      ], null, 2) + "\n",
+    );
+
+    const run = runCli(fixture.root, "repair-provenance", "--drop", "dec_a", "--apply", "--quiet");
+    assert.equal(run.status, 0, run.stderr);
+
+    const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
+    assert.equal(decA.commit, "sha_a_old", "the rejected rewrite must never be applied, even by an identical sibling in the same run");
+
+    const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string }[];
+    assert.deepEqual(queue, [], "the tombstoned sibling must not survive in the queue either");
+
+    const dropped = JSON.parse(readFileSync(join(fixture.root, ".hunch", "dropped-commit-repairs.json"), "utf8")) as { id: string; from: string; to: string }[];
+    assert.deepEqual(dropped, [{ id: "dec_a", from: "sha_a_old", to: fixture.shaANew }], "the tombstone is written exactly once, not duplicated for the swept sibling");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance --drop <id> on a duplicate-id queue only removes the entry that would actually apply, leaving the untargeted sibling queued and tombstoning just the one dropped (#53)", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    // A corrupted queue file, a hand edit, or a bug elsewhere could leave two
+    // entries sharing dec_a's id — both otherwise fully applicable (real,
+    // resolvable `to`s). pickRewrite's own first-match-wins rule says only
+    // the first would ever actually be applied; --drop must remove and
+    // tombstone that one entry, not every entry sharing the id.
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaANew },
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaBNew },
+        { id: "dec_b", from: "sha_b_old", to: fixture.shaBNew },
+      ], null, 2) + "\n",
+    );
+
+    const run = runCli(fixture.root, "repair-provenance", "--drop", "dec_a", "--quiet");
+    assert.equal(run.status, 0, run.stderr);
+
+    const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string; from: string; to: string }[];
+    assert.deepEqual(
+      queue,
+      [{ id: "dec_a", from: "sha_a_old", to: fixture.shaBNew }, { id: "dec_b", from: "sha_b_old", to: fixture.shaBNew }],
+      "the never-would-apply dec_a sibling and the untargeted dec_b entry both survive the drop",
+    );
+
+    const dropped = JSON.parse(readFileSync(join(fixture.root, ".hunch", "dropped-commit-repairs.json"), "utf8")) as { id: string; from: string; to: string }[];
+    assert.deepEqual(dropped, [{ id: "dec_a", from: "sha_a_old", to: fixture.shaANew }], "only the one entry actually dropped is tombstoned");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("repair-provenance: a dropped match doesn't resurface when the identical range is re-detected — the tombstone is durable, not just a queue clear", () => {
   const fixture = squashFixture();
   try {
@@ -598,6 +665,37 @@ test("repair-provenance announces a pruned dead entry unless --quiet, so a human
     const run = runCli(fixture.root, "repair-provenance", "--apply", "--only", "dec_b");
     assert.equal(run.status, 0, run.stderr);
     assert.match(run.stdout, /Pruned 1 dead queue entry.*dec_a/);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("repair-provenance's dead-entry prune on a duplicate-id queue never destroys a live sibling sharing the pruned id (#53)", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    // Two entries share dec_a's id: one stale (its `from` no longer matches
+    // dec_a's current commit — deadRewrites correctly calls this dead), and
+    // one still live and otherwise fully applicable (`from` matches, `to`
+    // resolves to a real commit). An id-keyed prune destroys both just
+    // because they share an id; only the stale one should ever be removed.
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([
+        { id: "dec_a", from: "sha_a_STALE", to: fixture.shaBNew },
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaANew },
+        { id: "dec_b", from: "sha_b_old", to: fixture.shaBNew },
+      ], null, 2) + "\n",
+    );
+
+    const run = runCli(fixture.root, "repair-provenance", "--apply", "--only", "dec_a");
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /Repaired 1 commit reference/, "the live sibling must still be applied, not destroyed alongside its stale namesake");
+
+    const decA = JSON.parse(readFileSync(fixture.decisionFile("dec_a"), "utf8")) as Decision;
+    assert.equal(decA.commit, fixture.shaANew, "the live entry's rewrite was actually applied");
+
+    const queue = JSON.parse(readFileSync(join(fixture.root, ".hunch", "pending-commit-repairs.json"), "utf8")) as { id: string }[];
+    assert.deepEqual(queue.map((r) => r.id), ["dec_b"], "dec_a's stale entry is pruned and its live sibling applied+swept — only the untargeted dec_b stays queued");
   } finally {
     fixture.cleanup();
   }
