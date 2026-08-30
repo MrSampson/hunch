@@ -165,7 +165,31 @@ test("commitRepairEscalations: withheld is keyed by OBJECT, so an untouched sibl
   assert.match(forB.resolution, /--apply --only dec_b to accept/);
 });
 
-test("commitRepairEscalations: a corrupted queue with two entries sharing an id — one withheld, one not — must not tag the resolvable sibling as withheld too (an id-keyed set would)", () => {
+test("commitRepairEscalations: a corrupted queue with two entries sharing an id — the WITHHELD one queued first, the resolvable one second — resolvable gets accurate apply-works wording, and the drop-target (ghost) keeps its ordinary withheld wording", () => {
+  const decs = [D({ id: "dec_a", title: "Decision A", commit: "sha_a_old" })];
+  const ghost = { id: "dec_a", from: "sha_a_old", to: "sha_ghost" };
+  const resolvable = { id: "dec_a", from: "sha_a_old", to: "sha_real" };
+  const items = commitRepairEscalations([ghost, resolvable], decs, decs, new Set([ghost]));
+  assert.equal(items.length, 2, "both entries still surface — liveRewrites doesn't dedupe by id");
+  const forGhost = items.find((i) => i.detail === "sha_a_old → sha_ghost")!;
+  const forResolvable = items.find((i) => i.detail === "sha_a_old → sha_real")!;
+  // ghost is queued FIRST, so --drop dec_a genuinely targets it (src/cli/index.ts: --drop
+  // ignores withheld status and just takes firstFor(queue, id)) — the ordinary withheld
+  // wording is accurate for it, unchanged.
+  assert.match(forGhost.question, /doesn't resolve in this repository/);
+  assert.doesNotMatch(forGhost.resolution, /--apply --only dec_a to accept/, "never claims --apply works for a withheld entry");
+  assert.match(forGhost.resolution, /--drop dec_a/, "--drop dec_a really does target ghost here — it's the first survivor");
+  // resolvable is second in the queue, but --apply --only excludes withheld entries when
+  // picking the first match (src/cli/index.ts: plan.rewrites = applicable, the
+  // withheld-filtered half) — so --apply --only dec_a DOES resolve to `resolvable`, even
+  // though it isn't the absolute first-queued entry. --drop dec_a, however, still targets
+  // ghost (--drop doesn't filter by withheld), not resolvable.
+  assert.match(forResolvable.resolution, /--apply --only dec_a to accept/, "--apply --only skips the withheld sibling ahead of it and reaches this entry");
+  assert.doesNotMatch(forResolvable.resolution, /--drop dec_a to reject it \(tombstoned durably/, "the ordinary --drop wording would be wrong here — --drop dec_a actually tombstones ghost");
+  assert.match(forResolvable.resolution, /--drop dec_a.*won't reject|won't reject.*--drop dec_a|earlier.*sibling/i, "must say --drop targets the earlier (withheld) sibling instead");
+});
+
+test("commitRepairEscalations: a corrupted queue with two entries sharing an id — one withheld, one not, WITHHELD SECOND — must not tag the resolvable (first) sibling as withheld too, and must not claim the withheld sibling is reachable by id either (an id-keyed set, or a naive first-queued check, would get one of these wrong)", () => {
   const decs = [D({ id: "dec_a", title: "Decision A", commit: "sha_a_old" })];
   const resolvable = { id: "dec_a", from: "sha_a_old", to: "sha_real" };
   const ghost = { id: "dec_a", from: "sha_a_old", to: "sha_ghost" };
@@ -173,7 +197,103 @@ test("commitRepairEscalations: a corrupted queue with two entries sharing an id 
   assert.equal(items.length, 2, "both entries still surface — liveRewrites doesn't dedupe by id");
   const forResolvable = items.find((i) => i.detail === "sha_a_old → sha_real")!;
   const forGhost = items.find((i) => i.detail === "sha_a_old → sha_ghost")!;
-  assert.match(forResolvable.resolution, /--apply --only dec_a to accept/, "the resolvable sibling must keep the ordinary, working wording");
-  assert.match(forGhost.resolution, /--drop dec_a/, "the withheld sibling gets the never-resolves wording");
+  // resolvable is first-queued AND not withheld — both --apply --only and --drop genuinely
+  // target it, so it keeps the ordinary, unmodified wording.
+  assert.match(forResolvable.resolution, /--apply --only dec_a to accept/, "the resolvable sibling is both the drop-target and the apply-target — ordinary wording");
+  // ghost is second-queued AND withheld — neither --apply --only nor --drop reaches it: a
+  // human reading its escalation must not be told either command acts on it, and must not
+  // be told (falsely) that it becomes freely accept/reject-able once the sibling clears —
+  // it will only ever be droppable, since it's withheld.
   assert.doesNotMatch(forGhost.resolution, /--apply --only dec_a to accept/);
+  assert.doesNotMatch(forGhost.resolution, /^hunch repair-provenance --drop dec_a to reject it \(tombstoned durably/, "must not claim --drop dec_a targets THIS entry — resolvable is queued ahead of it");
+  assert.match(forGhost.resolution, /doesn't resolve here either/i, "must still surface that ghost's own `to` doesn't resolve, once information the pre-#59 code always showed");
+  assert.match(forGhost.resolution, /drop-only/i, "stays drop-only — but must not claim this is forever (a fresh detection run can still supersede it)");
+  assert.match(forGhost.resolution, /fresh detection run|fresh match/i, "must not contradict the ordinary withheld wording's own \"wait for a fresh match to supersede it\" — withheld isn't permanent");
+  assert.doesNotMatch(forGhost.resolution, /accepted or rejected the normal way|can be accepted/i, "must not promise ghost becomes freely actionable — it stays drop-only even once first in line");
+});
+
+test("commitRepairEscalations: a duplicate-id queue's second live entry never advertises --apply --only/--drop <id> as acting on IT, when neither command actually reaches it (#59)", () => {
+  const decs = [D({ id: "dec_a", title: "Decision A", commit: "sha_a_old" })];
+  const first = { id: "dec_a", from: "sha_a_old", to: "sha_first" };
+  const second = { id: "dec_a", from: "sha_a_old", to: "sha_second" };
+  const items = commitRepairEscalations([first, second], decs);
+  assert.equal(items.length, 2);
+  const forFirst = items.find((i) => i.detail === "sha_a_old → sha_first")!;
+  const forSecond = items.find((i) => i.detail === "sha_a_old → sha_second")!;
+  assert.match(forFirst.resolution, /--apply --only dec_a to accept/, "the first-queued match keeps the ordinary, working wording");
+  assert.match(forFirst.resolution, /--drop dec_a to reject it \(tombstoned durably/, "and the ordinary --drop wording, which IS actionable against it");
+  assert.doesNotMatch(forSecond.resolution, /--apply --only dec_a to accept/, "--apply --only would apply the FIRST entry, not this one");
+  assert.doesNotMatch(forSecond.resolution, /--drop dec_a to reject it \(tombstoned durably/, "--drop would tombstone the FIRST entry, not this one");
+  assert.match(forSecond.resolution, /hunch repair-provenance --apply --only dec_a/, "gives the copy-pasteable command for the entry actually ahead of it, not just prose");
+  assert.match(forSecond.resolution, /hunch repair-provenance --drop dec_a/);
+  assert.match(forSecond.question, /queued replacement candidate/);
+});
+
+test("commitRepairEscalations: the losing duplicate's resolution must not claim applying the winner brings IT back — applying retires it as stale (the decision moves past their shared `from`); only dropping the winner does", () => {
+  const decs = [D({ id: "dec_a", title: "Decision A", commit: "sha_a_old" })];
+  const first = { id: "dec_a", from: "sha_a_old", to: "sha_first" };
+  const second = { id: "dec_a", from: "sha_a_old", to: "sha_second" };
+  const items = commitRepairEscalations([first, second], decs);
+  const forSecond = items.find((i) => i.detail === "sha_a_old → sha_second")!;
+  assert.doesNotMatch(forSecond.resolution, /resolving that entry \(apply or drop it\) brings this one back/i, "applying the winner moves the decision's `commit` past `from` — deadRewrites then prunes the loser as stale on the NEXT run, it is never reconsidered");
+  assert.match(forSecond.resolution, /drop.*brings this one back|brings this one back.*drop/is, "only dropping the winner (not applying it) actually returns this entry to consideration");
+  assert.match(forSecond.resolution, /retire|stale/i, "must say what applying the winner actually does to this entry (retires it), not just what dropping does");
+});
+
+test("commitRepairEscalations: a THIRD duplicate entry gets the same non-actionable wording, and it isn't described as merely 'a second' candidate", () => {
+  const decs = [D({ id: "dec_a", title: "Decision A", commit: "sha_a_old" })];
+  const e1 = { id: "dec_a", from: "sha_a_old", to: "sha_1" };
+  const e2 = { id: "dec_a", from: "sha_a_old", to: "sha_2" };
+  const e3 = { id: "dec_a", from: "sha_a_old", to: "sha_3" };
+  const items = commitRepairEscalations([e1, e2, e3], decs);
+  assert.equal(items.length, 3);
+  const for3 = items.find((i) => i.detail === "sha_a_old → sha_3")!;
+  assert.doesNotMatch(for3.resolution, /--apply --only dec_a to accept/);
+  assert.doesNotMatch(for3.question, /a second queued replacement candidate/i, "there are two entries ahead of it, not one — 'second' would misdescribe its position");
+});
+
+test("commitRepairEscalations: a three-way duplicate (withheld, withheld, resolvable) — drop-target/apply-target/neither all coexist, each getting its own distinct wording", () => {
+  const decs = [D({ id: "dec_a", title: "Decision A", commit: "sha_a_old" })];
+  const ghost1 = { id: "dec_a", from: "sha_a_old", to: "sha_ghost1" };
+  const ghost2 = { id: "dec_a", from: "sha_a_old", to: "sha_ghost2" };
+  const resolvable = { id: "dec_a", from: "sha_a_old", to: "sha_real" };
+  const items = commitRepairEscalations([ghost1, ghost2, resolvable], decs, decs, new Set([ghost1, ghost2]));
+  assert.equal(items.length, 3);
+  const forGhost1 = items.find((i) => i.detail === "sha_a_old → sha_ghost1")!;
+  const forGhost2 = items.find((i) => i.detail === "sha_a_old → sha_ghost2")!;
+  const forResolvable = items.find((i) => i.detail === "sha_a_old → sha_real")!;
+  // ghost1 is the absolute first survivor — the genuine --drop target — and withheld,
+  // so it keeps the ordinary withheld wording unchanged.
+  assert.match(forGhost1.question, /doesn't resolve in this repository/);
+  assert.match(forGhost1.resolution, /--drop dec_a/);
+  assert.doesNotMatch(forGhost1.resolution, /--apply --only dec_a to accept/);
+  // ghost2 is neither the drop target (ghost1 is) nor the apply target (also withheld,
+  // so excluded from `applicable` too) — the "neither" branch, with the withheld caveat.
+  assert.doesNotMatch(forGhost2.resolution, /--apply --only dec_a to accept/);
+  assert.doesNotMatch(forGhost2.resolution, /^hunch repair-provenance --drop dec_a to reject it \(tombstoned durably/);
+  assert.match(forGhost2.resolution, /doesn't resolve here either/i);
+  // resolvable is the first NON-withheld survivor, so --apply --only genuinely reaches it,
+  // even though it's third in queue order — but --drop dec_a still targets ghost1.
+  assert.match(forResolvable.resolution, /--apply --only dec_a to accept/);
+  assert.doesNotMatch(forResolvable.resolution, /--drop dec_a to reject it \(tombstoned durably/);
+});
+
+test("commitRepairEscalations: which entry is 'first' for a duplicate id follows the queue's post-prune order, not raw array order — a dead first sibling doesn't make the live survivor look like a duplicate (#59)", () => {
+  const decs = [D({ id: "dec_a", title: "Decision A", commit: "sha_a_old" })];
+  const deadFirst = { id: "dec_a", from: "sha_stale", to: "sha_dead_target" }; // from mismatches the decision's commit — deadRewrites prunes this before --apply/--drop ever run
+  const liveSecond = { id: "dec_a", from: "sha_a_old", to: "sha_live" };
+  const items = commitRepairEscalations([deadFirst, liveSecond], decs);
+  assert.equal(items.length, 1, "the dead entry never asks anything — liveRewrites excludes it");
+  assert.match(items[0]!.resolution, /--apply --only dec_a to accept/, "the CLI prunes deadFirst before --drop/--apply ever consult the queue, so liveSecond IS what they'd act on — must not read as a duplicate stuck behind a phantom sibling");
+});
+
+test("commitRepairEscalations: which entry is 'first' for a duplicate id follows queue order, not the order liveRewrites happens to return", () => {
+  const decs = [D({ id: "dec_a", title: "Decision A", commit: "sha_a_old" })];
+  const earlier = { id: "dec_a", from: "sha_a_old", to: "sha_earlier" };
+  const later = { id: "dec_a", from: "sha_a_old", to: "sha_later" };
+  const items = commitRepairEscalations([later, earlier], decs); // later queued first this time
+  const forLater = items.find((i) => i.detail === "sha_a_old → sha_later")!;
+  const forEarlier = items.find((i) => i.detail === "sha_a_old → sha_earlier")!;
+  assert.match(forLater.resolution, /--apply --only dec_a to accept/, "whichever entry is first in the queue array wins, regardless of its `to`");
+  assert.doesNotMatch(forEarlier.resolution, /--apply --only dec_a to accept/);
 });
