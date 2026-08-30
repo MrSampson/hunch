@@ -129,6 +129,34 @@ test("repair-provenance dry run (no --apply) reports the plan, queues it, and ch
   }
 });
 
+test("repair-provenance's fresh-detection merge on a duplicate-id queue overrides only the entry pickRewrite would pick, leaving the untargeted sibling queued (#56)", () => {
+  const fixture = squashFixture();
+  try {
+    // A corrupted queue file, a hand edit, or a bug elsewhere could leave two
+    // entries queued for the same decision id, both otherwise valid. A fresh
+    // match for that id must override only the one pickRewrite would ever
+    // actually apply (first match) — not silently collapse both into the
+    // fresh entry with no tombstone and no record of what was destroyed.
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([
+        { id: "dec_squash_fixture", from: fixture.origCommit, to: "sha_stale_1" },
+        { id: "dec_squash_fixture", from: fixture.origCommit, to: "sha_stale_2" },
+      ], null, 2) + "\n",
+    );
+
+    const run = runCli(fixture.root, "repair-provenance", "--range", `${fixture.oldRef}..${fixture.newRef}`, "--quiet");
+    assert.equal(run.status, 0, run.stderr);
+
+    const queue = readQueue(fixture.root) as { id: string; from: string; to: string }[];
+    assert.equal(queue.length, 2, "the untargeted sibling must survive the fresh match, not be silently destroyed");
+    assert.equal(queue[0]!.to, git(fixture.root, "rev-parse", "--short", fixture.newRef), "the fresh match itself is queued");
+    assert.deepEqual(queue[1], { id: "dec_squash_fixture", from: fixture.origCommit, to: "sha_stale_2" }, "the never-would-apply second entry is untouched");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("repair-provenance --from-hook (no --apply, matches installed hook exactly) detects and QUEUES, never writes the decision", () => {
   const fixture = squashFixture();
   try {

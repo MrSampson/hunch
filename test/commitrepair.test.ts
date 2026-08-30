@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, pickRewrite, mergeRewrites, liveRewrites, deadRewrites, resolvedRewriteIds, withoutDropped, addDropped, withheldForUnresolvableTo } from "../src/core/commitrepair.js";
+import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, pickRewrite, mergeRewrites, firstFor, liveRewrites, deadRewrites, resolvedRewriteIds, withoutDropped, addDropped, withheldForUnresolvableTo } from "../src/core/commitrepair.js";
 import type { Decision } from "../src/core/types.js";
 import type { CommitCandidate, CommitRepairStatus } from "../src/extractors/git.js";
 
@@ -113,6 +113,17 @@ test("repairDecisionCommit: bails atomically when the record's commit moved on s
   assert.equal(repairDecisionCommit(d, plan), d);
 });
 
+test("firstFor: returns the first entry for an id, by object identity, when duplicates share it", () => {
+  const first = { id: "dec_1", from: "sha_old", to: "sha_new" };
+  const second = { id: "dec_1", from: "sha_old", to: "sha_other" };
+  assert.equal(firstFor([first, second], "dec_1"), first);
+  assert.notEqual(firstFor([first, second], "dec_1"), second);
+});
+
+test("firstFor: returns undefined when no entry matches the id", () => {
+  assert.equal(firstFor([{ id: "dec_other", from: "sha_a", to: "sha_b" }], "dec_1"), undefined);
+});
+
 test("pickRewrite: returns the first entry for a decision id, matching repairDecisionCommit's own pick when a plan carries same-id duplicates", () => {
   const first = { id: "dec_1", from: "sha_old", to: "sha_new" };
   const second = { id: "dec_1", from: "sha_old", to: "sha_other" };
@@ -143,6 +154,14 @@ test("mergeRewrites: queued-only and fresh-only entries both pass through", () =
 
 test("mergeRewrites: empty inputs produce an empty result", () => {
   assert.deepEqual(mergeRewrites([], []), []);
+});
+
+test("mergeRewrites: a fresh match on a duplicate-id queue overrides only the entry pickRewrite would pick, leaving the untargeted sibling queued (#56)", () => {
+  const fresh = [{ id: "dec_1", from: "sha_old", to: "sha_fresh" }];
+  const first = { id: "dec_1", from: "sha_old", to: "sha_stale_1" };
+  const second = { id: "dec_1", from: "sha_old", to: "sha_stale_2" };
+  const queued = [first, second];
+  assert.deepEqual(mergeRewrites(fresh, queued), [fresh[0], second], "only the first-match sibling is overridden; the second survives untouched");
 });
 
 test("liveRewrites: drops an entry whose decision no longer exists or whose commit already moved on", () => {
