@@ -18,7 +18,7 @@ import { decisionId, findingId } from "../core/ids.js";
 import { buildCorrectionConstraint } from "../core/correction.js";
 import { knownRepoDeps } from "../synthesis/tripwires.js";
 import { refreshExistingGrounding } from "../integrations/providers.js";
-import { revParse, asOfDate, revExists, lastChangeDate, rangeFiles, rangeDiff, commitFiles, commitDiff, stagedFiles, stagedDiff, workingFiles, workingDiff, pullHunchStatus, sameRemoteUrl, currentBranch, linkedWorktreePaths, type HunchPullStatus } from "../extractors/git.js";
+import { revParse, asOfDate, revExists, lastChangeDate, rangeFiles, rangeDiff, commitFiles, commitDiff, stagedFiles, stagedDiff, workingFiles, workingDiff, pullHunchStatus, sameRemoteUrl, currentBranch, worktreePaths, pathKnownToHistory, type HunchPullStatus } from "../extractors/git.js";
 import { flushCapture, flushMemoryHome, pinSharedRemote } from "../integrations/sync.js";
 import { advertisedTeamRemoteContract, ensureTeamOverlay, overlayMatchesTeamRemote, readTeamConfig, teamRemoteContract, teamSharedRef } from "../integrations/team.js";
 import { formatStructure } from "../core/format.js";
@@ -157,28 +157,43 @@ const destinationNote = (destRoot: string): string => {
  *  pass it — a subagent spawned straight into its own linked worktree has no reason
  *  to think of the session's "starting directory" as different from its own, so the
  *  hint is silently omitted and the write lands wherever `root` last was (often the
- *  primary checkout, on its default branch). This is the last-resort backstop: when a
- *  decision names related_files that don't exist at the resolved root but DO exist in
- *  exactly the kind of place this bug lands them in — a sibling linked worktree — every
- *  such worktree is named as a candidate `cwd` and the write is refused rather than
- *  risked. Returns every match rather than the first: two sibling worktrees can
- *  plausibly share a same-named untracked file from unrelated concurrent work, and
- *  confidently naming just one would let a caller that blindly retries as instructed
- *  land in the WRONG worktree — the same failure mode one level removed. Empty when
- *  related_files is empty or no sibling worktree does any better, so a decision that
- *  legitimately precedes its code (no files yet) is unaffected.
+ *  primary checkout, on its default branch). This is a backstop, NOT a complete fix:
+ *  it only catches a decision whose related_files are new/untracked at the resolved
+ *  root but already exist in a sibling worktree — the common "edited an existing
+ *  tracked file" case is invisible to a pure existence check (the file exists at every
+ *  worktree, just with different content) and still reproduces (see #62, which tracks
+ *  extending this beyond hunch_record_decision and this gap together). Every matching
+ *  sibling is named as a candidate `cwd` and the write is refused rather than risked;
+ *  it returns every match rather than the first, since confidently naming just one
+ *  would let a caller that blindly retries as instructed land in the WRONG worktree —
+ *  the same failure mode one level removed.
+ *
+ *  Two false-positive guards, both required, not optional hardening:
+ *  - Empty related_files, or no sibling worktree doing any better, is silent — a
+ *    decision that legitimately precedes its code (no files yet) is unaffected.
+ *  - A related_files entry ABSENT at the root is not automatically suspicious: an
+ *    ordinary delete/rename recorded correctly at the resolved root produces the exact
+ *    same shape (file gone here, still present in whichever sibling worktree branched
+ *    before the change) as a genuine misroute. `pathKnownToHistory` distinguishes
+ *    them — a path this checkout's own HEAD has ever tracked explains its absence
+ *    without invoking a worktree guess (issue #54 review, C1: without this, deleting a
+ *    related file at the CORRECT root was refused and pointed at the wrong sibling).
  *
  *  Coverage boundary: only checks related_files as passed in THIS call, not values
  *  inherited from an existing record on re-record/supersede — a call that omits
  *  related_files to rely on inheritance won't trip this guard even if it's happening
  *  in the wrong worktree. That's a deliberate tradeoff against false positives on
- *  stale evidence, not full coverage of every misrouted write. */
-const misroutedWorktreeCandidates = (root: string, relatedFiles: readonly string[]): string[] => {
+ *  stale evidence, not full coverage of every misrouted write.
+ *
+ *  Exported for direct unit testing (issue #54 review, I2) — the candidate logic is
+ *  otherwise reachable only through a full MCP client/server integration test. */
+export const misroutedWorktreeCandidates = (root: string, relatedFiles: readonly string[]): string[] => {
   if (!relatedFiles.length) return [];
   if (relatedFiles.some((f) => existsSync(join(root, f)))) return [];
+  if (relatedFiles.some((f) => pathKnownToHistory(root, f))) return [];
   const here = canonicalRootPath(root);
   const candidates: string[] = [];
-  for (const candidate of linkedWorktreePaths(root)) {
+  for (const candidate of worktreePaths(root)) {
     if (canonicalRootPath(candidate) === here) continue;
     if (relatedFiles.some((f) => existsSync(join(candidate, f)))) candidates.push(candidate);
   }
