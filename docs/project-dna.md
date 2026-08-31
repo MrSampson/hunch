@@ -87,6 +87,17 @@ Examples of currently checkable traits:
 
 The match score is advisory. It must never block a commit/PR by itself and must never be presented as proof of maintainer acceptance.
 
+## Agent and CLI surfaces
+
+The same canonical contract is available without writing memory:
+
+```text
+hunch dna inspect [--ref <commit>] [--json]
+hunch dna match --kind <commit|pull_request|issue|message> --title <text> [--body <text>] [--ref <commit>] [--json]
+```
+
+MCP clients use `hunch_project_dna` for the sealed profile and `hunch_project_match` for an explainable artifact evaluation. Both tools return structured content, remain bound to an exact Git revision, and describe their result as advisory observation. They never adopt traits, mutate the graph or grant enforcement authority.
+
 ## Drift and currentness
 
 DNA does not mutate in place. A profile belongs to one exact repository revision. A newer revision produces a newly sealed profile. Consumers can therefore distinguish:
@@ -113,7 +124,7 @@ Those inferred hypotheses must live above DNA, carry separate confidence/evidenc
 
 ## Next production slices
 
-1. Thin CLI/MCP projections over the canonical library contract.
+1. ~~Thin CLI/MCP projections over the canonical library contract.~~ Landed: read-only CLI and structured MCP surfaces share the sealed core contract.
 2. Delivery-envelope integration with a bounded DNA orientation budget and native receipt evidence.
 3. Hunch Memory additive transport that preserves the Hunch profile/match envelope without interpreting it.
 4. ORC ContextAssembler integration as a distinct Hunch-derived Stage section, preserving provider provenance and host-owned final budget.
