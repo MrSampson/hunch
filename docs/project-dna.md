@@ -1,0 +1,123 @@
+# Project DNA Engine
+
+Project DNA is Hunch's evidence-bound model of **how a repository communicates and works**. It is not a model persona and it is not a second memory store.
+
+The durable architecture remains:
+
+```text
+committed repository evidence
+        │
+        ▼
+Hunch Project DNA
+  deterministic observed traits
+  confidence + exact revision + evidence hashes
+        │
+        ▼
+validated Hunch delivery
+        │
+        ▼
+Hunch Memory
+  transport/isolation/durability only
+        │
+        ▼
+host context assembly (for example ORC)
+        │
+        ▼
+policy-selected agent
+```
+
+## Authority boundary
+
+A Project DNA trait is an **observation** until separately promoted through Hunch's existing reviewed durable-knowledge mechanisms. DNA may influence orientation, wording and advisory match scoring. It may not create or override a Decision, Constraint, Finding, policy, conformance rule or execution authorization.
+
+The first implementation is intentionally network-free and model-free. `discoverProjectDna(root, revision)` reads only:
+
+- up to 200 non-merge commit subjects reachable from one exact commit;
+- bounded committed convention files such as `CONTRIBUTING.md`, PR templates, `AGENTS.md` and `CLAUDE.md`;
+- no dirty worktree state;
+- no GitHub API, review comments, user profile, transcript, model output or private global state.
+
+This makes the profile reproducible for a source revision and safe to transport as provider evidence.
+
+## Contract
+
+The canonical library contract is `hunch.project-dna/1` in `src/core/projectDna.ts`.
+
+A profile contains:
+
+- `profile_id`: content-addressed profile identity;
+- `repository_revision`: exact Git commit;
+- bounded history/source counts;
+- ordered traits;
+- a content seal.
+
+Each trait contains:
+
+- stable trait ID;
+- category (`communication`, `engineering`, `review`, `culture`, `vocabulary`);
+- stable key;
+- concise claim;
+- confidence;
+- one or more exact-revision evidence references with content hashes.
+
+The first deterministic discovery signals include:
+
+- Conventional Commit prevalence;
+- title terminal-punctuation convention;
+- lowercase descriptive-title convention;
+- issue-reference prevalence when strongly established;
+- repeated repository vocabulary in commit subjects;
+- explicit committed expectations around tests, focused changes, backward compatibility, documentation and explaining PR rationale.
+
+A signal is emitted only after a bounded threshold is met. Small histories do not manufacture communication culture.
+
+## Project Match
+
+`evaluateProjectDnaMatch(profile, artifact)` produces `hunch.project-dna-match/1`.
+
+Only traits with a deterministic check for that artifact participate in the score. Orientation-only traits are retained with `applicable: false`; they do not silently become pass/fail guesses.
+
+Examples of currently checkable traits:
+
+- commit subject follows the observed Conventional Commit form;
+- title follows terminal punctuation convention;
+- descriptive title follows observed lowercase convention;
+- expected issue reference is present;
+- a PR body contains an explicit rationale signal when the repository has an evidence-backed `pr.explain_why` trait.
+
+The match score is advisory. It must never block a commit/PR by itself and must never be presented as proof of maintainer acceptance.
+
+## Drift and currentness
+
+DNA does not mutate in place. A profile belongs to one exact repository revision. A newer revision produces a newly sealed profile. Consumers can therefore distinguish:
+
+```text
+same profile_id       -> exact same observed DNA
+new profile_id        -> evidence set and/or derived traits changed
+old repository_revision -> stale for a newer checkout unless explicitly requested for history
+```
+
+This is the anti-drift foundation. Later continuous learning should compare profiles and surface trait changes as reviewable deltas rather than rewriting historical DNA.
+
+## Relationship to Repository Intelligence
+
+Project DNA answers:
+
+> How does this repository demonstrably communicate and work?
+
+Repository Intelligence may later answer:
+
+> What might those signals imply about risk, trajectory or likely maintainer reaction?
+
+Those inferred hypotheses must live above DNA, carry separate confidence/evidence and never silently write back into the factual DNA profile.
+
+## Next production slices
+
+1. Thin CLI/MCP projections over the canonical library contract.
+2. Delivery-envelope integration with a bounded DNA orientation budget and native receipt evidence.
+3. Hunch Memory additive transport that preserves the Hunch profile/match envelope without interpreting it.
+4. ORC ContextAssembler integration as a distinct Hunch-derived Stage section, preserving provider provenance and host-owned final budget.
+5. Optional host-provided review/PR evidence intake through a bounded candidate contract; no ambient GitHub scraping inside Hunch core.
+6. Profile-delta/currentness reporting and repository-scale validation, including the Infection pilot.
+
+The implementation order is intentional: semantics and evidence are frozen before transport and orchestration adapters consume them.
