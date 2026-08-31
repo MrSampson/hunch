@@ -261,6 +261,8 @@ is `roadmap.engineering-landscape-hlg-2` (`dec_9130451387`).
 Decision freshness/staleness scoring is now live for context ranking only. Hunch reuses the existing
 `provenance.last_verified` and `related_files` clocks, resolves changed paths in one bounded Git
 history pass, and keeps a HEAD-keyed process cache so repeat MCP/CLI queries do not respawn Git.
+Consumers that keep memory in a separate writable repository can bind ranking to their configured
+code checkout explicitly; the cache is fenced by both repository root and HEAD.
 Proven file-change staleness applies only a bounded positional dimmer: it never retires, withholds,
 supersedes, blocks, or weakens a decision's authority. Missing/invalid clocks, unsafe scopes,
 oversized evidence and Git uncertainty remain neutral rather than guessed.
