@@ -1,6 +1,6 @@
 # Project DNA Engine
 
-Status: **P1 strategic initiative — planned**
+Status: **P1 strategic initiative — production implementation in progress across Hunch, Hunch Memory and ORC**
 
 ## Vision
 
