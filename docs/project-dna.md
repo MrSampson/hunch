@@ -46,6 +46,7 @@ The canonical library contract is `hunch.project-dna/1` in `src/core/projectDna.
 A profile contains:
 
 - `profile_id`: content-addressed profile identity;
+- `repository_id`: clone-stable, opaque repository-lineage identity derived from root commits;
 - `repository_revision`: exact Git commit;
 - bounded history/source counts;
 - ordered traits;
@@ -58,7 +59,12 @@ Each trait contains:
 - stable key;
 - concise claim;
 - confidence;
+- explicit observed/current/non-contradicted state;
 - one or more exact-revision evidence references with content hashes.
+
+Every evidence reference is labelled `committed-repository` with repository visibility. Hunch never
+puts dirty-worktree bytes, credentials, filesystem paths, ambient GitHub data or model output in the
+profile.
 
 The first deterministic discovery signals include:
 
@@ -94,9 +100,15 @@ The same canonical contract is available without writing memory:
 ```text
 hunch dna inspect [--ref <commit>] [--json]
 hunch dna match --kind <commit|pull_request|issue|message> --title <text> [--body <text>] [--ref <commit>] [--json]
+hunch dna context [--ref <commit>] [--traits <count>] [--json]
+hunch dna diff <from> <to> [--json]
 ```
 
-MCP clients use `hunch_project_dna` for the sealed profile and `hunch_project_match` for an explainable artifact evaluation. Both tools return structured content, remain bound to an exact Git revision, and describe their result as advisory observation. They never adopt traits, mutate the graph or grant enforcement authority.
+Programmatic consumers import the stable `@davesheffer/hunch/project-dna` entry point. MCP clients use
+`hunch_project_dna` for the sealed profile, `hunch_project_dna_delta` for drift, and
+`hunch_project_match` for an explainable artifact evaluation. Normal `hunch_context` delivery now
+adds the same bounded DNA supplement after ranked memory when budget remains. These surfaces never
+adopt traits, mutate the graph or grant enforcement authority.
 
 ## Drift and currentness
 
@@ -122,13 +134,21 @@ Repository Intelligence may later answer:
 
 Those inferred hypotheses must live above DNA, carry separate confidence/evidence and never silently write back into the factual DNA profile.
 
+## Cross-product contract map
+
+| Layer | Owns | Must not own |
+| --- | --- | --- |
+| Hunch | inference, profile/match/delta schemas, seals, bounded delivery | persistence tenancy, final prompts, execution authority |
+| Hunch Memory | authenticated store scope, immutable snapshots/deltas, compatibility transport | inference, trait ranking changes, policy promotion |
+| ORC | source authorization, revision binding, role-shaped context, receipts, fallback | rewriting Hunch evidence or treating DNA as authority |
+
 ## Next production slices
 
 1. ~~Thin CLI/MCP projections over the canonical library contract.~~ Landed: read-only CLI and structured MCP surfaces share the sealed core contract.
-2. Delivery-envelope integration with a bounded DNA orientation budget and native receipt evidence.
+2. ~~Delivery-envelope integration with a bounded DNA orientation budget.~~ Landed in normal MCP context delivery.
 3. Hunch Memory additive transport that preserves the Hunch profile/match envelope without interpreting it.
 4. ORC ContextAssembler integration as a distinct Hunch-derived Stage section, preserving provider provenance and host-owned final budget.
 5. Optional host-provided review/PR evidence intake through a bounded candidate contract; no ambient GitHub scraping inside Hunch core.
-6. Profile-delta/currentness reporting and repository-scale validation, including the Infection pilot.
+6. ~~Profile-delta/currentness reporting.~~ Sealed deltas landed; repository-scale validation, including the Infection pilot, remains.
 
 The implementation order is intentional: semantics and evidence are frozen before transport and orchestration adapters consume them.
