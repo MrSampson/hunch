@@ -151,6 +151,18 @@ Use later maintainer outcomes as evidence-bearing candidates. Add contradiction 
 
 Only after the repository-local model is validated, explore reusable/cached DNA profiles for public repositories. Cached DNA must remain revision-bound and refreshable; it never overrides local/current evidence.
 
+## Post-DNA handoff
+
+The initial cross-product implementation is complete; the current exit gate is a genuine
+receipt-bound DNA usefulness classification from a fresh production Run. Project Match, conformance,
+tests and deployment health are mechanism evidence, not causal usefulness evidence.
+
+After that gate, DNA remains an observational input to Proof-Carrying Changes. Native Hunch proof
+may reference the exact profile/snapshot/retrieval and role projection, but neither it nor ORC's
+Passport may mutate DNA, infer a label, rank/promote knowledge or grant execution/merge authority.
+Order is owned by ORC's [`PROOF-CARRYING-CHANGES.md`](https://github.com/davesheffer/orc/blob/main/docs/PROOF-CARRYING-CHANGES.md)
+and mirrored in `ROADMAP.md`.
+
 ## Acceptance criteria
 
 Project DNA is successful when, on a repository unfamiliar to the agent:
