@@ -153,11 +153,12 @@ Only after the repository-local model is validated, explore reusable/cached DNA 
 
 ## Post-DNA handoff
 
-The initial cross-product implementation is complete; the current exit gate is a genuine
-receipt-bound DNA usefulness classification from a fresh production Run. Project Match, conformance,
-tests and deployment health are mechanism evidence, not causal usefulness evidence.
+The initial cross-product implementation is complete. The genuine receipt-bound production gate
+passed on 2026-09-02 with two accountable `repo/voice` classifications and the same-store aggregate
+change (`retained=2`, `classified=2`, `evidenceBacked=2`, `used=2`). Project Match, conformance,
+tests and deployment health did not supply those labels; silence remains a tested `unknown`.
 
-After that gate, DNA remains an observational input to Proof-Carrying Changes. Native Hunch proof
+After that completed gate, DNA remains an observational input to Proof-Carrying Changes. Native Hunch proof
 may reference the exact profile/snapshot/retrieval and role projection, but neither it nor ORC's
 Passport may mutate DNA, infer a label, rank/promote knowledge or grant execution/merge authority.
 Order is owned by ORC's [`PROOF-CARRYING-CHANGES.md`](https://github.com/davesheffer/orc/blob/main/docs/PROOF-CARRYING-CHANGES.md)

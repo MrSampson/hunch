@@ -54,14 +54,16 @@ preserves the fragment and native receipt without owning ranking, traversal or O
 
 ## Cross-repository order — Project DNA to Proof-Carrying Changes
 
-The initial Project DNA implementation across Hunch, Hunch Memory and ORC is deployed. The current
-gate is empirical usefulness: one fresh production Run must bind modern DNA delivery to a genuine
-accountable-human or independent-review classification and prove the exact Memory-store aggregate
-change. Project Match, conformance, rollout health and passing tests cannot satisfy that gate.
+The initial Project DNA implementation across Hunch, Hunch Memory and ORC is deployed. Its
+empirical-usefulness gate passed on 2026-09-02: a fresh exact-revision production Run bound modern
+DNA delivery to two accountable `repo/voice` classifications, and the same authenticated Memory
+store reported `retained=2`, `classified=2`, `evidenceBacked=2`, `unknown=0`, and `used=2` after
+restart-safe admission. Silence remains a tested `unknown`; Project Match, conformance, rollout
+health and passing tests did not supply the labels.
 
 ```text
-Project DNA usefulness proof
-  -> freeze ORC Change Passport contract/evidence matrix
+Project DNA usefulness proof — complete
+  -> freeze ORC Change Passport contract/evidence matrix — complete
   -> Hunch native change proof
   -> Hunch Memory isolated proof transport
   -> ORC cross-repository assembly and PR projection
@@ -70,7 +72,12 @@ Project DNA usefulness proof
 ```
 
 See ORC's [`PROOF-CARRYING-CHANGES.md`](https://github.com/davesheffer/orc/blob/main/docs/PROOF-CARRYING-CHANGES.md).
-The sequence adds a proof surface without changing the ownership boundary above.
+The trio uses its frozen `orc.change-passport-evidence-matrix/1`: standard and high-risk changes
+have one repository lane; multi-repository changes have at least two and add combined-validation
+and compatibility-window evidence. Hunch supplies only native `change_identity` and
+`semantic_proof` evidence; ORC derives eligibility and Hunch Memory transports without rewriting
+the proof. Missing/unknown remains partial and failed/stale remains ineligible. The sequence adds a
+proof surface without changing the ownership boundary above.
 
 ## Engineering Landscape Graph — initial production path complete
 
@@ -402,7 +409,7 @@ gate—known, unknown, evidence-backed and per-signal counts must establish a me
 before usefulness can influence ranking. Until then, retained observations have zero ranking,
 promotion or authority effect.
 
-### After the Project DNA usefulness gate — native Hunch change proof
+### Next — PCC-2 native Hunch change proof
 
 Hunch's contribution is semantic and independently usable; it does not become execution, CI,
 deployment or merge authority.
