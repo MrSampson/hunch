@@ -409,16 +409,16 @@ gate—known, unknown, evidence-backed and per-signal counts must establish a me
 before usefulness can influence ranking. Until then, retained observations have zero ranking,
 promotion or authority effect.
 
-### Next — PCC-2 native Hunch change proof
+### In progress — PCC-2 native Hunch change proof
 
 Hunch's contribution is semantic and independently usable; it does not become execution, CI,
 deployment or merge authority.
 
-1. **PCC-2.1 — freeze `hunch.change-proof/1`.** Bind exact change identity, repository/base/result revisions, current DNA seals, decisions/constraints, blast radius, conformance, omissions and unknowns.
-2. **PCC-2.2 — expose `hunch prove` through CLI/MCP.** Produce the same deterministic proof standalone; external execution/reviewer/CI/deployment claims stay out of scope.
-3. **PCC-2.3 — support exact transport.** Give Hunch Memory a feature-detectable canonical envelope and fixtures without service-side schema/ranking logic.
-4. **PCC-2.4 — support Passport composition.** ORC references the untouched native proof; it may derive Passport completeness but cannot rewrite Hunch's verdict.
-5. **PCC-2.5 — validate publicly.** Dogfood the trio, then publish schema/fixtures and blind maintainer outcomes, including failures and unknowns.
+1. **PCC-2.1 — shipped: freeze `hunch.change-proof/1`.** The canonical sealed contract binds exact change identity, repository/base/result revisions, current DNA seals, decisions/constraints, two-tree blast radius, result conformance, strict guard evidence, omissions and unknowns.
+2. **PCC-2.2 — shipped: expose `hunch prove` through CLI/MCP.** `hunch prove` and `hunch_change_proof` use one deterministic derivation; external execution/reviewer/CI/deployment claims remain explicitly false.
+3. **PCC-2.3 — shipped: support exact transport.** The public package exports the authoritative validator and ships a versioned JSON Schema plus sealed fixture. Hunch still owns schema and semantic derivation; no service-side ranking logic was added.
+4. **PCC-2.4 — next: support Passport composition.** ORC references the untouched native proof; it may derive Passport completeness but cannot rewrite Hunch's verdict.
+5. **PCC-2.5 — open: validate publicly.** Dogfood the trio, then publish blind maintainer outcomes, including failures and unknowns.
 
 **Done means:** the same exact change yields the same native proof locally and through an independent
 consumer, every claim has exact evidence or a gap, drift invalidates reuse, and proof grants no
