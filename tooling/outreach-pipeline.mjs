@@ -23,7 +23,7 @@ export const PROOFS = Object.freeze({
   "delivery-gap": {
     short: "In a 20-session test, coding agents opened an installed instruction skill zero times; guaranteed delivery made the discriminating hard-bug cases pass.",
     caveat: "This measures delivery of project knowledge, not general model quality.",
-    url: "https://hunch-pi.vercel.app/blog/post?slug=skills-are-never-read",
+    url: "https://www.hunchmemory.com/blog/post?slug=skills-are-never-read",
   },
 });
 
