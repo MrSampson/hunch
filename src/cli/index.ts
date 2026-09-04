@@ -144,9 +144,27 @@ import { ENTITY_KINDS } from "../core/types.js";
 import { planCompaction } from "../store/compact.js";
 import { repairDecisionReference } from "../core/refrepair.js";
 import { resolveInvocation, dim, synthesisStatusLines, maybeWarnOllamaContext } from "./invocation.js";
+import { checkForUpdate, formatUpdateNotice, shouldCheckForUpdate } from "../core/updatecheck.js";
 
 const program = new Command();
 program.name("hunch").description("Hunch — engineering memory and a deterministic Change Gate for AI-assisted codebases.").version(HUNCH_VERSION);
+
+// Fire-and-forget: never awaited, so a slow/unreachable registry never delays a
+// command. shouldCheckForUpdate skips `hunch mcp` (invoked by Claude Code, not
+// read by a human at a terminal) and any non-TTY invocation — piped/redirected/
+// spawned processes have no one to show the notice to, which is also what keeps
+// every test in this suite that spawns the CLI (piped stdio, so never a TTY)
+// from making a real registry call and writing a real cache file to $HOME as a
+// side effect of running `npm test`. See UpdateCheckOptions for the explicit
+// opt-outs (HUNCH_NO_UPDATE_CHECK, CI) used by any non-spawned caller.
+program.hook("preAction", (_thisCommand, actionCommand) => {
+  if (!shouldCheckForUpdate({ commandName: actionCommand.name(), isTTY: process.stderr.isTTY === true })) return;
+  void checkForUpdate()
+    .then((result) => {
+      if (result) console.error(dim(formatUpdateNotice(result)));
+    })
+    .catch(() => {});
+});
 
 let openStore: HunchStore | null = null;
 type TeamStoreOptions = { requireFreshTeamMemory?: boolean };
