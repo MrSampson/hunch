@@ -2,6 +2,106 @@
 
 ## Unreleased
 
+## 1.23.2 — 2026-09-03
+
+### The public site moves to hunchmemory.com
+
+Hunch's public site now lives at https://www.hunchmemory.com; the package, plugin and MCP registry
+manifests point there instead of the old Vercel preview host. Page titles use the two-word
+"Hunch Memory" form, and the site ships a generated sitemap and robots.txt. No runtime code changed
+since 1.23.1.
+
+## 1.23.1 — 2026-09-03
+
+### The change-proof contracts actually ship
+
+The 1.23.0 tag never reached npm: the trusted release workflow refused the candidate tarball because
+its package-path allowlist predated the `contracts/change-proof/*.json` fixtures and the change-proof
+`.d.ts` entries that 1.23.0 added to `files`. The allowlist now admits exactly those paths, and
+`npm test` executes the workflow's own allowlist against `npm pack --dry-run` so a `files`/allowlist
+mismatch fails before a tag exists. No runtime code changed since 1.23.0.
+
+## 1.23.0 — 2026-09-03
+
+### Exact changes now carry native semantic proof
+
+`hunch prove` and `hunch_change_proof` now emit the same canonical
+`hunch.change-proof/1` artifact. The proof binds exact Git change identity, repository and Project
+DNA revisions, base/result semantic graphs, relevant decisions and constraints, blast radius,
+conformance, the strict Change Gate result, and explicit omissions/unknowns. Publication-safe
+derivation excludes private-overlay records at the read boundary.
+
+The package exports the seal validator and ships a versioned JSON Schema plus sealed fixture for
+independent consumers. The proof is evidence only and explicitly grants no execution, CI,
+deployment, merge, ranking, promotion, or policy authority.
+
+## 1.22.3 — 2026-09-01
+
+### Project DNA feedback keeps receipts
+
+Project DNA now has a distinct, content-addressed usefulness-observation contract that binds the
+exact Hunch Memory delivery receipt, profile and snapshot hashes, role-shaped trait projection,
+downstream artifact and Project Match assessment. Project Match remains explicitly non-causal:
+automatic outcomes can report only `unknown`, while every classified signal requires an exact
+explicit-human or independent-review evidence reference.
+
+Contradiction and staleness can create open advisory review work, but observations cannot mutate a
+profile, change ranking, promote knowledge or grant authority.
+
+## 1.22.2 — 2026-09-01
+
+### Cold graph refresh stays inside the budget
+
+Private/shared memory publication no longer repeats the same repository-publication and remote-contract
+proofs twice after a successful merge when no mutation boundary exists between them. The push helper still
+re-proves both boundaries immediately at the actual push seam, so source isolation, remote identity and
+honest durability reporting remain fail-closed.
+
+On the 1,011-file ORC checkout, Hunch Memory's 750-record cold pilot completed graph refresh in 8.85 seconds
+and ORC's fresh-process live Project DNA retrieval completed in 7.80 seconds, both within the strict
+10-second budget. All 45 overlay publication, sync, race, hook and ancestry guards remain green.
+
+## 1.22.1 — 2026-08-31
+
+### Cold graph refresh fits the strict budget
+
+Exact-commit scans now validate immutable Git blobs once, then hydrate them through bounded
+`git cat-file --batch` processes. Per-file type, size, UTF-8, content-hash and repeat-read guarantees
+remain intact, while a 1,009-file ORC scan fell from 41.0 seconds to 3.0 seconds. The complete cold
+path through a separate Hunch Memory server took 5.0 seconds, and ORC retrieval completed in 6.27
+seconds—inside its strict 10-second budget.
+
+The repository integration also includes native Windsurf lifecycle hooks so Hunch context and
+learning follow the same install, prompt, failure and shutdown moments as the other supported
+agents.
+
+## 1.22.0 — 2026-08-31
+
+### Project DNA learns from authorized collaboration evidence
+
+Hunch can now derive repository-native vocabulary and contribution guidance from bounded,
+caller-supplied pull-request and review evidence. Every evidence batch is canonical, sealed, tied to
+an exact Git revision and validated before use; raw collaboration text never enters the Project DNA
+profile, while each derived trait retains an explainable evidence reference.
+
+The public `@davesheffer/hunch/project-dna` library surface now includes the typed evidence contract,
+validator and stable TypeScript declarations needed by cross-repository consumers. Existing callers
+that provide no host evidence keep the same deterministic code-and-memory-only profile.
+
+## 1.21.1 — 2026-08-31
+
+### The agent speaks the repository's language
+
+Project DNA gives Hunch an evidence-bound, revision-specific view of how a repository communicates
+and works. Normal `hunch_context` delivery can now include a compact DNA supplement, while new CLI,
+MCP and library surfaces expose the sealed profile, explainable Project Match checks and profile
+deltas. The result is repository-native terminology and contribution guidance without turning
+observed style into policy or impersonating a maintainer.
+
+This patch also makes 1.21 upgrades safe for installed clients: generated Claude hooks keep a
+portable exact npm pin, legacy Hunch hooks are replaced instead of duplicated, and unrelated user
+hooks remain untouched.
+
 ## 1.20.2 — 2026-08-29
 
 ### Snapshot deletion is durable without risking source

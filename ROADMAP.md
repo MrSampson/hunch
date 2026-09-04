@@ -1,6 +1,6 @@
 # Hunch roadmap
 
-Updated 2026-08-29.
+Updated 2026-09-02.
 
 Hunch is building the validated delivery layer for engineering intent: record why the code is the
 way it is, deliver the right evidence at the moment an agent needs it, and deterministically check
@@ -51,6 +51,33 @@ Hunch publishes durable, repository-evidenced landscape fragments; ORC's recipro
 owns authorized cross-repository traversal, live discovery and task-scoped assembly. Hunch Memory's
 reciprocal [transport contract](https://github.com/davesheffer/hunch-memory/blob/main/docs/ENGINEERING-LANDSCAPE-TRANSPORT.md)
 preserves the fragment and native receipt without owning ranking, traversal or ORC caching.
+
+## Cross-repository order — Project DNA to Proof-Carrying Changes
+
+The initial Project DNA implementation across Hunch, Hunch Memory and ORC is deployed. Its
+empirical-usefulness gate passed on 2026-09-02: a fresh exact-revision production Run bound modern
+DNA delivery to two accountable `repo/voice` classifications, and the same authenticated Memory
+store reported `retained=2`, `classified=2`, `evidenceBacked=2`, `unknown=0`, and `used=2` after
+restart-safe admission. Silence remains a tested `unknown`; Project Match, conformance, rollout
+health and passing tests did not supply the labels.
+
+```text
+Project DNA usefulness proof — complete
+  -> freeze ORC Change Passport contract/evidence matrix — complete
+  -> Hunch native change proof
+  -> Hunch Memory isolated proof transport
+  -> ORC cross-repository assembly and PR projection
+  -> trio dogfood
+  -> open protocol and external pilots
+```
+
+See ORC's [`PROOF-CARRYING-CHANGES.md`](https://github.com/davesheffer/orc/blob/main/docs/PROOF-CARRYING-CHANGES.md).
+The trio uses its frozen `orc.change-passport-evidence-matrix/1`: standard and high-risk changes
+have one repository lane; multi-repository changes have at least two and add combined-validation
+and compatibility-window evidence. Hunch supplies only native `change_identity` and
+`semantic_proof` evidence; ORC derives eligibility and Hunch Memory transports without rewriting
+the proof. Missing/unknown remains partial and failed/stale remains ineligible. The sequence adds a
+proof surface without changing the ownership boundary above.
 
 ## Engineering Landscape Graph — initial production path complete
 
@@ -258,8 +285,14 @@ is `roadmap.engineering-landscape-hlg-2` (`dec_9130451387`).
   graph authority.
 - Root-level indexed files use exact component paths rather than a match-everything glob.
 
-Still near-term: freshness/staleness scoring for decisions feeding context ranking only — never
-authority.
+Decision freshness/staleness scoring is now live for context ranking only. Hunch reuses the existing
+`provenance.last_verified` and `related_files` clocks, resolves changed paths in one bounded Git
+history pass, and keeps a HEAD-keyed process cache so repeat MCP/CLI queries do not respawn Git.
+Consumers that keep memory in a separate writable repository can bind ranking to their configured
+code checkout explicitly; the cache is fenced by both repository root and HEAD.
+Proven file-change staleness applies only a bounded positional dimmer: it never retires, withholds,
+supersedes, blocks, or weakens a decision's authority. Missing/invalid clocks, unsafe scopes,
+oversized evidence and Git uncertainty remain neutral rather than guessed.
 
 ## Next — close the Infection PHP and ADR audit
 
@@ -375,6 +408,21 @@ retained usefulness signals and publish the benchmark named above. Aggregate cov
 gate—known, unknown, evidence-backed and per-signal counts must establish a meaningful baseline
 before usefulness can influence ranking. Until then, retained observations have zero ranking,
 promotion or authority effect.
+
+### In progress — PCC-2 native Hunch change proof
+
+Hunch's contribution is semantic and independently usable; it does not become execution, CI,
+deployment or merge authority.
+
+1. **PCC-2.1 — shipped: freeze `hunch.change-proof/1`.** The canonical sealed contract binds exact change identity, repository/base/result revisions, current DNA seals, decisions/constraints, two-tree blast radius, result conformance, strict guard evidence, omissions and unknowns.
+2. **PCC-2.2 — shipped: expose `hunch prove` through CLI/MCP.** `hunch prove` and `hunch_change_proof` use one deterministic derivation; external execution/reviewer/CI/deployment claims remain explicitly false.
+3. **PCC-2.3 — shipped: support exact transport.** The public package exports the authoritative validator and ships a versioned JSON Schema plus sealed fixture. Hunch still owns schema and semantic derivation; no service-side ranking logic was added.
+4. **PCC-2.4 — next: support Passport composition.** ORC references the untouched native proof; it may derive Passport completeness but cannot rewrite Hunch's verdict.
+5. **PCC-2.5 — open: validate publicly.** Dogfood the trio, then publish blind maintainer outcomes, including failures and unknowns.
+
+**Done means:** the same exact change yields the same native proof locally and through an independent
+consumer, every claim has exact evidence or a gap, drift invalidates reuse, and proof grants no
+ranking, promotion, policy, workflow or merge authority.
 
 ## Later — compile into native agent surfaces
 

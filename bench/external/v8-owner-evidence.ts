@@ -1,7 +1,7 @@
 /** Map Node V8 precise coverage through inline source maps to TS declarations. */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import { declarationOwners } from "./evaluate-zod-owner-ranker.js";
 import { rankIssueImplementationOwners, type ContractAxisOwnerSource } from "../../src/core/pipeline.js";
 import { inferIssueCorrectionStage, rankIssueCorrectionStageCandidates } from "../../src/core/correctionStage.js";
@@ -118,9 +118,21 @@ function offsetPosition(offset: number, lineLengths: number[]): { line: number; 
 }
 
 function repositoryPath(sourceUrl: string): string | null {
-  const path = sourceUrl.startsWith("file:") ? fileURLToPath(sourceUrl) : sourceUrl;
-  const marker = path.lastIndexOf("/packages/");
-  return marker >= 0 ? path.slice(marker + 1) : null;
+  let path = sourceUrl;
+  if (sourceUrl.startsWith("file:")) {
+    try {
+      // V8/source-map fixtures and reports may be produced on another OS. Converting a
+      // POSIX file URL through Windows' fileURLToPath rejects the otherwise valid `/tmp/...`
+      // path before we can extract its repository-relative suffix. URL pathname parsing is
+      // deliberately host-independent; this function never opens the resulting path.
+      path = decodeURIComponent(new URL(sourceUrl).pathname);
+    } catch {
+      return null;
+    }
+  }
+  const normalized = path.replace(/\\/g, "/");
+  const marker = normalized.lastIndexOf("/packages/");
+  return marker >= 0 ? normalized.slice(marker + 1) : null;
 }
 
 export function collectV8OwnerEvidence(value: unknown): V8OwnerEvidence[] {

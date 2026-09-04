@@ -2,12 +2,20 @@ export const changelogLocales = {
   he: {
     dir: "rtl", dateLocale: "he-IL",
     ui: {
-      pageTitle: "יומן השינויים — Hunch", pageDescription: "כל גרסאות Hunch — מזיכרון הנדסי שנשמר ב-Git ועד התאמה ארכיטקטונית לקוד AI.",
+      pageTitle: "יומן השינויים — Hunch Memory", pageDescription: "כל גרסאות Hunch — מזיכרון הנדסי שנשמר ב-Git ועד התאמה ארכיטקטונית לקוד AI.",
       mainNav: "ניווט ראשי", language: "שפה", navHow: "כך זה עובד", navInside: "מאחורי הקלעים", docs: "תיעוד", blog: "בלוג", changelog: "יומן שינויים", getStarted: "מתחילים",
       eyebrow: "יומן שינויים · החדש ביותר תחילה", heading: "כל גרסה, מאז <em>v0.1</em>.", intro: "מגרף החלטות שנשמר ב-Git ועד התאמה ארכיטקטונית דטרמיניסטית — כל הדרך, מהחדש לישן.",
       footer: "© Hunch — התאמה ארכיטקטונית לקוד AI.", home: "בית", githubReleases: "גרסאות ב-GitHub"
     },
     titles: [
+      "האתר הציבורי עובר ל-hunchmemory.com",
+      "חוזי הוכחת השינוי באמת נשלחים",
+      "שינויים מדויקים נושאים הוכחה סמנטית מקורית",
+      "Project DNA מקבלת משוב עם קבלות",
+      "רענון גרף קר נשאר בתוך התקציב",
+      "רענון גרף קר עומד בתקציב המחמיר",
+      "Project DNA לומדת מראיות שיתוף פעולה מורשות",
+      "הסוכן מדבר בשפה של המאגר",
       "מחיקות בתמונת מצב נשמרות בלי לסכן קוד מקור",
       "נוף הנדסי שנבדק נשאר עדכני בבטחה",
       "נתיב זיכרון מאומת אחד — מהסיבה לתוצאה",
@@ -35,12 +43,20 @@ export const changelogLocales = {
   ru: {
     dir: "ltr", dateLocale: "ru-RU",
     ui: {
-      pageTitle: "История изменений — Hunch", pageDescription: "Все выпуски Hunch: от инженерной памяти в Git до архитектурного соответствия для ИИ-кода.",
+      pageTitle: "История изменений — Hunch Memory", pageDescription: "Все выпуски Hunch: от инженерной памяти в Git до архитектурного соответствия для ИИ-кода.",
       mainNav: "Основная навигация", language: "Язык", navHow: "Как это работает", navInside: "Что внутри", docs: "Документация", blog: "Блог", changelog: "История изменений", getStarted: "Начать",
       eyebrow: "история изменений · сначала новые", heading: "Все выпуски, начиная с <em>v0.1</em>.", intro: "От графа решений в Git до детерминированного архитектурного соответствия — вся история, от новых выпусков к старым.",
       footer: "© Hunch — архитектурное соответствие для ИИ-кода.", home: "Главная", githubReleases: "Релизы на GitHub"
     },
     titles: [
+      "Публичный сайт переезжает на hunchmemory.com",
+      "Контракты доказательства изменений действительно поставляются",
+      "Точные изменения несут собственное семантическое доказательство",
+      "Project DNA получает обратную связь с квитанциями",
+      "Холодное обновление графа снова укладывается в бюджет",
+      "Холодное обновление графа укладывается в строгий бюджет",
+      "Project DNA учится на разрешённых данных совместной работы",
+      "Агент говорит на языке репозитория",
       "Удаления снимка сохраняются без риска для исходного кода",
       "Проверенный инженерный ландшафт безопасно остаётся актуальным",
       "Единый проверяемый путь памяти — от причины к результату",
@@ -68,12 +84,20 @@ export const changelogLocales = {
   ar: {
     dir: "rtl", dateLocale: "ar",
     ui: {
-      pageTitle: "سجل التغييرات — Hunch", pageDescription: "كل إصدارات Hunch، من الذاكرة الهندسية المحفوظة في Git إلى التوافق المعماري لكود الذكاء الاصطناعي.",
+      pageTitle: "سجل التغييرات — Hunch Memory", pageDescription: "كل إصدارات Hunch، من الذاكرة الهندسية المحفوظة في Git إلى التوافق المعماري لكود الذكاء الاصطناعي.",
       mainNav: "التنقل الرئيسي", language: "اللغة", navHow: "كيف يعمل", navInside: "ما وراء الكواليس", docs: "الوثائق", blog: "المدونة", changelog: "سجل التغييرات", getStarted: "ابدأ الآن",
       eyebrow: "سجل التغييرات · الأحدث أولاً", heading: "كل إصدار، منذ <em>v0.1</em>.", intro: "من رسم قرارات محفوظ في Git إلى توافق معماري حتمي — الرحلة كاملة، من الأحدث إلى الأقدم.",
       footer: "© Hunch — التوافق المعماري لكود الذكاء الاصطناعي.", home: "الرئيسية", githubReleases: "الإصدارات على GitHub"
     },
     titles: [
+      "الموقع العام ينتقل إلى hunchmemory.com",
+      "عقود إثبات التغيير تُشحن فعلًا",
+      "التغييرات الدقيقة تحمل إثباتًا دلاليًا أصليًا",
+      "يتلقى Project DNA ملاحظات موثقة بالإيصالات",
+      "عاد تحديث الرسم البياني البارد إلى حدود الميزانية",
+      "تحديث الرسم البياني البارد يلتزم بالميزانية الصارمة",
+      "يتعلم Project DNA من أدلة التعاون المصرح بها",
+      "الوكيل يتحدث بلغة المستودع",
       "تُحفظ عمليات حذف اللقطة دون تعريض الشفرة المصدرية للخطر",
       "يبقى المشهد الهندسي المُراجع محدثًا بأمان",
       "مسار ذاكرة واحد موثّق من السبب إلى النتيجة",
@@ -101,12 +125,20 @@ export const changelogLocales = {
   es: {
     dir: "ltr", dateLocale: "es-ES",
     ui: {
-      pageTitle: "Registro de cambios — Hunch", pageDescription: "Todas las versiones de Hunch: desde memoria de ingeniería en Git hasta conformidad arquitectónica para código de IA.",
+      pageTitle: "Registro de cambios — Hunch Memory", pageDescription: "Todas las versiones de Hunch: desde memoria de ingeniería en Git hasta conformidad arquitectónica para código de IA.",
       mainNav: "Navegación principal", language: "Idioma", navHow: "Cómo funciona", navInside: "Cómo está hecho", docs: "Documentación", blog: "Blog", changelog: "Cambios", getStarted: "Empezar",
       eyebrow: "registro de cambios · lo más reciente primero", heading: "Cada versión, desde <em>v0.1</em>.", intro: "Del grafo de decisiones nativo de Git a la conformidad arquitectónica determinista: toda la historia, de lo nuevo a lo antiguo.",
       footer: "© Hunch — conformidad arquitectónica para código de IA.", home: "Inicio", githubReleases: "Versiones en GitHub"
     },
     titles: [
+      "El sitio público se muda a hunchmemory.com",
+      "Los contratos de prueba de cambio realmente se publican",
+      "Los cambios exactos llevan prueba semántica nativa",
+      "Project DNA recibe feedback con recibos",
+      "La actualización fría del grafo vuelve a cumplir el presupuesto",
+      "La actualización fría del grafo cabe en el presupuesto estricto",
+      "Project DNA aprende de evidencia de colaboración autorizada",
+      "El agente habla el idioma del repositorio",
       "Las eliminaciones de instantáneas persisten sin poner en riesgo el código fuente",
       "El panorama de ingeniería revisado se mantiene actualizado con seguridad",
       "Una ruta de memoria verificable, de la razón al resultado",

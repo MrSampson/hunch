@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Changelog — Hunch</title>
+<title>Changelog — Hunch Memory</title>
 <meta name="description" content="Every Hunch release — git-native engineering memory and Architectural Conformance for AI code." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=IBM+Plex+Sans+Hebrew:wght@400;500;600&display=swap" rel="stylesheet" />
 <link rel="icon" href="/hunch-mark.svg" type="image/svg+xml" />
 <link rel="stylesheet" href="/brand.css" />
-<link rel="canonical" href="https://hunch-pi.vercel.app/changelog" />
+<link rel="canonical" href="https://www.hunchmemory.com/changelog" />
 <style>
   :root{
     --bg:#f7f8f7; --bg-2:#eff1ef; --surface:#fcfdfc;
@@ -106,6 +106,20 @@
     </div>
 
     <div class="clog">
+      <div class="clog-group">
+        <div class="clog-date">Sep 1, 2026</div>
+        <div class="clog-row"><span class="rel-tag">v1.23.2</span><span class="clog-t"><b>The public site moves to hunchmemory.com</b> — the package, plugin and MCP registry manifests now point at <span class="mono">www.hunchmemory.com</span>, titles use the two-word “Hunch Memory” form, and the site ships a generated sitemap and robots.txt. No runtime change since 1.23.1.</span></div>
+        <div class="clog-row"><span class="rel-tag">v1.23.1</span><span class="clog-t"><b>The change-proof contracts actually ship</b> — the trusted release workflow refused the 1.23.0 tarball because its package-path allowlist predated the change-proof schema, fixture and type entries. The allowlist now admits exactly those paths, and the test suite executes the workflow's own allowlist against <span class="mono">npm pack --dry-run</span> so the mismatch fails before a tag exists. No runtime code changed.</span></div>
+        <div class="clog-row"><span class="rel-tag">v1.23.0</span><span class="clog-t"><b>Exact changes carry native semantic proof</b> — <span class="mono">hunch prove</span> and the <span class="mono">hunch_change_proof</span> MCP tool emit one canonical <span class="mono">hunch.change-proof/1</span> artifact binding exact Git change identity, repository and Project DNA revisions, base/result semantic graphs, relevant decisions and constraints, blast radius, conformance, the strict Change Gate result and explicit omissions/unknowns. Publication-safe derivation excludes private-overlay records, the package exports the seal validator with a versioned JSON Schema and sealed fixture, and the proof grants no execution, CI, deployment, merge, ranking, promotion or policy authority.</span></div>
+        <div class="clog-row"><span class="rel-tag">v1.22.3</span><span class="clog-t"><b>Project DNA feedback keeps receipts</b> — a separate, content-addressed outcome contract now binds the exact Memory delivery receipt, profile and snapshot, role-shaped traits, downstream artifact and Project Match assessment. Project Match remains non-causal: automatic outcomes can say only <span class="mono">unknown</span>, and classified signals require explicit-human or independent-review evidence. Contradiction and staleness create advisory review work only; feedback cannot change ranking, mutate profiles, promote knowledge or grant authority.</span></div>
+        <div class="clog-row"><span class="rel-tag">v1.22.2</span><span class="clog-t"><b>Cold graph refresh stays inside the budget</b> — private/shared memory publication no longer repeats identical repository-publication proofs between a completed merge and the guarded push seam. The push helper still re-proves source isolation and remote identity immediately before publishing. Hunch Memory's 750-record ORC pilot completed in 8.85 seconds and ORC's fresh-process Project DNA retrieval completed in 7.80 seconds, both inside the strict 10-second budget, while all 45 overlay and sync guards remained green.</span></div>
+      </div>
+      <div class="clog-group">
+        <div class="clog-date">Aug 31, 2026</div>
+        <div class="clog-row"><span class="rel-tag">v1.22.1</span><span class="clog-t"><b>Cold graph refresh fits the strict budget</b> — exact-commit scans now validate immutable Git blobs once and hydrate them in bounded batches without relaxing per-file safety or repeatability. On ORC, the scan fell from 41.0 seconds to 3.0 seconds, the complete cold path through a separate Hunch Memory server took 5.0 seconds, and ORC retrieval completed inside its strict 10-second budget. The repository integration also adds native Windsurf lifecycle hooks.</span></div>
+        <div class="clog-row"><span class="rel-tag">v1.22.0</span><span class="clog-t"><b>Project DNA learns from authorized collaboration evidence</b> — Hunch can now derive repository-native vocabulary and contribution guidance from bounded pull-request and review evidence supplied by an authorized host. Every batch is canonical, sealed, tied to an exact Git revision, and raw collaboration text never enters the profile. The public typed library contract lets cross-repository consumers transport and verify that evidence without changing the deterministic fallback.</span></div>
+        <div class="clog-row"><span class="rel-tag">v1.21.1</span><span class="clog-t"><b>The agent speaks the repository's language</b> — Project DNA now gives Hunch a sealed, revision-specific profile of how a repository communicates and works, then delivers a compact evidence-backed slice through normal context. CLI and MCP surfaces expose the profile, explainable Project Match checks, and drift without promoting observed style into policy. The patch also keeps installed Claude hooks portable and replaces legacy Hunch hooks without duplicating or disturbing user hooks.</span></div>
+      </div>
       <div class="clog-group">
         <div class="clog-date">Aug 29, 2026</div>
         <div class="clog-row"><span class="rel-tag">v1.20.2</span><span class="clog-t"><b>Snapshot deletion is durable without risking source</b> — private and shared memory sync now carries stale JSON record deletions only after proving the overlay is a standalone repository distinct from protected code. Public deletion, local configuration, derived artifacts, non-JSON paths, and anything outside the exact Hunch subtree remain fail-closed.</span></div>

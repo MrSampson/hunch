@@ -1,11 +1,11 @@
 {
   "name": "@davesheffer/hunch",
-  "version": "1.20.2",
+  "version": "1.23.2",
   "mcpName": "io.github.davesheffer/hunch",
   "license": "Apache-2.0",
   "author": "Dave Sheffer <dave.sheffer1@gmail.com>",
   "description": "Engineering memory and a deterministic Change Gate for AI-assisted codebases: decisions, rejected approaches, constraints, and bug lineage become portable context and opt-in enforcement for every MCP assistant.",
-  "homepage": "https://hunch-pi.vercel.app",
+  "homepage": "https://www.hunchmemory.com",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/davesheffer/hunch.git"
@@ -17,8 +17,25 @@
   "bin": {
     "hunch": "dist/cli/index.js"
   },
+  "exports": {
+    "./change-proof": {
+      "types": "./dist/changeProof.d.ts",
+      "default": "./dist/changeProof.js"
+    },
+    "./project-dna": {
+      "types": "./dist/projectDna.d.ts",
+      "default": "./dist/projectDna.js"
+    },
+    "./dist/*": "./dist/*",
+    "./package.json": "./package.json"
+  },
   "files": [
     "dist/**/*.js",
+    "dist/changeProof.d.ts",
+    "dist/core/changeProofContract.d.ts",
+    "dist/projectDna.d.ts",
+    "dist/core/projectDna*.d.ts",
+    "contracts/change-proof/*.json",
     "server.json",
     "bench/constitution-exp03-v1.json",
     "tooling/competitive-watch.mjs",
@@ -66,6 +83,7 @@
     "rehearse:constitution": "npm run build && node tooling/constitution-clean-rehearsal.mjs",
     "gate:release": "node tooling/release-gate.mjs",
     "site:proof": "npm run build && node tooling/generate-public-proof.mjs",
+    "site:sitemap": "node tooling/generate-sitemap.mjs",
     "bench:md1": "node tooling/md1-benchmark.mjs",
     "research:competitors": "node tooling/competitive-watch.mjs",
     "outreach": "node tooling/outreach-pipeline.mjs",

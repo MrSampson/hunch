@@ -4,28 +4,29 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Hunch — память проекта для ИИ-помощников по коду</title>
-<meta name="description" content="Hunch объясняет ИИ-помощникам, почему код устроен именно так, какие ошибки уже исправили и какие решения не стоит повторять." />
-<meta property="og:title" content="Hunch — память проекта для ИИ-помощников по коду" />
-<meta property="og:description" content="ИИ умеет читать код. Hunch показывает ему решения, исправления и предупреждения до того, как он внесёт изменение." />
-<meta property="og:image" content="https://hunch-pi.vercel.app/hunch-og.png" />
-<meta property="og:url" content="https://hunch-pi.vercel.app/ru" />
+  <title>Hunch Memory — ДНК проекта для ИИ-агентов по коду</title>
+  <meta name="description" content="У вашего репозитория есть ДНК. Hunch даёт ИИ-агентам доказательное понимание того, как проект общается и работает, до того, как они изменят код." />
+  <meta property="og:title" content="Hunch Memory — ДНК проекта для ИИ-агентов по коду" />
+  <meta property="og:description" content="Каждый агент по коду приходит блестящим незнакомцем. Hunch знакомит его с языком, решениями, выстраданными исправлениями и границами вашего кода." />
+<meta property="og:image" content="https://www.hunchmemory.com/hunch-og.png" />
+<meta property="og:url" content="https://www.hunchmemory.com/ru" />
 <meta property="og:locale" content="ru_RU" />
-<link rel="canonical" href="https://hunch-pi.vercel.app/ru" />
-<link rel="alternate" hreflang="en" href="https://hunch-pi.vercel.app/" />
-<link rel="alternate" hreflang="he" href="https://hunch-pi.vercel.app/he" />
-<link rel="alternate" hreflang="ru" href="https://hunch-pi.vercel.app/ru" />
-<link rel="alternate" hreflang="ar" href="https://hunch-pi.vercel.app/ar" />
-<link rel="alternate" hreflang="es" href="https://hunch-pi.vercel.app/es" />
-<link rel="alternate" hreflang="x-default" href="https://hunch-pi.vercel.app/" />
+<link rel="canonical" href="https://www.hunchmemory.com/ru" />
+<link rel="alternate" hreflang="en" href="https://www.hunchmemory.com/" />
+<link rel="alternate" hreflang="he" href="https://www.hunchmemory.com/he" />
+<link rel="alternate" hreflang="ru" href="https://www.hunchmemory.com/ru" />
+<link rel="alternate" hreflang="ar" href="https://www.hunchmemory.com/ar" />
+<link rel="alternate" hreflang="es" href="https://www.hunchmemory.com/es" />
+<link rel="alternate" hreflang="x-default" href="https://www.hunchmemory.com/" />
 <link rel="icon" href="/hunch-mark.svg" type="image/svg+xml" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=IBM+Plex+Sans+Hebrew:wght@400;500;600&display=swap" rel="stylesheet" />
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/brand.css" />
-<link rel="stylesheet" href="/upgrade.css" />
+<link rel="stylesheet" href="/upgrade.css?v=native-cursor-1" />
 <style>
   /* ──────────────────────────── tokens ──────────────────────────── */
   :root{
@@ -102,9 +103,18 @@
   @media (max-width:520px){.nav-links a.hide-xs{display:none}}
 
   /* ──────────────────────────── hero ──────────────────────────── */
-  .hero.wrap{
-    min-height:calc(100vh - 60px);min-height:calc(100svh - 60px);
-    padding:40px 24px;display:flex;flex-direction:column;justify-content:center;text-align:start;
+  .hero.wrap{max-width:none;min-height:140vh;min-height:140svh;padding:0;display:block;text-align:start}
+  .hero-copy{
+    position:sticky;top:60px;z-index:1;min-height:calc(100vh - 60px);min-height:calc(100svh - 60px);
+    width:100%;max-width:var(--maxw);min-width:0;margin:0 auto;padding:0 24px;display:flex;flex-direction:column;justify-content:center;isolation:isolate;
+  }
+  .hero-copy::before{
+    content:"";position:absolute;z-index:-1;pointer-events:none;
+    inset-block:8%;inset-inline-start:-8%;width:min(68rem,86vw);
+    background:radial-gradient(ellipse 72% 61% at 38% 51%,color-mix(in srgb,var(--bg) 72%,transparent) 0 36%,color-mix(in srgb,var(--bg) 42%,transparent) 58%,transparent 82%);
+    -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
+    -webkit-mask-image:radial-gradient(ellipse 76% 64% at 40% 51%,#000 0 42%,rgba(0,0,0,.72) 61%,transparent 88%);
+    mask-image:radial-gradient(ellipse 76% 64% at 40% 51%,#000 0 42%,rgba(0,0,0,.72) 61%,transparent 88%);
   }
   .eyebrow{font-family:var(--mono);font-size:12.5px;letter-spacing:.06em;color:var(--mut);text-transform:lowercase}
   h1{
@@ -114,7 +124,7 @@
   h1 b{font-weight:500;color:var(--moss-ink)}
   .hero h1{margin:0}
   .hero p.lede{max-width:var(--measure);color:var(--ink-2);font-size:18px;margin:28px 0 0}
-  .hero p.hero-note{max-width:var(--measure);color:var(--mut);font-size:14px;margin:17px 0 0}
+  .hero p.lede{width:min(100%,var(--measure));overflow-wrap:anywhere}
   .hero-cta{display:flex;gap:12px;margin-top:36px;flex-wrap:wrap;align-items:center}
   .release-section{padding:0 0 72px}
   .release-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:28px;box-shadow:0 22px 54px -44px rgba(20,31,25,.42)}
@@ -135,29 +145,36 @@
     .release-metric{padding:16px 0}
     .release-metric+.release-metric{border-inline-start:0;border-top:1px solid var(--line);padding-inline-start:0}
   }
-  /* ───────────── hero art: the graph that holds the line ─────────────
-     full-bleed behind the hero text; a soft wash keeps the measure readable.
-     the cursor is an agent: edges near it illuminate. */
-  header.hero{position:relative;overflow:visible}
+  /* ───────── hero art: the reference's dense particle DNA element ─────────
+     The canvas stays with the viewport while the sculpture drifts on scroll. */
+  header.hero{position:relative;overflow:clip;isolation:isolate}
   .hero-art{ /* true full-bleed: break out of the centered wrap */
-    position:absolute;top:-60px;bottom:-40px;left:50%;width:100vw;
+    position:absolute;top:-60px;bottom:0;left:50%;width:100vw;
     transform:translateX(-50%);z-index:-1;
     pointer-events:none;user-select:none;
   }
-  .hero-art canvas{width:100%;height:100%;display:block}
+  .hero-art canvas{position:sticky;top:0;width:100%;height:100vh;height:100svh;display:block}
   .hero-art::after{ /* readability wash over the text column */
     content:"";position:absolute;inset:0;
     background:
-      radial-gradient(680px 520px at 24% 50%, var(--bg) 38%, color-mix(in srgb,var(--bg) 55%,transparent) 68%, transparent 88%),
-      linear-gradient(to bottom, color-mix(in srgb,var(--bg) 65%,transparent), transparent 22%, transparent 78%, var(--bg));
+      radial-gradient(680px 520px at 24% 50%,var(--bg) 38%,color-mix(in srgb,var(--bg) 55%,transparent) 68%,transparent 88%),
+      linear-gradient(to bottom,color-mix(in srgb,var(--bg) 65%,transparent),transparent 22%,transparent 78%,var(--bg));
   }
-  @media (max-width:760px){.hero-art{opacity:.82}}
+  @media (max-width:760px){
+    .hero.wrap{min-height:150vh;min-height:150svh}
+    .hero-art{opacity:.94}
+    .hero-copy::before{inset-inline-start:-18%;width:122%;-webkit-backdrop-filter:blur(9px);backdrop-filter:blur(9px)}
+  }
 
   /* load-in: one quiet moment */
   .rise{opacity:0;transform:translateY(10px);animation:rise .7s var(--ease) forwards}
   .rise.d1{animation-delay:.08s}.rise.d2{animation-delay:.16s}.rise.d3{animation-delay:.26s}.rise.d4{animation-delay:.4s}
   @keyframes rise{to{opacity:1;transform:none}}
-  @media (prefers-reduced-motion:reduce){.rise{animation:none;opacity:1;transform:none}}
+  @media (prefers-reduced-motion:reduce){
+    .rise{animation:none;opacity:1;transform:none}
+    .hero.wrap{min-height:calc(100vh - 60px);min-height:calc(100svh - 60px)}
+    .hero-copy{position:relative;top:auto}
+  }
 
   /* ──────────────────────── terminal (the calm demo) ─────────────────── */
   .term{
@@ -257,10 +274,23 @@
   }
 
   /* CTA */
-  .cta{padding:120px 0 128px;text-align:start}
+  .cta{position:relative;padding:120px 0 128px;text-align:start;overflow:clip;isolation:isolate}
+  .cta .wrap{position:relative;z-index:2}
+  .cta-art{position:absolute;inset:0;z-index:0;pointer-events:none;user-select:none}
+  .cta-art canvas{width:100%;height:100%;display:block}
+  .cta::after{
+    content:"";position:absolute;inset:0;z-index:1;pointer-events:none;
+    background:radial-gradient(ellipse 58% 82% at 25% 52%,var(--bg) 0 38%,color-mix(in srgb,var(--bg) 76%,transparent) 58%,transparent 84%);
+  }
+  html[dir="rtl"] .cta::after{background:radial-gradient(ellipse 58% 82% at 75% 52%,var(--bg) 0 38%,color-mix(in srgb,var(--bg) 76%,transparent) 58%,transparent 84%)}
   .cta h2{font-size:clamp(30px,4.4vw,46px);max-width:18ch}
   .cta p{color:var(--mut);max-width:52ch;margin:20px 0 0}
   .cta .hero-cta{margin-top:34px}
+  @media (max-width:760px){
+    .cta-art{inset-inline-start:14%;opacity:.86}
+    .cta::after{background:radial-gradient(ellipse 92% 72% at 35% 52%,var(--bg) 0 42%,color-mix(in srgb,var(--bg) 72%,transparent) 67%,transparent 94%)}
+    html[dir="rtl"] .cta::after{background:radial-gradient(ellipse 92% 72% at 65% 52%,var(--bg) 0 42%,color-mix(in srgb,var(--bg) 72%,transparent) 67%,transparent 94%)}
+  }
 
   /* footer */
   footer{border-top:1px solid var(--line-2);padding:56px 0 72px;background:var(--bg-2)}
@@ -320,29 +350,27 @@
 
 <!-- ─────────────────────────── hero ─────────────────────────── -->
 <header class="hero wrap">
-  <!-- the graph that holds the line, full-bleed: decisions ● guard code ▢;
-       agent edits streak in and the guarded edges HOLD (moss pulse + receipt) —
-       rarely, the strict flavor blocks (ember). The cursor is an agent too:
-       edges near it illuminate. Decorative: aria-hidden, pointer-events none. -->
+  <!-- Repository evidence forms a continuous particle sculpture. Scroll carries
+       one memory through the DNA until the decision inside it becomes visible.
+       Decorative: aria-hidden, pointer-events none, reduced-motion aware. -->
   <div class="hero-art" aria-hidden="true"><canvas id="holdline"></canvas></div>
-  <span class="eyebrow rise">память проекта для ИИ-помощников по коду</span>
-  <h1 class="rise d1">Ваш ИИ умеет читать код.<br /><b>Hunch объясняет, почему код устроен именно так.</b></h1>
-  <p class="lede rise d2">Hunch передаёт Claude, Cursor, Codex и другим помощникам решения, исправления ошибок и предупреждения вашей команды до того, как они изменят код.</p>
-  <p class="hero-note rise d2">Hunch работает с уже знакомыми вам ИИ-инструментами. Это не ещё одна модель, и память проекта не отправляется в сервис Hunch.</p>
-  <div class="hero-cta rise d3">
-    <a class="btn" href="#start">Начать</a>
-    <a class="btn ghost" href="#story">Посмотреть, как это работает</a>
+  <div class="hero-copy">
+    <h1 class="rise d1">У вашего репозитория есть ДНК.<br /><b>Hunch знакомит с ней каждого агента по коду.</b></h1>
+    <p class="lede rise d2">Каждый агент по коду свободно владеет синтаксисом, но ничего не знает о вашей команде. Hunch даёт ему язык, решения, выстраданные исправления и границы кода до того, как он внесёт изменение.</p>
+    <div class="hero-cta rise d3">
+      <a class="btn" href="#start">Начать</a>
+      <a class="btn ghost" href="#story">Посмотреть, как это работает</a>
+    </div>
   </div>
-
 </header>
 
 <!-- ─────────────────────────── story ─────────────────────────── -->
 <section id="story">
   <div class="wrap">
     <div class="sec-head">
-      <span class="eyebrow">знакомая история</span>
-      <h2>Ошибку исправили. Причину забыли.</h2>
-      <p>В коде остаётся неочевидная защита. История её появления постепенно исчезает.</p>
+      <span class="eyebrow">проблема блестящего незнакомца</span>
+      <h2>Он понимает синтаксис. Он не понимает, почему ваша команда говорит «нет».</h2>
+      <p>Код остаётся. Выстраданное суждение за ним стирается.</p>
     </div>
     <div class="story-grid">
       <div class="story-beats">
@@ -356,11 +384,11 @@
         </article>
         <article class="story-beat">
           <span class="story-when">Следующий сеанс</span>
-          <div><h3>ИИ-помощник предлагает всё «упростить».</h3><p>Изменение аккуратно и локально корректно. Но оно снова открывает тот самый дефект, за понимание которого команда уже заплатила.</p></div>
+          <div><h3>Блестящий незнакомец предлагает всё «упростить».</h3><p>Изменение аккуратно и локально корректно. Но оно снова открывает тот самый дефект, за понимание которого команда уже заплатила.</p></div>
         </article>
         <article class="story-beat">
           <span class="story-when">С Hunch</span>
-          <div><h3>Причина появляется до правки.</h3><p>Помощник видит, что выбрали, что отвергли и какую ошибку предотвращает решение. Он выбирает лучший путь, не заставляя команду пересказывать историю.</p></div>
+          <div><h3>Репозиторий учит агента до правки.</h3><p>Hunch возвращает выбранный и отвергнутый подходы и ошибку, которую предотвращает решение. Агент работает с суждением команды, не выдавая себя за команду.</p></div>
         </article>
       </div>
       <aside class="receipt" aria-label="Пример карточки памяти проекта">
@@ -371,7 +399,7 @@
           <div class="receipt-row"><span>выбрано</span><p>Хранить сессии на сервере, а в токене оставлять только непрозрачный идентификатор.</p></div>
           <div class="receipt-row"><span>отвергнуто</span><p>Сессии только на JWT: после выхода они действуют до истечения срока токена.</p></div>
           <div class="receipt-row"><span>защищает от</span><p>Использования украденного токена после сброса пользовательской сессии.</p></div>
-          <p class="receipt-foot">рекомендация · решение и ошибка приложены как доказательства</p>
+          <p class="receipt-foot">рекомендация · актуально для этой ревизии · доказательства приложены</p>
         </div>
       </aside>
     </div>
@@ -382,14 +410,14 @@
 <section id="how" class="panel">
   <div class="wrap">
     <div class="sec-head">
-      <span class="eyebrow">что делает Hunch</span>
-      <h2>Он даёт каждому помощнику одну и ту же память проекта.</h2>
-      <p>Hunch сохраняет опыт команды, возвращает его перед правкой и предупреждает, если изменение может повторить старую ошибку.</p>
+      <span class="eyebrow">как работает ДНК проекта</span>
+      <h2>Hunch изучает, как работает этот репозиторий, — и даёт каждому агенту только нужное.</h2>
+      <p>Он превращает уже имеющиеся в репозитории доказательства в ограниченный релевантный контекст. Наблюдаемые привычки остаются советом; правом на принуждение обладают только правила, которым люди явно доверили такую роль.</p>
     </div>
     <div class="outcome-grid">
-      <article class="outcome"><span class="step-n">01 / сохранить</span><h3>Сохраните опыт команды.</h3><p>Решения, падения тестов и ваши исправления становятся памятью проекта, а не исчезают в старых чатах и pull request.</p></article>
-      <article class="outcome"><span class="step-n">02 / напомнить</span><h3>Объясните до изменения кода.</h3><p>Помощник видит, почему файл устроен так, что от него зависит и что здесь уже ломалось.</p></article>
-      <article class="outcome"><span class="step-n">03 / предупредить</span><h3>Замечайте повторные ошибки.</h3><p>Если изменение противоречит доверенному решению или возвращает известную ошибку, Hunch объясняет конфликт. Блокировка необязательна.</p></article>
+      <article class="outcome"><span class="step-n">01 / наблюдать</span><h3>Читайте сигналы самого репозитория.</h3><p>Hunch изучает точную ревизию Git, ограниченную историю, зафиксированные соглашения и доказательства ревью, которые ваши инструменты уполномочены предоставить.</p></article>
+      <article class="outcome"><span class="step-n">02 / понять</span><h3>Постройте прослеживаемую картину.</h3><p>Язык, привычки внесения изменений, ожидания от ревью и инженерные соглашения сохраняют свою уверенность, актуальность и доказательства.</p></article>
+      <article class="outcome"><span class="step-n">03 / научить</span><h3>Передайте работе нужную ДНК.</h3><p>Агент получает релевантный контекст до правки. Распространённое поведение никогда не становится правилом исподволь, а власть остаётся у людей.</p></article>
     </div>
   </div>
 </section>
@@ -399,18 +427,18 @@
     <div class="release-card">
       <div class="release-head">
         <div>
-          <span class="eyebrow">что улучшилось в v1.19</span>
-          <h2 id="release-proof-title">Быстрее находите нужный код. Проверяйте меньше.</h2>
-          <p class="release-copy">В тесте из 12 задач на незнакомом коде Hunch нашёл изменённый фрагмент в 6 случаях вместо 3. В отдельном тесте он сохранил те же пять успешных находок, но потребовал просмотреть на 41,9% меньше кода.</p>
+          <span class="eyebrow">ДНК проекта в v1.22</span>
+          <h2 id="release-proof-title">Понимание на доказательствах, а не на ощущениях.</h2>
+          <p class="release-copy">Hunch строит привязанный к ревизии профиль из истории Git, файлов соглашений и ограниченных доказательств ревью. Сырой текст командного общения в профиль не попадает, а наблюдаемые привычки никогда не становятся политикой.</p>
         </div>
         <code class="release-install">npm i -g @davesheffer/hunch</code>
       </div>
-      <div class="release-metrics" aria-label="Результаты теста версии 1.19 простыми словами">
-        <div class="release-metric"><strong>3/12 → 6/12</strong><span>задач, где найден изменённый код</span></div>
-        <div class="release-metric"><strong>8/12 → 10/12</strong><span>задач, где найден правильный файл</span></div>
-        <div class="release-metric"><strong>18.9 → 11</strong><span>фрагментов кода для просмотра в среднем</span></div>
+      <div class="release-metrics" aria-label="Что остаётся прослеживаемым в ДНК проекта">
+        <div class="release-metric"><strong>точная ревизия</strong><span>профиль остаётся привязанным к описываемому коду</span></div>
+        <div class="release-metric"><strong>уверенность + актуальность</strong><span>каждая характеристика показывает силу и свежесть подтверждения</span></div>
+        <div class="release-metric"><strong>доказательства запечатаны</strong><span>агент может показать основание каждого наблюдения</span></div>
       </div>
-      <p class="release-caveat">Это небольшие контролируемые тесты, а не обещание двойной точности везде. Если Hunch знает только место для поиска, он честно говорит об этом, а не притворяется, что знает точное исправление.</p>
+      <p class="release-caveat">ДНК проекта может помогать с ориентацией, терминологией и ревью. Она не может создать или переопределить решение, ограничение, политику или разрешение. <a href="/docs">Как устроена граница доказательств →</a></p>
     </div>
   </div>
 </section>
@@ -420,18 +448,18 @@
   <div class="wrap">
     <div class="tech-intro">
       <div class="sec-head">
-        <span class="eyebrow">что происходит за кулисами</span>
-        <h2>Hunch остаётся под вашим контролем и показывает свою работу.</h2>
+        <span class="eyebrow">почему этому можно доверять</span>
+        <h2>Не персона. Не невидимая политика. Доказательства, которые можно проверить.</h2>
       </div>
-      <p>Память проекта хранится в понятных файлах, которые можно проверить и отменить. Hunch связывает каждую сохранённую причину с нужным кодом и указывает источник ответа.</p>
+      <p>Hunch разделяет наблюдаемую ДНК проекта, долговременную инженерную память и правила, одобренные людьми. Каждый ответ показывает свой источник, актуальность и реальный уровень полномочий.</p>
     </div>
     <div class="tech-grid">
-      <article class="tech-item"><code class="literal">хранится в Git</code><h3>Память, которую можно проверить</h3><p>Решения сохраняются как обычные файлы. Команда может просматривать, сравнивать и отменять их так же, как код.</p></article>
-      <article class="tech-item"><code>связи в коде</code><h3>Знает, на что может повлиять изменение</h3><p>Hunch следует связям между файлами и функциями, чтобы нужная причина появилась в нужном месте.</p></article>
-      <article class="tech-item"><code>ваши ИИ-инструменты</code><h3>Одна память для всех помощников</h3><p>Claude Code, Cursor, VS Code, Windsurf, Codex и другие могут использовать одну память проекта.</p></article>
-      <article class="tech-item"><code>ясные правила</code><h3>Каждый раз проверяет одно и то же правило</h3><p>Для правил, которым доверяет команда, Hunch проверяет сам код, а не просит другой ИИ угадать.</p></article>
-      <article class="tech-item"><code>источник указан</code><h3>Показывает источник ответа</h3><p>Каждый ответ ссылается на решение, ошибку, коммит или исправление, которое его подтверждает.</p></article>
-      <article class="tech-item"><code>без облака Hunch</code><h3>Ваша память остаётся вашей</h3><p>Hunch не требует облачного аккаунта. Храните память в проекте или в приватном Git-репозитории команды.</p></article>
+      <article class="tech-item"><code class="literal">ДНК проекта</code><h3>Узнаёт, как говорит репозиторий</h3><p>Словарь, привычки внесения изменений, ожидания от ревью и инженерные соглашения выводятся из доказательств репозитория, а не из сгенерированной личности.</p></article>
+      <article class="tech-item"><code>инженерная память</code><h3>Помнит, зачем существует код</h3><p>Решения, отвергнутые подходы, исправления и закрытые ошибки остаются доступными после исчезновения чата, pull request или коллеги.</p></article>
+      <article class="tech-item"><code>граф кода</code><h3>Знает, на что может повлиять изменение</h3><p>Hunch следует связям между файлами и функциями, чтобы нужная причина появилась в нужном месте.</p></article>
+      <article class="tech-item"><code>власть людей</code><h3>Не превращает популярность в политику</h3><p>Наблюдаемые шаблоны остаются рекомендациями. Полномочия на принуждение может получить только точное правило, которому люди осознанно доверяют.</p></article>
+      <article class="tech-item"><code>доказательства приложены</code><h3>Показывает источник каждого утверждения</h3><p>Уверенность, актуальность, происхождение и подтверждающая ревизия передаются вместе с контекстом для агента.</p></article>
+      <article class="tech-item"><code>local-first</code><h3>Ваша память остаётся вашей</h3><p>Hunch не требует облачного аккаунта. Храните память в проекте или в приватном Git-репозитории команды.</p></article>
     </div>
     <p class="tech-link">Нужны технические подробности? <a href="/docs">Как работает Hunch →</a></p>
   </div>
@@ -442,14 +470,14 @@
   <div class="wrap">
     <div class="sec-head">
       <span class="eyebrow">начало работы</span>
-      <h2>Дайте память следующему сеансу с ИИ.</h2>
+      <h2>Позвольте репозиторию представиться.</h2>
     </div>
     <div class="qs">
       <div class="qs-steps">
         <div class="steps" style="margin-top:0">
           <div class="step"><div><h3>Установите Hunch</h3><p>Одна команда читает проект и подключает помощников по коду, которыми вы уже пользуетесь.</p></div></div>
-          <div class="step"><div><h3>Добавьте недавнюю историю</h3><p><code>hunch backfill --since 90d</code> находит полезные решения и уроки в коммитах за последние 90 дней.</p></div></div>
-          <div class="step"><div><h3>Задайте настоящий вопрос</h3><p>Спросите: <em>«Почему модуль сессий устроен именно так?»</em> Помощник ответит из истории команды и приложит доказательства.</p></div></div>
+          <div class="step"><div><h3>Добавьте историю, которая объясняет почему</h3><p><code>hunch backfill --since 90d</code> находит полезные решения и уроки в коммитах за последние 90 дней.</p></div></div>
+          <div class="step"><div><h3>Посмотрите, что узнал Hunch</h3><p>Изучите ДНК проекта, затем спросите: <em>«Почему модуль сессий устроен именно так?»</em> Каждый ответ приходит с доказательствами.</p></div></div>
         </div>
         <div class="prov" aria-label="Поддерживаемые помощники">
           <span>Claude Code</span><span>Cursor</span><span>VS Code</span><span>Windsurf</span><span>Codex</span><span>Antigravity</span><span>AGENTS.md</span>
@@ -467,6 +495,9 @@
 <span class="c-key"># при желании изучить последние 90 дней</span>
 <span class="c-cmd">$ hunch backfill --since 90d</span>
 
+<span class="c-key"># изучить доказательную ДНК репозитория</span>
+<span class="c-cmd">$ hunch dna inspect</span>
+
 <span class="c-key"># спросить, зачем нужен файл</span>
 <span class="c-cmd">$ hunch why src/auth/session.ts</span></pre>
         </div>
@@ -475,6 +506,7 @@
           <button class="copybtn" data-copy="#install-cmd">копировать</button>
         </div>
         <p class="install-note" style="font-family:var(--mono);font-size:12.5px;color:var(--mut);margin:14px 2px 0;line-height:1.7">
+          ДНК проекта и память по умолчанию носят рекомендательный характер. Ничто не блокируется, пока вы явно не включите это.<br /><br />
           Используете Claude Code? Установите плагин:<br />
           <code>/plugin marketplace add davesheffer/hunch</code> → <code>/plugin install hunch@hunch</code>
           <br /><a href="https://open-vsx.org/extension/davesheffer/hunch-vscode">Open VSX</a>
@@ -486,9 +518,10 @@
 
 <!-- ─────────────────────────── cta ─────────────────────────── -->
 <section class="cta">
+  <div class="cta-art" aria-hidden="true"><canvas id="cta-dna"></canvas></div>
   <div class="wrap">
-    <h2>Пусть кодовая база помнит почему.</h2>
-    <p>Сохраните уже принятые решения доступными каждому человеку и каждому помощнику, которые придут после вас.</p>
+    <h2>Научите каждого агента тому, как работает ваш репозиторий.</h2>
+    <p>Передайте ему язык, решения, выстраданные уроки и границы кода до изменения — и сохраните каждое утверждение прослеживаемым.</p>
     <div class="hero-cta">
       <a class="btn" href="#start">Начать</a>
       <a class="btn ghost" href="/docs">Читать документацию</a>
@@ -501,7 +534,7 @@
   <div class="wrap foot">
     <div>
       <a class="brand" href="/ru"><span class="brand-mark" aria-hidden="true"></span>hunch</a>
-      <p class="about">Git хранит код. Hunch хранит решения, исправления и предупреждения, которые объясняют, почему код устроен именно так.</p>
+      <p class="about">Git хранит код. Hunch даёт агентам доказательную ДНК, которая объясняет, как работает репозиторий и почему код устроен именно так.</p>
     </div>
     <div>
       <h4>продукт</h4>
@@ -527,7 +560,12 @@
   </div>
 </footer>
 
+<script type="module" src="/dna-hero.js?v=scroll-fast-1"></script>
 <script>
+  // Canvas fallback for browsers that cannot load the Three.js module or
+  // create a WebGL context. It preserves the evidence-graph story without
+  // competing with the primary repository-DNA experience.
+  const startCanvasFallback = () => {
   // Hero art — "the graph that holds the line", full-bleed. The memory
   // nucleus gives the constellation one legible focal point: decisions, bugs,
   // and rules converge on the reason an agent needs before it edits.
@@ -536,7 +574,6 @@
   // typewriter receipt). The cursor is an agent too: edges near it illuminate,
   // and the layers parallax against it. Moss = held, ember = blocked (rare,
   // the labeled exception — receipts over threats). Reduced motion: one still.
-  (() => {
     const cv = document.getElementById("holdline");
     if (!cv || !cv.getContext) return;
     const ctx = cv.getContext("2d");
@@ -867,7 +904,11 @@
       });
       requestAnimationFrame(frame);
     }
-  })();
+  };
+  setTimeout(() => {
+    const canvas = document.getElementById("holdline");
+    if (canvas && !canvas.dataset.dnaReady) startCanvasFallback();
+  }, 4200);
 </script>
 
 <script>
@@ -884,6 +925,6 @@
 </script>
 <script defer src="/_vercel/insights/script.js"></script>
 <script defer src="/_vercel/speed-insights/script.js"></script>
-<script src="/upgrade.js"></script>
+<script src="/upgrade.js?v=native-cursor-1"></script>
 </body>
 </html>
