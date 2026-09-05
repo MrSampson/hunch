@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "no
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { checkForUpdate, defaultCacheFile, formatUpdateNotice, shouldCheckForUpdate } from "../src/core/updatecheck.js";
-import { HUNCH_PACKAGE_NAME } from "../src/core/version.js";
+import { HUNCH_PACKAGE_NAME, HUNCH_VERSION } from "../src/core/version.js";
 import { hunchCliArgs } from "./cli-invocation.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -117,6 +117,36 @@ test("never treats one prerelease as an upgrade over a different prerelease of t
       now: () => 0,
     });
     assert.equal(higherToLower, null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("does not throw on a non-numeric version segment; treats it as 0 rather than failing the comparison", async () => {
+  const { dir, file } = tmpCacheFile();
+  try {
+    const result = await checkForUpdate({
+      cacheFile: file,
+      currentVersion: "abc",
+      fetchImpl: fakeFetchOk("1.0.0"),
+      now: () => 0,
+    });
+    assert.deepEqual(result, { current: "abc", latest: "1.0.0" }, "a malformed current version compares as 0, so any real release looks newer");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("pads a shorter release core with zeros before comparing (\"1.2\" vs \"1.2.1\")", async () => {
+  const { dir, file } = tmpCacheFile();
+  try {
+    const result = await checkForUpdate({
+      cacheFile: file,
+      currentVersion: "1.2",
+      fetchImpl: fakeFetchOk("1.2.1"),
+      now: () => 0,
+    });
+    assert.deepEqual(result, { current: "1.2", latest: "1.2.1" });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -358,6 +388,17 @@ test("shouldCheckForUpdate: false for hunch check, regardless of TTY — it runs
   assert.equal(shouldCheckForUpdate({ commandName: "check", isTTY: false, installed: true, env: {} }), false);
 });
 
+test("shouldCheckForUpdate: false for hunch merge-driver, regardless of TTY — git invokes it once per merged path with fully inherited stdio, installed unconditionally by `hunch init`, so it fires on every ordinary git merge/pull that touches a .hunch/** file, not just conflicts", () => {
+  assert.equal(shouldCheckForUpdate({ commandName: "merge-driver", isTTY: true, installed: true, env: {} }), false);
+  assert.equal(shouldCheckForUpdate({ commandName: "merge-driver", isTTY: false, installed: true, env: {} }), false);
+});
+
+test("shouldCheckForUpdate: false for the other automated-plumbing commands (sync, repair-provenance, hook, ci) — defense in depth: sync/repair-provenance are safe today only because their hook lines happen to background+redirect to /dev/null, so this doesn't depend on that staying true", () => {
+  for (const commandName of ["sync", "repair-provenance", "hook", "ci"]) {
+    assert.equal(shouldCheckForUpdate({ commandName, isTTY: true, installed: true, env: {} }), false, commandName);
+  }
+});
+
 test("shouldCheckForUpdate: false when stderr is not a TTY (piped/redirected/spawned — this is the gate every spawnSync(...)-based CLI test in this suite relies on)", () => {
   assert.equal(shouldCheckForUpdate({ commandName: "doctor", isTTY: false, installed: true, env: {} }), false);
 });
@@ -378,10 +419,45 @@ test("shouldCheckForUpdate: true for an ordinary installed command run at an int
   assert.equal(shouldCheckForUpdate({ commandName: "doctor", isTTY: true, installed: true, env: {} }), true);
 });
 
-test("defaultCacheFile never collides with HUNCH_DIR (\".hunch\") — a stray ~/.hunch directory would hijack findRoot() (src/core/paths.ts) for any invocation outside a git repo, which is exactly what putting this cache at ~/.hunch/update-check.json did until this was caught in review", () => {
-  const file = defaultCacheFile();
-  const segments = file.split(/[\\/]/);
-  assert.ok(!segments.includes(".hunch"), `cache path must never contain a ".hunch" path segment: ${file}`);
+test("defaultCacheFile respects XDG_CACHE_HOME when set, falls back to ~/.cache when unset, and NEVER collides with HUNCH_DIR (\".hunch\") either way — a stray ~/.hunch directory would hijack findRoot() (src/core/paths.ts) for any invocation outside a git repo, which is exactly what putting this cache at ~/.hunch/update-check.json did until this was caught in review", () => {
+  const original = process.env.XDG_CACHE_HOME;
+  try {
+    process.env.XDG_CACHE_HOME = "/somewhere/else";
+    const withXdg = defaultCacheFile();
+    assert.equal(withXdg, join("/somewhere/else", "hunch", "update-check.json"));
+
+    delete process.env.XDG_CACHE_HOME;
+    const withoutXdg = defaultCacheFile();
+    assert.ok(withoutXdg.endsWith(join(".cache", "hunch", "update-check.json")), withoutXdg);
+
+    for (const file of [withXdg, withoutXdg]) {
+      const segments = file.split(/[\\/]/);
+      assert.ok(!segments.includes(".hunch"), `cache path must never contain a ".hunch" path segment: ${file}`);
+    }
+  } finally {
+    if (original === undefined) delete process.env.XDG_CACHE_HOME;
+    else process.env.XDG_CACHE_HOME = original;
+  }
+});
+
+test("checkForUpdate() with no options at all resolves every default — cacheFile, currentVersion, and fetchImpl — this is the exact call shape production uses (src/cli/index.ts)", async () => {
+  const scratchCacheHome = mkdtempSync(join(tmpdir(), "hunch-updatecheck-defaults-"));
+  const originalXdg = process.env.XDG_CACHE_HOME;
+  const originalFetch = globalThis.fetch;
+  try {
+    process.env.XDG_CACHE_HOME = scratchCacheHome;
+    // The only safe way to exercise the `fetchImpl ?? fetch` branch itself
+    // without a real network call: replace the global temporarily.
+    globalThis.fetch = fakeFetchOk("9999.0.0");
+    const result = await checkForUpdate();
+    assert.deepEqual(result, { current: HUNCH_VERSION, latest: "9999.0.0" });
+    assert.equal(existsSync(join(scratchCacheHome, "hunch", "update-check.json")), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalXdg === undefined) delete process.env.XDG_CACHE_HOME;
+    else process.env.XDG_CACHE_HOME = originalXdg;
+    rmSync(scratchCacheHome, { recursive: true, force: true });
+  }
 });
 
 test("formats the update notice with the current and latest versions and an upgrade command", () => {

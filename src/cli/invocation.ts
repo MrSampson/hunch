@@ -90,22 +90,33 @@ export async function maybeWarnOllamaContext(providerName: string, env: NodeJS.P
   return probeOllamaNumCtx(env.HUNCH_SYNTH_BASE_URL ?? "", env.HUNCH_SYNTH_MODEL ?? "");
 }
 
+/** Classify an entry-point path into the three mutually exclusive invocation
+ *  shapes `resolveInvocation` branches on. Pulled out as a pure function so
+ *  this classification — the exact logic two prior bugs came from
+ *  (recommending `npm install -g` to a dev-checkout or dist/npm-link run) —
+ *  is directly unit testable without faking `import.meta.url`. */
+export function classifyEntry(entry: string): { isDev: boolean; installed: boolean } {
+  const isDev = entry.endsWith(".ts");
+  // Running from an installed copy (global, local, or npx cache — i.e. NOT a
+  // source checkout we're hacking on).
+  const installed = !isDev && entry.replace(/\\/g, "/").includes("/node_modules/");
+  return { isDev, installed };
+}
+
 export function resolveInvocation(): ResolvedInvocation {
   const entry = fileURLToPath(import.meta.url).replace(/invocation\.(js|ts)$/, "index.$1");
-  const isDev = entry.endsWith(".ts");
+  const { isDev, installed } = classifyEntry(entry);
   // JSON.stringify yields a double-quoted, backslash-escaped token /bin/sh
   // accepts — so install paths with spaces don't break the hook command.
   const q = (s: string) => JSON.stringify(s);
 
-  // Running from an installed copy (global, local, or npx cache — i.e. NOT a
-  // source checkout we're hacking on). The MCP/provider config files we write
-  // are committed and shared across a team via git, so they must NOT embed this
-  // machine's absolute path or OS-specific separators. Reference the exact
-  // published Hunch package instead, which `npx` resolves the same on any OS
-  // and any clone without floating to a newer release. The git hook lives in
-  // per-machine .git/hooks (never committed), so it keeps the PATH-robust
-  // absolute-node invocation below.
-  const installed = !isDev && entry.replace(/\\/g, "/").includes("/node_modules/");
+  // The MCP/provider config files we write are committed and shared across a
+  // team via git, so they must NOT embed this machine's absolute path or
+  // OS-specific separators. Reference the exact published Hunch package
+  // instead, which `npx` resolves the same on any OS and any clone without
+  // floating to a newer release. The git hook lives in per-machine
+  // .git/hooks (never committed), so it keeps the PATH-robust absolute-node
+  // invocation below.
   if (installed) {
     const mcp = publishedMcpInvocation();
     return {

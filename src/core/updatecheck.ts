@@ -121,21 +121,37 @@ export interface UpdateCheckGateOptions {
   env?: NodeJS.ProcessEnv;
 }
 
+/** Commands Hunch itself wires into automated plumbing — a git hook, the merge
+ *  driver, the MCP server, or CI — never typed by a human at an interactive
+ *  prompt. None has a human reading stderr, and several run once per file
+ *  inside an operation git blocks on:
+ *  - `mcp`: spawned by Claude Code, not a terminal.
+ *  - `check`: the pre-commit hook (hooks.ts) runs `check --staged` directly,
+ *    with NO backgrounding/redirection — confirmed to inherit a real TTY.
+ *  - `merge-driver`: git invokes this once per merged path with fully
+ *    inherited stdio (also confirmed against a real TTY) — installed
+ *    unconditionally by `hunch init` (mergeDriver.ts), so this fires on every
+ *    ordinary `git merge`/`git pull` that touches a `.hunch/**` file, not just
+ *    on conflicts.
+ *  - `sync`, `repair-provenance`: the post-commit/post-merge hook lines DO
+ *    background and redirect to /dev/null (hooks.ts), so these two are safe
+ *    today only incidentally — listed anyway as defense in depth against a
+ *    future hook edit that drops the redirect.
+ *  - `hook`, `ci`: the agent pre-edit hook and the CI Constraint Guard action;
+ *    neither is a human at a prompt either. */
+const PLUMBING_COMMANDS = new Set(["mcp", "check", "merge-driver", "sync", "repair-provenance", "hook", "ci"]);
+
 /** The single predicate for "should we even attempt a version check" — kept
  *  separate from checkForUpdate and pure so the decision (not just
  *  checkForUpdate's own fetch/cache/compare logic) is unit testable without
- *  spawning a real process or depending on network reachability. `hunch mcp`
- *  has no interactive human reading stderr; `hunch check` runs synchronously
- *  inside the pre-commit hook with inherited (TTY) stdio, so a fetch there
- *  would add latency to every commit and interleave the notice with
- *  constraint-guard output. Neither does any piped/redirected/spawned
- *  invocation (isTTY false) — the latter is what keeps this repo's own
- *  spawnSync(...)-based CLI tests (piped stdio) from making a real registry
- *  call and writing a real cache file to disk as a side effect of running the
- *  test suite. CI and HUNCH_NO_UPDATE_CHECK are explicit opt-outs for any
- *  other caller. */
+ *  spawning a real process or depending on network reachability. Neither does
+ *  any piped/redirected/spawned invocation (isTTY false) — the latter is what
+ *  keeps this repo's own spawnSync(...)-based CLI tests (piped stdio) from
+ *  making a real registry call and writing a real cache file to disk as a
+ *  side effect of running the test suite. CI and HUNCH_NO_UPDATE_CHECK are
+ *  explicit opt-outs for any other caller. */
 export function shouldCheckForUpdate({ commandName, isTTY, installed, env = process.env }: UpdateCheckGateOptions): boolean {
-  if (commandName === "mcp" || commandName === "check" || !isTTY || !installed) return false;
+  if (PLUMBING_COMMANDS.has(commandName) || !isTTY || !installed) return false;
   return !env.CI && !env.HUNCH_NO_UPDATE_CHECK;
 }
 

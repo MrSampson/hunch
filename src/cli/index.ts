@@ -150,8 +150,8 @@ const program = new Command();
 program.name("hunch").description("Hunch — engineering memory and a deterministic Change Gate for AI-assisted codebases.").version(HUNCH_VERSION);
 
 // Fire-and-forget: never awaited, so a slow/unreachable registry never delays
-// the command's own work. See shouldCheckForUpdate for the full gate (mcp,
-// check, non-TTY, not-installed, CI/HUNCH_NO_UPDATE_CHECK).
+// the command's own work. See shouldCheckForUpdate for the full gate
+// (PLUMBING_COMMANDS, non-TTY, not-installed, CI/HUNCH_NO_UPDATE_CHECK).
 program.hook("preAction", (_thisCommand, actionCommand) => {
   const gate = {
     commandName: actionCommand.name(),
