@@ -144,9 +144,35 @@ import { ENTITY_KINDS } from "../core/types.js";
 import { planCompaction } from "../store/compact.js";
 import { repairDecisionReference } from "../core/refrepair.js";
 import { resolveInvocation, dim, synthesisStatusLines, maybeWarnOllamaContext } from "./invocation.js";
+import { checkForUpdate, formatUpdateNotice, shouldCheckForUpdate } from "../core/updatecheck.js";
 
 const program = new Command();
 program.name("hunch").description("Hunch — engineering memory and a deterministic Change Gate for AI-assisted codebases.").version(HUNCH_VERSION);
+
+// Fire-and-forget: never awaited, so a slow/unreachable registry never delays
+// the command's own work. See shouldCheckForUpdate for the full gate
+// (PLUMBING_COMMANDS, non-TTY, not-installed, CI/HUNCH_NO_UPDATE_CHECK).
+program.hook("preAction", (_thisCommand, actionCommand) => {
+  // Matches updatecheck.ts's own never-block posture (con_03a0b94b2e): the
+  // synchronous gate-evaluation half is provably total today, but a hook that
+  // could abort every command belongs behind the same guarantee the module
+  // itself claims, not an implicit "nothing here happens to throw."
+  try {
+    const gate = {
+      commandName: actionCommand.name(),
+      isTTY: process.stderr.isTTY === true,
+      installed: resolveInvocation().installed,
+    };
+    if (!shouldCheckForUpdate(gate)) return;
+    void checkForUpdate()
+      .then((result) => {
+        if (result) console.error(dim(formatUpdateNotice(result)));
+      })
+      .catch(() => {});
+  } catch {
+    // Never let the update-check advisory abort the command it's piggybacking on.
+  }
+});
 
 let openStore: HunchStore | null = null;
 type TeamStoreOptions = { requireFreshTeamMemory?: boolean };
