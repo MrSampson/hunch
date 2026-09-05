@@ -151,12 +151,12 @@ program.name("hunch").description("Hunch — engineering memory and a determinis
 
 // Fire-and-forget: never awaited, so a slow/unreachable registry never delays
 // the command's own work. See shouldCheckForUpdate for the full gate (mcp,
-// non-TTY, dev checkout, CI/HUNCH_NO_UPDATE_CHECK).
+// check, non-TTY, not-installed, CI/HUNCH_NO_UPDATE_CHECK).
 program.hook("preAction", (_thisCommand, actionCommand) => {
   const gate = {
     commandName: actionCommand.name(),
     isTTY: process.stderr.isTTY === true,
-    isDev: resolveInvocation().isDev,
+    installed: resolveInvocation().installed,
   };
   if (!shouldCheckForUpdate(gate)) return;
   void checkForUpdate()

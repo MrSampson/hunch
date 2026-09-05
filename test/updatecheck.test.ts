@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { checkForUpdate, formatUpdateNotice, shouldCheckForUpdate } from "../src/core/updatecheck.js";
+import { checkForUpdate, defaultCacheFile, formatUpdateNotice, shouldCheckForUpdate } from "../src/core/updatecheck.js";
 import { HUNCH_PACKAGE_NAME } from "../src/core/version.js";
 import { hunchCliArgs } from "./cli-invocation.js";
 
@@ -117,6 +117,21 @@ test("never treats one prerelease as an upgrade over a different prerelease of t
       now: () => 0,
     });
     assert.equal(higherToLower, null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("strips build metadata (+...) before comparing, per semver — it carries no ordering meaning", async () => {
+  const { dir, file } = tmpCacheFile();
+  try {
+    const result = await checkForUpdate({
+      cacheFile: file,
+      currentVersion: "1.0.0+abc123",
+      fetchImpl: fakeFetchOk("1.0.0+xyz789"),
+      now: () => 0,
+    });
+    assert.equal(result, null, "differing build metadata alone must not be reported as an upgrade");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -334,28 +349,39 @@ test("returns null on a corrupt cache file, without throwing", async () => {
 });
 
 test("shouldCheckForUpdate: false for hunch mcp, regardless of TTY", () => {
-  assert.equal(shouldCheckForUpdate({ commandName: "mcp", isTTY: true, isDev: false, env: {} }), false);
-  assert.equal(shouldCheckForUpdate({ commandName: "mcp", isTTY: false, isDev: false, env: {} }), false);
+  assert.equal(shouldCheckForUpdate({ commandName: "mcp", isTTY: true, installed: true, env: {} }), false);
+  assert.equal(shouldCheckForUpdate({ commandName: "mcp", isTTY: false, installed: true, env: {} }), false);
+});
+
+test("shouldCheckForUpdate: false for hunch check, regardless of TTY — it runs synchronously inside the pre-commit hook with inherited (TTY) stdio, so a fetch there would add latency to every commit and interleave with constraint-guard output", () => {
+  assert.equal(shouldCheckForUpdate({ commandName: "check", isTTY: true, installed: true, env: {} }), false);
+  assert.equal(shouldCheckForUpdate({ commandName: "check", isTTY: false, installed: true, env: {} }), false);
 });
 
 test("shouldCheckForUpdate: false when stderr is not a TTY (piped/redirected/spawned — this is the gate every spawnSync(...)-based CLI test in this suite relies on)", () => {
-  assert.equal(shouldCheckForUpdate({ commandName: "doctor", isTTY: false, isDev: false, env: {} }), false);
+  assert.equal(shouldCheckForUpdate({ commandName: "doctor", isTTY: false, installed: true, env: {} }), false);
 });
 
-test("shouldCheckForUpdate: false for a source checkout (dev), even at an interactive TTY — 'npm install -g' is not how it's run", () => {
-  assert.equal(shouldCheckForUpdate({ commandName: "doctor", isTTY: true, isDev: true, env: {} }), false);
+test("shouldCheckForUpdate: false for any source-checkout shape (tsx dev run or a built dist/npm-link run), even at an interactive TTY — 'npm install -g' is not how it's run", () => {
+  assert.equal(shouldCheckForUpdate({ commandName: "doctor", isTTY: true, installed: false, env: {} }), false);
 });
 
 test("shouldCheckForUpdate: false when CI is set", () => {
-  assert.equal(shouldCheckForUpdate({ commandName: "doctor", isTTY: true, isDev: false, env: { CI: "true" } }), false);
+  assert.equal(shouldCheckForUpdate({ commandName: "doctor", isTTY: true, installed: true, env: { CI: "true" } }), false);
 });
 
 test("shouldCheckForUpdate: false when HUNCH_NO_UPDATE_CHECK is set", () => {
-  assert.equal(shouldCheckForUpdate({ commandName: "doctor", isTTY: true, isDev: false, env: { HUNCH_NO_UPDATE_CHECK: "1" } }), false);
+  assert.equal(shouldCheckForUpdate({ commandName: "doctor", isTTY: true, installed: true, env: { HUNCH_NO_UPDATE_CHECK: "1" } }), false);
 });
 
 test("shouldCheckForUpdate: true for an ordinary installed command run at an interactive terminal with no opt-out set", () => {
-  assert.equal(shouldCheckForUpdate({ commandName: "doctor", isTTY: true, isDev: false, env: {} }), true);
+  assert.equal(shouldCheckForUpdate({ commandName: "doctor", isTTY: true, installed: true, env: {} }), true);
+});
+
+test("defaultCacheFile never collides with HUNCH_DIR (\".hunch\") — a stray ~/.hunch directory would hijack findRoot() (src/core/paths.ts) for any invocation outside a git repo, which is exactly what putting this cache at ~/.hunch/update-check.json did until this was caught in review", () => {
+  const file = defaultCacheFile();
+  const segments = file.split(/[\\/]/);
+  assert.ok(!segments.includes(".hunch"), `cache path must never contain a ".hunch" path segment: ${file}`);
 });
 
 test("formats the update notice with the current and latest versions and an upgrade command", () => {
@@ -366,19 +392,19 @@ test("formats the update notice with the current and latest versions and an upgr
   assert.match(message, /HUNCH_NO_UPDATE_CHECK/, "the opt-out must be discoverable from the notice itself, not just the source");
 });
 
-test("a spawned CLI invocation never writes the update-check cache into HOME (regression: this is the exact leak found in review before the shouldCheckForUpdate gate existed)", () => {
+test("a spawned CLI invocation never writes the update-check cache to disk — an end-to-end backstop for the preAction wiring as a whole (piped stdio and a source-checkout run both independently block it here; the per-branch shouldCheckForUpdate unit tests above are what isolate each individual gate condition)", () => {
   const home = mkdtempSync(join(tmpdir(), "hunch-updatecheck-home-"));
   try {
     const run = spawnSync(process.execPath, hunchCliArgs("doctor"), {
       cwd: process.cwd(),
       encoding: "utf8",
-      env: { ...process.env, HOME: home, USERPROFILE: home },
+      env: { ...process.env, HOME: home, USERPROFILE: home, XDG_CACHE_HOME: join(home, ".cache") },
     });
     assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
     assert.equal(
-      existsSync(join(home, ".hunch", "update-check.json")),
+      existsSync(join(home, ".cache", "hunch", "update-check.json")),
       false,
-      "a piped/non-interactive CLI run must never write the real update-check cache file",
+      "a spawned CLI run must never write the real update-check cache file to disk",
     );
   } finally {
     rmSync(home, { recursive: true, force: true });

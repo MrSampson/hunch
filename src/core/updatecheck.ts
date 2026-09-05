@@ -33,8 +33,15 @@ interface UpdateCheckCache {
   latestSeen: string;
 }
 
-function defaultCacheFile(): string {
-  return join(homedir(), ".hunch", "update-check.json");
+/** Deliberately NOT under a `.hunch` directory anywhere on this path: `.hunch`
+ *  is HUNCH_DIR (src/core/paths.ts) — the repo-root marker findRoot() walks up
+ *  looking for. A stray `~/.hunch` would hijack findRoot() for any invocation
+ *  outside a git repo (paths.ts's own docstring names this exact hazard), so
+ *  this cache lives under a `hunch` (no dot) segment inside the OS cache
+ *  convention instead — a name that can never collide with the repo marker. */
+export function defaultCacheFile(): string {
+  const cacheHome = process.env.XDG_CACHE_HOME || join(homedir(), ".cache");
+  return join(cacheHome, "hunch", "update-check.json");
 }
 
 function readCache(file: string): UpdateCheckCache | null {
@@ -104,10 +111,13 @@ async function fetchLatestVersion(fetchImpl: typeof fetch): Promise<string | nul
 export interface UpdateCheckGateOptions {
   commandName: string;
   isTTY: boolean;
-  /** Running from a `.ts` source checkout via tsx rather than an installed
-   *  package — recommending `npm install -g` makes no sense there, so the
-   *  check is skipped entirely rather than shown with misleading advice. */
-  isDev: boolean;
+  /** Running from an installed/published copy (global, local, or npx cache),
+   *  as opposed to any kind of source checkout (`.ts` via tsx, or a built
+   *  `dist/` run via `node`/`npm link`) — recommending `npm install -g` only
+   *  makes sense in the installed case, so the check is skipped entirely for
+   *  every source-checkout shape rather than shown with misleading advice.
+   *  Mirrors ResolvedInvocation's own `installed` (src/cli/invocation.ts). */
+  installed: boolean;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -115,14 +125,17 @@ export interface UpdateCheckGateOptions {
  *  separate from checkForUpdate and pure so the decision (not just
  *  checkForUpdate's own fetch/cache/compare logic) is unit testable without
  *  spawning a real process or depending on network reachability. `hunch mcp`
- *  has no interactive human reading stderr; neither does any piped/redirected/
- *  spawned invocation (isTTY false) — the latter is what keeps this repo's own
+ *  has no interactive human reading stderr; `hunch check` runs synchronously
+ *  inside the pre-commit hook with inherited (TTY) stdio, so a fetch there
+ *  would add latency to every commit and interleave the notice with
+ *  constraint-guard output. Neither does any piped/redirected/spawned
+ *  invocation (isTTY false) — the latter is what keeps this repo's own
  *  spawnSync(...)-based CLI tests (piped stdio) from making a real registry
- *  call and writing a real cache file to $HOME as a side effect of running the
+ *  call and writing a real cache file to disk as a side effect of running the
  *  test suite. CI and HUNCH_NO_UPDATE_CHECK are explicit opt-outs for any
  *  other caller. */
-export function shouldCheckForUpdate({ commandName, isTTY, isDev, env = process.env }: UpdateCheckGateOptions): boolean {
-  if (commandName === "mcp" || !isTTY || isDev) return false;
+export function shouldCheckForUpdate({ commandName, isTTY, installed, env = process.env }: UpdateCheckGateOptions): boolean {
+  if (commandName === "mcp" || commandName === "check" || !isTTY || !installed) return false;
   return !env.CI && !env.HUNCH_NO_UPDATE_CHECK;
 }
 
