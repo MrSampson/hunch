@@ -122,9 +122,9 @@ export interface UpdateCheckGateOptions {
 }
 
 /** Commands Hunch itself wires into automated plumbing — a git hook, the merge
- *  driver, the MCP server, or CI — never typed by a human at an interactive
- *  prompt. None has a human reading stderr, and several run once per file
- *  inside an operation git blocks on:
+ *  driver, the MCP server, or CI. `mcp`, `check`, and `merge-driver` are true
+ *  plumbing — never a human reading stderr, confirmed against a real
+ *  inherited TTY:
  *  - `mcp`: spawned by Claude Code, not a terminal.
  *  - `check`: the pre-commit hook (hooks.ts) runs `check --staged` directly,
  *    with NO backgrounding/redirection — confirmed to inherit a real TTY.
@@ -133,19 +133,27 @@ export interface UpdateCheckGateOptions {
  *    unconditionally by `hunch init` (mergeDriver.ts), so this fires on every
  *    ordinary `git merge`/`git pull` that touches a `.hunch/**` file, not just
  *    on conflicts.
+ *  The rest trade away a legitimate interactive case for a simpler, harder-to-
+ *  regress rule than a per-hook marker would be:
  *  - `sync`, `repair-provenance`: the post-commit/post-merge hook lines DO
  *    background and redirect to /dev/null (hooks.ts), so these two are safe
  *    today only incidentally — listed anyway as defense in depth against a
- *    future hook edit that drops the redirect.
- *  - `hook`, `ci`: the agent pre-edit hook and the CI Constraint Guard action;
- *    neither is a human at a prompt either. */
+ *    future hook edit that drops the redirect. A human CAN run either by hand
+ *    at a TTY; the notice is suppressed there too.
+ *  - `hook`: the agent pre-edit hook (Claude Code pipes its stdio, so this is
+ *    also incidental, not load-bearing).
+ *  - `ci`: NOT something CI runs — it's `hunch ci`, the one-shot scaffolder a
+ *    human types once to generate the GitHub Action (the command the Action
+ *    itself runs is `check`, already excluded and separately gated by the
+ *    `CI` env var below). Excluded because a notice adds nothing to a
+ *    scaffolding command, not because it runs unattended. */
 const PLUMBING_COMMANDS = new Set(["mcp", "check", "merge-driver", "sync", "repair-provenance", "hook", "ci"]);
 
 /** The single predicate for "should we even attempt a version check" — kept
  *  separate from checkForUpdate and pure so the decision (not just
  *  checkForUpdate's own fetch/cache/compare logic) is unit testable without
- *  spawning a real process or depending on network reachability. Neither does
- *  any piped/redirected/spawned invocation (isTTY false) — the latter is what
+ *  spawning a real process or depending on network reachability. Any piped/
+ *  redirected/spawned invocation (isTTY false) is also skipped — that's what
  *  keeps this repo's own spawnSync(...)-based CLI tests (piped stdio) from
  *  making a real registry call and writing a real cache file to disk as a
  *  side effect of running the test suite. CI and HUNCH_NO_UPDATE_CHECK are
