@@ -1,9 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { checkForUpdate, formatUpdateNotice, shouldCheckForUpdate } from "../src/core/updatecheck.js";
+import { HUNCH_PACKAGE_NAME } from "../src/core/version.js";
+import { hunchCliArgs } from "./cli-invocation.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -33,7 +36,6 @@ test("reports a newer version when the registry has one", async () => {
       currentVersion: "1.0.0",
       fetchImpl: fakeFetchOk("9.9.9"),
       now: () => 0,
-      env: {},
     });
     assert.deepEqual(result, { current: "1.0.0", latest: "9.9.9" });
   } finally {
@@ -49,7 +51,6 @@ test("returns null when already on the latest version", async () => {
       currentVersion: "1.0.0",
       fetchImpl: fakeFetchOk("1.0.0"),
       now: () => 0,
-      env: {},
     });
     assert.equal(result, null);
   } finally {
@@ -65,7 +66,6 @@ test("returns null when the local build is ahead of the registry", async () => {
       currentVersion: "2.0.0",
       fetchImpl: fakeFetchOk("1.0.0"),
       now: () => 0,
-      env: {},
     });
     assert.equal(result, null);
   } finally {
@@ -81,7 +81,6 @@ test("does not treat a prerelease as newer than its own base release", async () 
       currentVersion: "1.24.0",
       fetchImpl: fakeFetchOk("1.24.0-beta.1"),
       now: () => 0,
-      env: {},
     });
     assert.equal(result, null, "a prerelease of the currently-installed version is not an upgrade");
   } finally {
@@ -97,9 +96,27 @@ test("reports a real release as newer than a prerelease of the same version curr
       currentVersion: "1.24.0-beta.1",
       fetchImpl: fakeFetchOk("1.24.0"),
       now: () => 0,
-      env: {},
     });
     assert.deepEqual(result, { current: "1.24.0-beta.1", latest: "1.24.0" });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("never treats one prerelease as an upgrade over a different prerelease of the same base release", async () => {
+  const { dir, file } = tmpCacheFile();
+  try {
+    // Deliberate simplification (not full semver precedence): two prereleases
+    // of the same core are never an upgrade over each other, in either
+    // direction — regardless of which prerelease identifier is numerically
+    // higher.
+    const higherToLower = await checkForUpdate({
+      cacheFile: file,
+      currentVersion: "1.0.0-beta.9",
+      fetchImpl: fakeFetchOk("1.0.0-beta.10"),
+      now: () => 0,
+    });
+    assert.equal(higherToLower, null);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -113,11 +130,26 @@ test("persists the latest-seen version to the cache file after a successful chec
       currentVersion: "1.0.0",
       fetchImpl: fakeFetchOk("9.9.9"),
       now: () => 12345,
-      env: {},
     });
     const cached = JSON.parse(readFileSync(file, "utf8")) as { lastCheckedAt: number; latestSeen: string };
     assert.equal(cached.lastCheckedAt, 12345);
     assert.equal(cached.latestSeen, "9.9.9");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("creates the cache file's parent directory when it doesn't exist yet", async () => {
+  const { dir } = tmpCacheFile();
+  try {
+    const nestedFile = join(dir, "nested", "cache.json");
+    await checkForUpdate({
+      cacheFile: nestedFile,
+      currentVersion: "1.0.0",
+      fetchImpl: fakeFetchOk("9.9.9"),
+      now: () => 0,
+    });
+    assert.equal(existsSync(nestedFile), true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -132,7 +164,6 @@ test("skips the network call within the 24h cache window", async () => {
       currentVersion: "1.0.0",
       fetchImpl: fetchShouldNotBeCalled(),
       now: () => 1_000_000 + DAY_MS - 1,
-      env: {},
     });
     assert.deepEqual(result, { current: "1.0.0", latest: "9.9.9" });
   } finally {
@@ -149,7 +180,6 @@ test("re-checks once the cache entry is older than 24h", async () => {
       currentVersion: "1.0.0",
       fetchImpl: fakeFetchOk("9.9.9"),
       now: () => 1_000_000 + DAY_MS + 1,
-      env: {},
     });
     assert.deepEqual(result, { current: "1.0.0", latest: "9.9.9" });
   } finally {
@@ -166,7 +196,6 @@ test("re-checks exactly on the 24h cache boundary (treats it as expired)", async
       currentVersion: "1.0.0",
       fetchImpl: fakeFetchOk("9.9.9"),
       now: () => 1_000_000 + DAY_MS,
-      env: {},
     });
     assert.deepEqual(result, { current: "1.0.0", latest: "9.9.9" }, "exactly 24h old counts as expired, not fresh");
   } finally {
@@ -183,7 +212,6 @@ test("treats a valid-JSON but wrong-shaped cache file as absent and re-fetches",
       currentVersion: "1.0.0",
       fetchImpl: fakeFetchOk("9.9.9"),
       now: () => 0,
-      env: {},
     });
     assert.deepEqual(result, { current: "1.0.0", latest: "9.9.9" });
   } finally {
@@ -205,7 +233,6 @@ test("returns null, not a thrown rejection, when the registry response body fail
       currentVersion: "1.0.0",
       fetchImpl: brokenJsonFetch,
       now: () => 0,
-      env: {},
     });
     assert.equal(result, null);
   } finally {
@@ -216,14 +243,17 @@ test("returns null, not a thrown rejection, when the registry response body fail
 test("still returns the correct result when persisting the cache fails", async () => {
   const { dir, file } = tmpCacheFile();
   try {
-    // A cache path inside a nonexistent directory makes the write fail (ENOENT).
-    const unwritableFile = join(dir, "does-not-exist", "cache.json");
+    // A file already occupying the parent path makes mkdir(dirname) throw
+    // ENOTDIR, so the write fails even though writeCache creates missing
+    // parent directories for the ordinary (not-yet-existing-dir) case.
+    const blocker = join(dir, "blocker");
+    writeFileSync(blocker, "not a directory");
+    const unwritableFile = join(blocker, "cache.json");
     const result = await checkForUpdate({
       cacheFile: unwritableFile,
       currentVersion: "1.0.0",
       fetchImpl: fakeFetchOk("9.9.9"),
       now: () => 0,
-      env: {},
     });
     assert.deepEqual(result, { current: "1.0.0", latest: "9.9.9" }, "a lost cache write must not affect the returned result");
   } finally {
@@ -242,7 +272,6 @@ test("returns null and never throws on a network failure", async () => {
       currentVersion: "1.0.0",
       fetchImpl: failingFetch,
       now: () => 0,
-      env: {},
     });
     assert.equal(result, null);
   } finally {
@@ -262,7 +291,6 @@ test("returns null on a non-OK registry response", async () => {
       currentVersion: "1.0.0",
       fetchImpl: notOkFetch,
       now: () => 0,
-      env: {},
     });
     assert.equal(result, null);
   } finally {
@@ -282,7 +310,6 @@ test("returns null on a malformed registry response", async () => {
       currentVersion: "1.0.0",
       fetchImpl: malformedFetch,
       now: () => 0,
-      env: {},
     });
     assert.equal(result, null);
   } finally {
@@ -299,7 +326,6 @@ test("returns null on a corrupt cache file, without throwing", async () => {
       currentVersion: "1.0.0",
       fetchImpl: fakeFetchOk("9.9.9"),
       now: () => 0,
-      env: {},
     });
     assert.deepEqual(result, { current: "1.0.0", latest: "9.9.9" }, "recovers by treating a corrupt cache as absent");
   } finally {
@@ -308,55 +334,53 @@ test("returns null on a corrupt cache file, without throwing", async () => {
 });
 
 test("shouldCheckForUpdate: false for hunch mcp, regardless of TTY", () => {
-  assert.equal(shouldCheckForUpdate({ commandName: "mcp", isTTY: true }), false);
-  assert.equal(shouldCheckForUpdate({ commandName: "mcp", isTTY: false }), false);
+  assert.equal(shouldCheckForUpdate({ commandName: "mcp", isTTY: true, isDev: false, env: {} }), false);
+  assert.equal(shouldCheckForUpdate({ commandName: "mcp", isTTY: false, isDev: false, env: {} }), false);
 });
 
-test("shouldCheckForUpdate: false when stderr is not a TTY — this is what keeps every spawnSync(...)-based CLI test in this suite (piped stdio, so never a TTY) from making a real registry call and writing a real cache file to $HOME as a side effect of running `npm test`", () => {
-  assert.equal(shouldCheckForUpdate({ commandName: "doctor", isTTY: false }), false);
+test("shouldCheckForUpdate: false when stderr is not a TTY (piped/redirected/spawned — this is the gate every spawnSync(...)-based CLI test in this suite relies on)", () => {
+  assert.equal(shouldCheckForUpdate({ commandName: "doctor", isTTY: false, isDev: false, env: {} }), false);
 });
 
-test("shouldCheckForUpdate: true for an ordinary command run at an interactive terminal", () => {
-  assert.equal(shouldCheckForUpdate({ commandName: "doctor", isTTY: true }), true);
+test("shouldCheckForUpdate: false for a source checkout (dev), even at an interactive TTY — 'npm install -g' is not how it's run", () => {
+  assert.equal(shouldCheckForUpdate({ commandName: "doctor", isTTY: true, isDev: true, env: {} }), false);
 });
 
-test("skips the check entirely when CI is set", async () => {
-  const { dir, file } = tmpCacheFile();
-  try {
-    const result = await checkForUpdate({
-      cacheFile: file,
-      currentVersion: "1.0.0",
-      fetchImpl: fetchShouldNotBeCalled(),
-      now: () => 0,
-      env: { CI: "true" },
-    });
-    assert.equal(result, null);
-    assert.equal(existsSync(file), false, "no cache file written when skipped");
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+test("shouldCheckForUpdate: false when CI is set", () => {
+  assert.equal(shouldCheckForUpdate({ commandName: "doctor", isTTY: true, isDev: false, env: { CI: "true" } }), false);
+});
+
+test("shouldCheckForUpdate: false when HUNCH_NO_UPDATE_CHECK is set", () => {
+  assert.equal(shouldCheckForUpdate({ commandName: "doctor", isTTY: true, isDev: false, env: { HUNCH_NO_UPDATE_CHECK: "1" } }), false);
+});
+
+test("shouldCheckForUpdate: true for an ordinary installed command run at an interactive terminal with no opt-out set", () => {
+  assert.equal(shouldCheckForUpdate({ commandName: "doctor", isTTY: true, isDev: false, env: {} }), true);
 });
 
 test("formats the update notice with the current and latest versions and an upgrade command", () => {
   const message = formatUpdateNotice({ current: "1.0.0", latest: "1.2.0" });
   assert.match(message, /1\.0\.0/);
   assert.match(message, /1\.2\.0/);
-  assert.match(message, /npm install -g @davesheffer\/hunch@latest/);
+  assert.match(message, new RegExp(`npm install -g ${HUNCH_PACKAGE_NAME.replace("/", "\\/")}@latest`));
+  assert.match(message, /HUNCH_NO_UPDATE_CHECK/, "the opt-out must be discoverable from the notice itself, not just the source");
 });
 
-test("skips the check entirely when HUNCH_NO_UPDATE_CHECK is set", async () => {
-  const { dir, file } = tmpCacheFile();
+test("a spawned CLI invocation never writes the update-check cache into HOME (regression: this is the exact leak found in review before the shouldCheckForUpdate gate existed)", () => {
+  const home = mkdtempSync(join(tmpdir(), "hunch-updatecheck-home-"));
   try {
-    const result = await checkForUpdate({
-      cacheFile: file,
-      currentVersion: "1.0.0",
-      fetchImpl: fetchShouldNotBeCalled(),
-      now: () => 0,
-      env: { HUNCH_NO_UPDATE_CHECK: "1" },
+    const run = spawnSync(process.execPath, hunchCliArgs("doctor"), {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, HOME: home, USERPROFILE: home },
     });
-    assert.equal(result, null);
-    assert.equal(existsSync(file), false, "no cache file written when skipped");
+    assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
+    assert.equal(
+      existsSync(join(home, ".hunch", "update-check.json")),
+      false,
+      "a piped/non-interactive CLI run must never write the real update-check cache file",
+    );
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
   }
 });

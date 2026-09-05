@@ -1,15 +1,18 @@
-/** Opt-out-able check for a newer published `@davesheffer/hunch` release. Wired
- *  into the CLI (never `hunch mcp`, which has no interactive human reading
- *  stderr) as a fire-and-forget preAction hook — this never delays or fails a
- *  command. Every failure mode (network, malformed cache, malformed registry
- *  response) degrades to `null`, same posture as the agent hook's own
- *  never-block invariant (con_03a0b94b2e), even though this isn't that hook. */
-import { readFileSync, writeFileSync } from "node:fs";
+/** Opt-out-able check for a newer published Hunch release. Wired into the CLI
+ *  as a fire-and-forget preAction hook — never awaited, so a slow/unreachable
+ *  registry never delays the command's own work (though a pending fetch does
+ *  keep the process alive, since node won't exit while a request handle is
+ *  open — a cold-cache run against an unreachable registry can still delay
+ *  the process's actual exit by up to FETCH_TIMEOUT_MS). Every failure mode
+ *  (network, malformed cache, malformed registry response) degrades to
+ *  `null`, same posture as the agent hook's own never-block invariant
+ *  (con_03a0b94b2e), even though this isn't that hook. */
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
-import { HUNCH_VERSION } from "./version.js";
+import { dirname, join } from "node:path";
+import { HUNCH_PACKAGE_NAME, HUNCH_VERSION } from "./version.js";
 
-const REGISTRY_URL = "https://registry.npmjs.org/@davesheffer/hunch/latest";
+const REGISTRY_URL = `https://registry.npmjs.org/${HUNCH_PACKAGE_NAME}/latest`;
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 1500;
 
@@ -23,7 +26,6 @@ export interface UpdateCheckOptions {
   currentVersion?: string;
   now?: () => number;
   fetchImpl?: typeof fetch;
-  env?: NodeJS.ProcessEnv;
 }
 
 interface UpdateCheckCache {
@@ -32,7 +34,7 @@ interface UpdateCheckCache {
 }
 
 function defaultCacheFile(): string {
-  return join(homedir(), ".hunch-update-check.json");
+  return join(homedir(), ".hunch", "update-check.json");
 }
 
 function readCache(file: string): UpdateCheckCache | null {
@@ -49,6 +51,7 @@ function readCache(file: string): UpdateCheckCache | null {
 
 function writeCache(file: string, cache: UpdateCheckCache): void {
   try {
+    mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, JSON.stringify(cache));
   } catch {
     // Best-effort — a lost cache write just means the next invocation re-checks.
@@ -69,10 +72,14 @@ function parseVersion(v: string): { core: number[]; prerelease: string | null } 
 
 /** True if `a` is a strictly newer semver-shaped version than `b`. Non-numeric
  *  release segments compare as 0, so malformed input degrades to "not newer"
- *  rather than throwing. A prerelease (`-beta.1`) is always older than its own
- *  base release, matching semver precedence — otherwise an accidental `latest`
- *  dist-tag promotion of a prerelease would tell users already on the real
- *  release to "upgrade" to something older. */
+ *  rather than throwing. For an equal release core, only a real release beats
+ *  a prerelease of it (`1.0.0` beats `1.0.0-beta.1`) — otherwise an accidental
+ *  `latest` dist-tag promotion of a prerelease would tell users already on the
+ *  real release to "upgrade" to something older. Two different prereleases of
+ *  the same core are deliberately never treated as an upgrade over each other:
+ *  the `latest` dist-tag shouldn't produce that case, and full semver
+ *  prerelease-identifier precedence (numeric-aware, dot-separated) isn't worth
+ *  the complexity for a comparison this narrow. */
 function isNewerVersion(a: string, b: string): boolean {
   const va = parseVersion(a);
   const vb = parseVersion(b);
@@ -80,10 +87,7 @@ function isNewerVersion(a: string, b: string): boolean {
     const diff = (va.core[i] ?? 0) - (vb.core[i] ?? 0);
     if (diff !== 0) return diff > 0;
   }
-  if (va.prerelease === vb.prerelease) return false;
-  if (va.prerelease === null) return true; // release beats any prerelease of the same core
-  if (vb.prerelease === null) return false; // prerelease never beats a release of the same core
-  return va.prerelease > vb.prerelease;
+  return va.prerelease === null && vb.prerelease !== null;
 }
 
 async function fetchLatestVersion(fetchImpl: typeof fetch): Promise<string | null> {
@@ -100,31 +104,37 @@ async function fetchLatestVersion(fetchImpl: typeof fetch): Promise<string | nul
 export interface UpdateCheckGateOptions {
   commandName: string;
   isTTY: boolean;
+  /** Running from a `.ts` source checkout via tsx rather than an installed
+   *  package — recommending `npm install -g` makes no sense there, so the
+   *  check is skipped entirely rather than shown with misleading advice. */
+  isDev: boolean;
+  env?: NodeJS.ProcessEnv;
 }
 
-/** Gates whether the CLI should even attempt `checkForUpdate` — kept separate
- *  and pure so the wiring itself (not just checkForUpdate's own logic) is unit
- *  testable without spawning a real process or depending on network
- *  reachability. `hunch mcp` has no interactive human reading stderr; neither
- *  does any piped/redirected/spawned invocation (isTTY false) — the latter is
- *  what keeps this repo's own spawnSync(...)-based CLI tests (piped stdio) from
- *  making a real registry call and writing a real cache file to $HOME as a side
- *  effect of running the test suite. */
-export function shouldCheckForUpdate({ commandName, isTTY }: UpdateCheckGateOptions): boolean {
-  return commandName !== "mcp" && isTTY;
+/** The single predicate for "should we even attempt a version check" — kept
+ *  separate from checkForUpdate and pure so the decision (not just
+ *  checkForUpdate's own fetch/cache/compare logic) is unit testable without
+ *  spawning a real process or depending on network reachability. `hunch mcp`
+ *  has no interactive human reading stderr; neither does any piped/redirected/
+ *  spawned invocation (isTTY false) — the latter is what keeps this repo's own
+ *  spawnSync(...)-based CLI tests (piped stdio) from making a real registry
+ *  call and writing a real cache file to $HOME as a side effect of running the
+ *  test suite. CI and HUNCH_NO_UPDATE_CHECK are explicit opt-outs for any
+ *  other caller. */
+export function shouldCheckForUpdate({ commandName, isTTY, isDev, env = process.env }: UpdateCheckGateOptions): boolean {
+  if (commandName === "mcp" || !isTTY || isDev) return false;
+  return !env.CI && !env.HUNCH_NO_UPDATE_CHECK;
 }
 
 export function formatUpdateNotice(result: UpdateCheckResult): string {
   return (
     `A newer version of hunch is available: ${result.current} -> ${result.latest}\n` +
-    "Run `npm install -g @davesheffer/hunch@latest` to update."
+    `Run \`npm install -g ${HUNCH_PACKAGE_NAME}@latest\` to update. ` +
+    "(set HUNCH_NO_UPDATE_CHECK=1 to stop checking)"
   );
 }
 
 export async function checkForUpdate(opts: UpdateCheckOptions = {}): Promise<UpdateCheckResult | null> {
-  const env = opts.env ?? process.env;
-  if (env.CI || env.HUNCH_NO_UPDATE_CHECK) return null;
-
   const cacheFile = opts.cacheFile ?? defaultCacheFile();
   const currentVersion = opts.currentVersion ?? HUNCH_VERSION;
   const now = opts.now ?? (() => Date.now());

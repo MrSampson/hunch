@@ -16,6 +16,11 @@ export interface ResolvedInvocation {
   agentHookShell: string;
   /** Structured command/args for .mcp.json (subcommand appended by the writer). */
   mcp: Invocation;
+  /** True when this CLI is running from a `.ts` source checkout via tsx, not an
+   *  installed/published copy. Callers use this to skip behavior that only
+   *  makes sense for an installed package (e.g. recommending `npm install -g`
+   *  to someone hacking on the source tree). */
+  isDev: boolean;
 }
 
 export function dim(s: string): string {
@@ -105,6 +110,7 @@ export function resolveInvocation(): ResolvedInvocation {
       shell: `${q(process.execPath)} ${q(entry)}`,
       agentHookShell: shellInvocation(mcp),
       mcp,
+      isDev,
     };
   }
 
@@ -114,6 +120,7 @@ export function resolveInvocation(): ResolvedInvocation {
       shell: `npx tsx ${q(entry)}`,
       agentHookShell: shellInvocation(mcp),
       mcp,
+      isDev,
     };
   }
   // Source-checkout dist run (e.g. `node dist/cli/index.js`, npm link): inherently
@@ -124,5 +131,6 @@ export function resolveInvocation(): ResolvedInvocation {
     shell: `${q(process.execPath)} ${q(entry)}`,
     agentHookShell: shellInvocation(mcp),
     mcp,
+    isDev,
   };
 }
