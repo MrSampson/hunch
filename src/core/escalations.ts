@@ -37,6 +37,63 @@ export interface Escalation {
   detail: string;
   /** the concrete resolution the human's answer maps to. */
   resolution: string;
+  /** false ONLY for an entry whose own resolution requires acting on a
+   *  DIFFERENT entry first (a duplicate-id queue's non-drop, non-apply
+   *  follower) — it still surfaces, for transparency, but gating surfaces
+   *  (CI exit code, "needs your call" tallies) must not count it: resolving
+   *  the actionable entry ahead of it is what clears it, not anything a
+   *  human can do to this row directly (#61). Omitted (undefined) means
+   *  true — every other escalation kind is always directly actionable. */
+  actionable?: boolean;
+}
+
+/** Escalations gating surfaces (CI exit codes, "needs your call" counts/lists)
+ *  should act on: everything except an entry explicitly marked
+ *  actionable:false (#61). The full list — including non-actionable
+ *  entries — still belongs in any transparency-facing output (e.g. --json). */
+export function actionableEscalations(items: readonly Escalation[]): Escalation[] {
+  return items.filter((e) => e.actionable !== false);
+}
+
+export interface EscalationSummary {
+  /** the subset a gating surface should count/exit/ask on. */
+  actionable: Escalation[];
+  /** how many entries were filtered out — informational-only, shown for
+   *  transparency but not itself a decision to raise. */
+  context: number;
+}
+
+/** One computation for every "N need your call (+M shown for context)"
+ *  consumer (CLI `escalations`, SessionStart, the `hunch_now`/`hunch_escalations`
+ *  MCP tools) — introduced alongside `actionable` (#61) specifically so a
+ *  future consumer of Escalation[] can't repeat the mistake of hand-rolling
+ *  the filter and forgetting it (the VS Code panel did, before this existed). */
+export function summarizeEscalations(items: readonly Escalation[]): EscalationSummary {
+  const actionable = actionableEscalations(items);
+  return { actionable, context: items.length - actionable.length };
+}
+
+/** "you" (the CLI, talking directly to the operator) vs "mcp" (an assistant
+ *  relaying a question to the human, third person). */
+export type EscalationAudience = "cli" | "mcp";
+
+/** The ONE "N need your call (+M shown for context)" headline, shared by the
+ *  CLI `escalations` command and the `hunch_escalations` MCP tool (#61) —
+ *  including its own "nothing actionable, but N item(s) queued for context"
+ *  fallback, so that unreachable-today prose exists in exactly one place
+ *  instead of being hand-copied per consumer (the copy-paste is how the VS
+ *  Code panel missed the filter entirely before `actionable` existed).
+ *  Callers are expected to have already special-cased `items.length === 0`
+ *  (a plainer "nothing needs your decision" message, no tally at all). */
+export function escalationHeadline(items: readonly Escalation[], audience: EscalationAudience): string {
+  const { actionable, context } = summarizeEscalations(items);
+  if (actionable.length) {
+    const call = audience === "cli" ? "your call — asked here, never decided for you" : "the human's call — ask each inline, don't decide it for them";
+    const note = audience === "cli" ? "not gating" : "not a decision";
+    return `${actionable.length} decision(s) need ${call}${context ? ` (+${context} shown below for context only, ${note})` : ""}:`;
+  }
+  const whose = audience === "cli" ? "your decision" : "the human's call";
+  return `Nothing needs ${whose} right now — ${items.length} entr${items.length === 1 ? "y" : "ies"} shown below for context only (resolving another entry will clear them):`;
 }
 
 /** The decisions a human must make NOW, to be asked INLINE. Empty in a healthy graph. */
@@ -116,6 +173,18 @@ export function commitRepairEscalations(queued: readonly CommitRewrite[], decisi
   // this fix (see #56) and isn't new here — it just means a queue whose first
   // entry is about to be evicted by a fresh match still reads as the ordinary,
   // ask-normally case rather than something rarer.
+  // deadRewrites (below) and liveRewrites (in the return) are BOTH called with
+  // this same `live` array, so for any one id they agree on the same single
+  // decision (or the same absence) governing it. That decision's `commit`/
+  // `status` are fixed for the whole id-group — only each entry's OWN `from`
+  // varies — so liveRewrites' and deadRewrites' predicates are exact
+  // complements entry-by-entry (never uniform across the group: two entries
+  // sharing an id can freely land on opposite sides, see the "dead first
+  // sibling" test, #59). `survivors` (queued minus dead) restricted to one id
+  // is therefore exactly that id's live entries, in the same queue order.
+  // Consequence relied on below (#61): the FIRST live entry per id is always
+  // `dropTarget(id)`, so it always stays actionable — no id-group's
+  // escalations can ever be entirely actionable:false.
   const deadSet = new Set(deadRewrites(queued, live));
   const survivors = queued.filter((q) => !deadSet.has(q));
   // What `--drop <id>` targets (src/cli/index.ts: `firstFor(queue, opts.drop)`
@@ -153,6 +222,7 @@ export function commitRepairEscalations(queued: readonly CommitRewrite[], decisi
           : "";
         return {
           ...base,
+          actionable: false,
           question: `${named} has a further queued replacement candidate (${r.from} → ${r.to}) sitting behind another entry for the same decision — leave it queued for now?`,
           // Dropping the entry ahead brings this one back into play on the next
           // run (deadRewrites can no longer see a reason to prune it). Applying

@@ -1,0 +1,117 @@
+{
+  "id": "dec_b8b19796a1",
+  "title": "Separate actionability from visibility in escalations",
+  "topic": null,
+  "status": "accepted",
+  "context": "Escalation gating surfaces (CLI exit codes, \"needs your call\" messages) were counting non-actionable duplicate-id commit-repair followers—entries whose own resolution text says \"resolving this requires acting on a different entry first.\" This inflated decision tallies with entries carrying no direct action. Touches invariant(s): con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
+  "decision": "Introduce Escalation.actionable field (false only for duplicate-id queue followers that are neither drop-target nor apply-target) and actionableEscalations() filter. Gate CLI exit codes and \"needs your call\" counts on actionable entries only; keep full list in --json/transparency output so nothing is hidden.",
+  "consequences": [
+    "Escalation tallies and user prompts now reflect only decisions the human can actually make directly",
+    "Subsequent entry resolution auto-clears dependent non-actionable entries instead of surfacing each as a separate decision",
+    "Full queue state remains visible (--json still lists everything) for debugging corrupted repair queues",
+    "CLI exits 0 when only non-actionable context remains (avoiding false CI failures)"
+  ],
+  "alternatives_rejected": [
+    "Omit non-actionable entries entirely—loses transparency about queue state and why certain repairs are queued",
+    "Gate on all escalations (original behavior)—conflates context with actionable decisions",
+    "Separate escalations into two distinct lists—more complex than single boolean flag on each entry"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Omit non-actionable entries entirely—loses transparency about queue state and why certain repairs are queued",
+      "scope": [
+        "src/cli/**",
+        "src/core/**",
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Gate on all escalations (original behavior)—conflates context with actionable decisions",
+      "scope": [
+        "src/cli/**",
+        "src/core/**",
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Separate escalations into two distinct lists—more complex than single boolean flag on each entry",
+      "scope": [
+        "src/cli/**",
+        "src/core/**",
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_50037f41a9",
+    "cmp_a94a8fe5cc",
+    "cmp_b256a6aed0",
+    "cmp_dfa5b5acde"
+  ],
+  "related_files": [
+    "src/cli/index.ts",
+    "src/core/escalations.ts",
+    "src/mcp/server.ts",
+    "test/escalations.test.ts",
+    "test/repair-provenance.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "5ae8d6b",
+  "valid_from": "2026-09-09T17:08:15+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:5ae8d6b",
+      "synth:provider=claude-cli",
+      "branch:61-actionable-commit-repair-escalations",
+      "src/cli/index.ts",
+      "src/core/escalations.ts",
+      "src/mcp/server.ts",
+      "test/escalations.test.ts",
+      "test/repair-provenance.test.ts"
+    ],
+    "last_verified": "2026-09-09T15:08:30.811Z"
+  },
+  "date": "2026-09-09T17:08:15+02:00"
+}

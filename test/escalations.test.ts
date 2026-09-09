@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { pendingEscalations, policyEscalations, commitRepairEscalations, type PolicyLite } from "../src/core/escalations.js";
+import { pendingEscalations, policyEscalations, commitRepairEscalations, actionableEscalations, summarizeEscalations, escalationHeadline, type Escalation, type PolicyLite } from "../src/core/escalations.js";
 import type { Decision } from "../src/core/types.js";
 
 const D = (over: Partial<Decision> & { id: string }): Decision => ({
@@ -296,4 +296,100 @@ test("commitRepairEscalations: which entry is 'first' for a duplicate id follows
   const forEarlier = items.find((i) => i.detail === "sha_a_old → sha_earlier")!;
   assert.match(forLater.resolution, /--apply --only dec_a to accept/, "whichever entry is first in the queue array wins, regardless of its `to`");
   assert.doesNotMatch(forEarlier.resolution, /--apply --only dec_a to accept/);
+});
+
+test("commitRepairEscalations: a duplicate-id queue's non-actionable follower (neither drop-target nor apply-target) is flagged actionable:false (#61)", () => {
+  const decs = [D({ id: "dec_a", title: "Decision A", commit: "sha_a_old" })];
+  const first = { id: "dec_a", from: "sha_a_old", to: "sha_first" };
+  const second = { id: "dec_a", from: "sha_a_old", to: "sha_second" };
+  const items = commitRepairEscalations([first, second], decs);
+  const forFirst = items.find((i) => i.detail === "sha_a_old → sha_first")!;
+  const forSecond = items.find((i) => i.detail === "sha_a_old → sha_second")!;
+  assert.deepEqual(actionableEscalations(items), [forFirst], "only the genuine drop-target/apply-target passes the filter — resolving it requires acting on a different entry first, so `forSecond` must not gate on this row itself");
+});
+
+test("commitRepairEscalations: an ordinary, non-duplicate entry is actionable (field left true/undefined)", () => {
+  const decs = [D({ id: "dec_1", title: "Add the feature", commit: "sha_old" })];
+  const items = commitRepairEscalations([{ id: "dec_1", from: "sha_old", to: "sha_new" }], decs);
+  assert.deepEqual(actionableEscalations(items), items);
+});
+
+test("commitRepairEscalations: a withheld entry that IS the drop-target stays actionable — only the drop-only wording changes, not the actionable flag", () => {
+  const decs = [D({ id: "dec_1", title: "Add the feature", commit: "sha_old" })];
+  const entry = { id: "dec_1", from: "sha_old", to: "sha_ghost" };
+  const items = commitRepairEscalations([entry], decs, decs, new Set([entry]));
+  assert.deepEqual(actionableEscalations(items), items);
+});
+
+test("commitRepairEscalations: a three-way duplicate — only the middle (neither drop- nor apply-target) entry is actionable:false; the drop-target and apply-target both stay actionable", () => {
+  const decs = [D({ id: "dec_a", title: "Decision A", commit: "sha_a_old" })];
+  const ghost1 = { id: "dec_a", from: "sha_a_old", to: "sha_ghost1" };
+  const ghost2 = { id: "dec_a", from: "sha_a_old", to: "sha_ghost2" };
+  const resolvable = { id: "dec_a", from: "sha_a_old", to: "sha_real" };
+  const items = commitRepairEscalations([ghost1, ghost2, resolvable], decs, decs, new Set([ghost1, ghost2]));
+  const forGhost1 = items.find((i) => i.detail === "sha_a_old → sha_ghost1")!;
+  const forGhost2 = items.find((i) => i.detail === "sha_a_old → sha_ghost2")!;
+  const forResolvable = items.find((i) => i.detail === "sha_a_old → sha_real")!;
+  assert.deepEqual(actionableEscalations(items), [forGhost1, forResolvable], "the drop-target and the apply-target pass; the middle entry (neither) is filtered out");
+});
+
+test("pendingEscalations: a topic-conflict entry is always actionable (only commit-repair followers ever set actionable:false)", () => {
+  const decs = [D({ id: "dec_a", topic: "store.writes" }), D({ id: "dec_b", topic: "store.writes" })];
+  const items = pendingEscalations(decs);
+  assert.deepEqual(actionableEscalations(items), items);
+});
+
+test("actionableEscalations: drops only entries explicitly marked actionable:false, preserving order", () => {
+  const a: Escalation = { kind: "commit-repair-pending", topic: "dec_a", decisionIds: ["dec_a"], question: "q-a", detail: "d-a", resolution: "r-a" };
+  const b: Escalation = { kind: "commit-repair-pending", topic: "dec_b", decisionIds: ["dec_b"], question: "q-b", detail: "d-b", resolution: "r-b", actionable: false };
+  const c: Escalation = { kind: "commit-repair-pending", topic: "dec_c", decisionIds: ["dec_c"], question: "q-c", detail: "d-c", resolution: "r-c" };
+  assert.deepEqual(actionableEscalations([a, b, c]), [a, c]);
+});
+
+test("actionableEscalations: an empty list stays empty", () => {
+  assert.deepEqual(actionableEscalations([]), []);
+});
+
+test("summarizeEscalations: splits a mixed list into its actionable subset and a context count of the rest", () => {
+  const a: Escalation = { kind: "commit-repair-pending", topic: "dec_a", decisionIds: ["dec_a"], question: "q-a", detail: "d-a", resolution: "r-a" };
+  const b: Escalation = { kind: "commit-repair-pending", topic: "dec_b", decisionIds: ["dec_b"], question: "q-b", detail: "d-b", resolution: "r-b", actionable: false };
+  const summary = summarizeEscalations([a, b]);
+  assert.deepEqual(summary.actionable, [a]);
+  assert.equal(summary.context, 1);
+});
+
+test("summarizeEscalations: an all-actionable list has a zero context count", () => {
+  const a: Escalation = { kind: "commit-repair-pending", topic: "dec_a", decisionIds: ["dec_a"], question: "q-a", detail: "d-a", resolution: "r-a" };
+  const summary = summarizeEscalations([a]);
+  assert.deepEqual(summary.actionable, [a]);
+  assert.equal(summary.context, 0);
+});
+
+test("summarizeEscalations: an empty list summarizes to nothing actionable and zero context", () => {
+  const summary = summarizeEscalations([]);
+  assert.deepEqual(summary.actionable, []);
+  assert.equal(summary.context, 0);
+});
+
+test("escalationHeadline (cli audience): an all-actionable list omits the context suffix", () => {
+  const a: Escalation = { kind: "commit-repair-pending", topic: "dec_a", decisionIds: ["dec_a"], question: "q-a", detail: "d-a", resolution: "r-a" };
+  assert.equal(escalationHeadline([a], "cli"), "1 decision(s) need your call — asked here, never decided for you:");
+});
+
+test("escalationHeadline (cli audience): a context remainder is appended, not gating", () => {
+  const a: Escalation = { kind: "commit-repair-pending", topic: "dec_a", decisionIds: ["dec_a"], question: "q-a", detail: "d-a", resolution: "r-a" };
+  const b: Escalation = { kind: "commit-repair-pending", topic: "dec_b", decisionIds: ["dec_b"], question: "q-b", detail: "d-b", resolution: "r-b", actionable: false };
+  assert.equal(escalationHeadline([a, b], "cli"), "1 decision(s) need your call — asked here, never decided for you (+1 shown below for context only, not gating):");
+});
+
+test("escalationHeadline (mcp audience): same shape, distinct wording from the CLI audience", () => {
+  const a: Escalation = { kind: "commit-repair-pending", topic: "dec_a", decisionIds: ["dec_a"], question: "q-a", detail: "d-a", resolution: "r-a" };
+  const b: Escalation = { kind: "commit-repair-pending", topic: "dec_b", decisionIds: ["dec_b"], question: "q-b", detail: "d-b", resolution: "r-b", actionable: false };
+  assert.equal(escalationHeadline([a, b], "mcp"), "1 decision(s) need the human's call — ask each inline, don't decide it for them (+1 shown below for context only, not a decision):");
+});
+
+test("escalationHeadline: a list with nothing actionable (no real producer emits this today, per commitRepairEscalations' own invariant, but the field's contract allows it) falls back to the neutral branch", () => {
+  const b: Escalation = { kind: "commit-repair-pending", topic: "dec_b", decisionIds: ["dec_b"], question: "q-b", detail: "d-b", resolution: "r-b", actionable: false };
+  assert.equal(escalationHeadline([b], "cli"), "Nothing needs your decision right now — 1 entry shown below for context only (resolving another entry will clear them):");
+  assert.equal(escalationHeadline([b, b], "mcp"), "Nothing needs the human's call right now — 2 entries shown below for context only (resolving another entry will clear them):");
 });

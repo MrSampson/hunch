@@ -120,7 +120,7 @@ import { ADR_DIR_CANDIDATES, ADR_FILE_RE, mapAdrCorpus } from "../extractors/adr
 import { applyImportedAdrReview, carryImportedAdrReview, importedAdrReviewHash, importedAdrSourceHash, isImportedAdrDecision, pendingImportedAdrReviews } from "../core/importReview.js";
 import { exportMadrCorpus, isRegenerableMadr } from "../integrations/madrExport.js";
 import { buildMadrManifest, writeMadrManifest, refreshMadrCorpus } from "../integrations/madrManifest.js";
-import { pendingEscalations, policyEscalations, commitRepairEscalations } from "../core/escalations.js";
+import { pendingEscalations, policyEscalations, commitRepairEscalations, actionableEscalations, escalationHeadline } from "../core/escalations.js";
 import { premiseEscalations } from "../core/premises.js";
 import { parseDocAnchors, renderDocGrounding } from "../core/docanchors.js";
 import { compareCandidates } from "../core/compare.js";
@@ -4423,7 +4423,15 @@ program
             const { ConstitutionService: CS } = await import("../constitution/service.js");
             escalations.push(...policyEscalations(new CS(s, paths.root).list({ publicOnly: true }).map((p) => ({ ...p, last_action: p.audit.at(-1)?.action ?? null }))));
           } catch { /* constitution unavailable */ }
-          if (!decisions.length && !escalations.length) {
+          // Only ACTIONABLE entries are worth asking inline — a duplicate-id
+          // commit-repair follower whose own resolution says "act on a
+          // different entry first" isn't a question the assistant can put to
+          // the human directly (#61). Filtered BEFORE the bail check below so
+          // "is there anything to say" and "what do we say" share one
+          // predicate — an escalations list that's entirely non-actionable
+          // must bail exactly like an empty one would.
+          const actionableEsc = actionableEscalations(escalations);
+          if (!decisions.length && !actionableEsc.length) {
             // Fresh graph and nothing else to raise: nothing to orient on, but
             // the operating loop still ships. A queued commit-repair escalation
             // (checked against the full store above) is enough reason NOT to
@@ -4441,8 +4449,8 @@ program
             L.push(`Roadmap (${roadmap.length} live proposed): ${roadmap.slice(0, 3).map((r) => r.title).join(" · ")}${roadmap.length > 3 ? " · …" : ""}`);
           }
           if (pendingReview > 0) L.push(`${pendingReview} legacy un-vouched draft(s) — adopt as advisory memory with \`hunch adopt-drafts\` (new captures auto-trust).`);
-          if (escalations.length) {
-            L.push(`⚖ ${escalations.length} decision(s) need YOUR call — ASK the user inline (don't queue): ${escalations.map((e) => e.question).join(" · ")}`);
+          if (actionableEsc.length) {
+            L.push(`⚖ ${actionableEsc.length} decision(s) need YOUR call — ASK the user inline (don't queue): ${actionableEsc.map((e) => e.question).join(" · ")}`);
           }
           L.push("Orient further: hunch_context(task) · hunch_structure() · `hunch now`.");
           // The operating loop rides session start — guaranteed delivery, once
@@ -5073,18 +5081,33 @@ program
         const { ConstitutionService: CS } = await import("../constitution/service.js");
         items.push(...policyEscalations(new CS(store, root).list().map((p) => ({ ...p, last_action: p.audit.at(-1)?.action ?? null }))));
       } catch { /* constitution unavailable — memory escalations still surface */ }
-      if (opts.json) { console.log(JSON.stringify(items)); if (items.length) process.exitCode = 1; return; }
+      // Gate (exit code + tallies) on the ACTIONABLE subset only — a duplicate-id
+      // commit-repair follower whose own resolution says "act on a different
+      // entry first" still surfaces below for transparency, but must not count
+      // as its own thing needing a decision (#61). --json keeps the full list.
+      const actionable = actionableEscalations(items);
+      if (opts.json) { console.log(JSON.stringify(items)); if (actionable.length) process.exitCode = 1; return; }
       if (!items.length) {
         console.log("✓ Nothing needs your decision — memory is auto-trusted and self-consistent.");
         return;
       }
-      console.log(`${items.length} decision(s) need your call — asked here, never decided for you:\n`);
+      // escalationHeadline's own "nothing actionable, N shown for context"
+      // fallback is currently unreachable here: every escalation-producing
+      // function today guarantees at least one actionable entry whenever it
+      // emits anything at all — see commitRepairEscalations' own docstring on
+      // `firstFor`/dropTarget. Kept anyway (not assumed away) because that
+      // guarantee lives in the PRODUCERS, not in `Escalation.actionable`'s own
+      // contract, which a future producer could legitimately violate.
+      console.log(escalationHeadline(items, "cli") + "\n");
       for (const e of items) {
-        console.log(`  ⚖ ${e.question}`);
+        // A non-actionable row (a duplicate-id follower) still surfaces for
+        // transparency, but must not read like its own question — marked
+        // distinctly so a skim doesn't mistake it for one of the tally above.
+        console.log(`  ${e.actionable === false ? "·" : "⚖"} ${e.question}`);
         console.log(`      ${dim(e.detail)}`);
         console.log(`      ${dim("→ " + e.resolution)}\n`);
       }
-      process.exitCode = 1;
+      process.exitCode = actionable.length ? 1 : 0;
     } finally {
       store.close();
     }

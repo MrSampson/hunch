@@ -1,0 +1,103 @@
+{
+  "id": "dec_a2dac66cea",
+  "title": "Deduplicate escalation filtering via shared summarizeEscalations() helper",
+  "topic": null,
+  "status": "accepted",
+  "context": "Four independent code paths (CLI escalations, SessionStart, hunch_now MCP tool, hunch_escalations MCP tool) and the VS Code panel were each hand-rolling the logic to separate actionable from non-actionable escalations. This duplication allowed the VS Code panel to miss the actionable field entirely, causing it to miscount entries needing decisions. Touches invariant(s): con_7217ab24ab (Regression guard: \"Flaky test failure under parallelism: native tree-sitter module resolution race on Windows\" must not recur.); con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
+  "decision": "Extract escalation filtering into a single summarizeEscalations(items) → {actionable, context} helper function that all consumers call. Add the missing actionable field to VS Code's EscalationEntry interface. Tighten test assertions to validate through actionableEscalations() directly instead of loose per-field equality checks.",
+  "consequences": [
+    "Eliminates the bug where VS Code's tally counted non-actionable entries",
+    "Makes the actionable/context distinction explicit in one place, not repeated across four callers",
+    "Forces any future consumer through the same filter — can't accidentally omit it",
+    "Test suite now covers all four consumer paths (CLI text, SessionStart, MCP tools), not just --json",
+    "Non-actionable entries remain visible for transparency, just not gated-on by the tally"
+  ],
+  "alternatives_rejected": [
+    "Patching only the VS Code panel would mask the underlying duplication and risk the same mistake in a fifth consumer",
+    "Using a shared constant or object property instead of a function would require all callers to compute context separately, leaving room for drift"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Patching only the VS Code panel would mask the underlying duplication and risk the same mistake in a fifth consumer",
+      "scope": [
+        "src/cli/**",
+        "src/core/**",
+        "src/mcp/**",
+        "test/**",
+        "vscode-extension/src/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Using a shared constant or object property instead of a function would require all callers to compute context separately, leaving room for drift",
+      "scope": [
+        "src/cli/**",
+        "src/core/**",
+        "src/mcp/**",
+        "test/**",
+        "vscode-extension/src/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_50037f41a9",
+    "cmp_555e43ab1a",
+    "cmp_a94a8fe5cc",
+    "cmp_b256a6aed0",
+    "cmp_dfa5b5acde"
+  ],
+  "related_files": [
+    "src/cli/index.ts",
+    "src/core/escalations.ts",
+    "src/mcp/server.ts",
+    "test/escalations.test.ts",
+    "test/repair-provenance.test.ts",
+    "vscode-extension/src/memoryView.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "337db6f",
+  "valid_from": "2026-09-09T17:36:33+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:337db6f",
+      "synth:provider=claude-cli",
+      "branch:61-actionable-commit-repair-escalations",
+      "src/cli/index.ts",
+      "src/core/escalations.ts",
+      "src/mcp/server.ts",
+      "test/escalations.test.ts",
+      "test/repair-provenance.test.ts",
+      "vscode-extension/src/memoryView.ts"
+    ],
+    "last_verified": "2026-09-09T15:36:46.802Z"
+  },
+  "date": "2026-09-09T17:36:33+02:00"
+}

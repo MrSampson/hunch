@@ -465,6 +465,110 @@ test("hunch escalations' drop-target wording for the same duplicate-id queue mat
   }
 });
 
+test("hunch escalations --json marks a duplicate-id queue's non-actionable follower actionable:false, and leaves the genuine drop/apply target actionable (#61)", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaANew }, // first-queued: the real --apply/--drop target
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaBNew }, // second-queued: not directly actionable by id
+      ], null, 2) + "\n",
+    );
+
+    const escRun = runCli(fixture.root, "escalations", "--json");
+    assert.equal(escRun.status, 1, "still exits non-zero — the drop/apply target genuinely needs a human");
+    const items = JSON.parse(escRun.stdout) as { detail: string; actionable?: boolean }[];
+    const forFirst = items.find((i) => i.detail === `sha_a_old → ${fixture.shaANew}`)!;
+    const forSecond = items.find((i) => i.detail === `sha_a_old → ${fixture.shaBNew}`)!;
+    assert.notEqual(forFirst.actionable, false, "the real --apply/--drop target stays actionable");
+    assert.equal(forSecond.actionable, false, "resolving it requires acting on the entry ahead of it, not this row");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("hunch escalations' TEXT output (no --json) tallies only the actionable subset in its headline, but still lists the non-actionable follower below for transparency (#61)", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaANew }, // first-queued: the real --apply/--drop target
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaBNew }, // second-queued: not directly actionable by id
+      ], null, 2) + "\n",
+    );
+
+    const run = runCli(fixture.root, "escalations");
+    assert.equal(run.status, 1, "the drop/apply target still genuinely needs a human, so the exit code stays non-zero");
+    assert.match(run.stdout, /^1 decision\(s\) need your call — asked here, never decided for you \(\+1 shown below for context only, not gating\):/m, "the headline tally counts only the actionable entry, not both");
+    assert.match(run.stdout, new RegExp(`sha_a_old → ${fixture.shaANew}`), "the actionable entry is still printed in the list below the headline");
+    assert.match(run.stdout, new RegExp(`sha_a_old → ${fixture.shaBNew}`), "the non-actionable follower still surfaces too — nothing about the corrupted queue is hidden");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("MCP hunch_now's joined 'ASK inline' question list omits a duplicate-id follower's question — it isn't one the assistant can put to the human directly (#61)", async () => {
+  const fixture = twoDecisionQueueFixture();
+  let client: Client | null = null;
+  try {
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaANew },
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaBNew },
+      ], null, 2) + "\n",
+    );
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [tsx, cli, "mcp"],
+      cwd: fixture.root,
+      env: { ...process.env, HUNCH_PRIVATE_DIR: "", HUNCH_SYNTH_PROVIDER: "deterministic" },
+    });
+    client = new Client({ name: "repair-provenance-mcp-hunch-now-actionable-test", version: "1.0.0" });
+    await client.connect(transport);
+    const result = await client.callTool({ name: "hunch_now", arguments: {} });
+    const text = (result.content as { type: "text"; text: string }[]).map((part) => part.text).join("\n");
+    assert.match(text, /⚖ 1 decision\(s\) need the human's call/, "only the one actionable entry counts");
+    assert.match(text, /no longer reachable from HEAD/, "the actionable entry's own question is still raised");
+    assert.doesNotMatch(text, /further queued replacement candidate/, "the non-actionable follower's question must not be joined into the inline ask");
+  } finally {
+    await client?.close();
+    fixture.cleanup();
+  }
+});
+
+test("MCP hunch_escalations' text output tallies only the actionable subset, but still lists the non-actionable follower for transparency (#61)", async () => {
+  const fixture = twoDecisionQueueFixture();
+  let client: Client | null = null;
+  try {
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaANew },
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaBNew },
+      ], null, 2) + "\n",
+    );
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [tsx, cli, "mcp"],
+      cwd: fixture.root,
+      env: { ...process.env, HUNCH_PRIVATE_DIR: "", HUNCH_SYNTH_PROVIDER: "deterministic" },
+    });
+    client = new Client({ name: "repair-provenance-mcp-hunch-escalations-actionable-test", version: "1.0.0" });
+    await client.connect(transport);
+    const result = await client.callTool({ name: "hunch_escalations", arguments: {} });
+    const text = (result.content as { type: "text"; text: string }[]).map((part) => part.text).join("\n");
+    assert.match(text, /^1 decision\(s\) need the human's call — ask each inline, don't decide it for them \(\+1 shown below for context only, not a decision\):/m);
+    assert.match(text, new RegExp(`sha_a_old → ${fixture.shaANew}`), "the actionable entry is still listed");
+    assert.match(text, new RegExp(`sha_a_old → ${fixture.shaBNew}`), "the non-actionable follower still surfaces too");
+  } finally {
+    await client?.close();
+    fixture.cleanup();
+  }
+});
+
 test("repair-provenance: a dropped match doesn't resurface when the identical range is re-detected — the tombstone is durable, not just a queue clear", () => {
   const fixture = squashFixture();
   try {

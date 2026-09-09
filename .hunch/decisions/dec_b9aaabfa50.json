@@ -1,0 +1,122 @@
+{
+  "id": "dec_b9aaabfa50",
+  "title": "Centralize escalation headline generation to prevent duplication across consumers",
+  "topic": null,
+  "status": "accepted",
+  "context": "The \"N need your call (+M for context)\" headline was hand-copied into both the CLI and MCP tool, with matching dead prose. This duplication led to inconsistency — the VS Code panel missed applying the actionable filter because maintenance of the duplicated code was error-prone. Touches invariant(s): con_7217ab24ab (Regression guard: \"Flaky test failure under parallelism: native tree-sitter module resolution race on Windows\" must not recur.); con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
+  "decision": "Extract `escalationHeadline()` function in src/core/escalations.ts that generates the headline once for all consumers (CLI, MCP, VS Code). Introduced `EscalationAudience` type (\"cli\" | \"mcp\") to customize wording while keeping logic centralized. All consumers now call this single function instead of maintaining their own copy.",
+  "consequences": [
+    "Consistency guaranteed across all output consumers",
+    "Single source of truth for headline logic and wording",
+    "Non-actionable rows now uniformly distinguished (\"·\" glyph in CLI/MCP, neutral icon + \"context only\" in VS Code)",
+    "Easier future maintenance — headline changes require editing one function, not three places",
+    "VS Code panel can now correctly filter and display non-actionable entries"
+  ],
+  "alternatives_rejected": [
+    "Continue hand-copying headline logic per consumer (original approach, caused maintenance bugs)",
+    "Extract only to CLI, leave MCP/VS Code with separate implementations (partial solution, wouldn't fix inconsistency)",
+    "Create a shared config constant instead of a function (wouldn't handle audience-specific wording variations like \"your call\" vs \"the human's call\")"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Continue hand-copying headline logic per consumer (original approach, caused maintenance bugs)",
+      "scope": [
+        "src/cli/**",
+        "src/core/**",
+        "src/mcp/**",
+        "test/**",
+        "vscode-extension/src/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Extract only to CLI, leave MCP/VS Code with separate implementations (partial solution, wouldn't fix inconsistency)",
+      "scope": [
+        "src/cli/**",
+        "src/core/**",
+        "src/mcp/**",
+        "test/**",
+        "vscode-extension/src/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Create a shared config constant instead of a function (wouldn't handle audience-specific wording variations like \"your call\" vs \"the human's call\")",
+      "scope": [
+        "src/cli/**",
+        "src/core/**",
+        "src/mcp/**",
+        "test/**",
+        "vscode-extension/src/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_50037f41a9",
+    "cmp_555e43ab1a",
+    "cmp_a94a8fe5cc",
+    "cmp_b256a6aed0",
+    "cmp_dfa5b5acde"
+  ],
+  "related_files": [
+    "src/cli/index.ts",
+    "src/core/escalations.ts",
+    "src/mcp/server.ts",
+    "test/escalations.test.ts",
+    "vscode-extension/src/memoryView.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "2e4935b",
+  "valid_from": "2026-09-09T18:15:28+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:2e4935b",
+      "synth:provider=claude-cli",
+      "branch:61-actionable-commit-repair-escalations",
+      "src/cli/index.ts",
+      "src/core/escalations.ts",
+      "src/mcp/server.ts",
+      "test/escalations.test.ts",
+      "vscode-extension/src/memoryView.ts"
+    ],
+    "last_verified": "2026-09-09T16:15:44.543Z"
+  },
+  "date": "2026-09-09T18:15:28+02:00"
+}
