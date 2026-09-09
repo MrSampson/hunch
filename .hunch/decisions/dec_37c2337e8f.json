@@ -1,0 +1,101 @@
+{
+  "id": "dec_37c2337e8f",
+  "title": "Consolidate dual post-merge hook implementations with independent guards",
+  "topic": null,
+  "status": "accepted",
+  "context": "An upstream merge left duplicate code in hooks.ts and providers.ts — two separate `installPostMergeHook` implementations, one for provenance detection and one for grounding refresh. The duplicates were fixed in the working tree during conflict resolution but failed to stage due to a bad pathspec in an earlier `git add`, so the committed snapshot retained the duplicates while local checks passed against the working tree. Touches invariant(s): con_8460b6770f (Config/provider writers must merge idempotently into existing user files and refuse to clobber an unparseable file).",
+  "decision": "Merge the two `installPostMergeHook` implementations into a single function that performs both provenance detection (guarded by HUNCH_MERGE_SYNC) and grounding refresh (guarded by HUNCH_SYNC) as two independently-guarded actions within the same mergeBlock. Guards are separate because HUNCH_MERGE_SYNC is for an action that makes no commit and can't re-trigger itself, while HUNCH_SYNC is shared with post-commit and must prevent recursive git-operation recursion.",
+  "consequences": [
+    "Single source of truth for post-merge hook installation and updates",
+    "Both actions are guaranteed to ship together as a cohesive unit",
+    "Guard variables remain decoupled so they don't interfere with each other's recursion prevention",
+    "Reduced code duplication and maintenance burden going forward"
+  ],
+  "alternatives_rejected": [
+    "Keep two separate implementations (duplicates would diverge and multiply maintenance burden)",
+    "Use a single guard for both actions (HUNCH_SYNC recursion would break the grounding refresh)",
+    "Omit grounding refresh entirely (docs would drift from store on merges)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Keep two separate implementations (duplicates would diverge and multiply maintenance burden)",
+      "scope": [
+        "src/integrations/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Use a single guard for both actions (HUNCH_SYNC recursion would break the grounding refresh)",
+      "scope": [
+        "src/integrations/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Omit grounding refresh entirely (docs would drift from store on merges)",
+      "scope": [
+        "src/integrations/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_863ac67d4a"
+  ],
+  "related_files": [
+    "src/integrations/hooks.ts",
+    "src/integrations/providers.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "368a9b7",
+  "valid_from": "2026-09-09T14:03:03+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [
+      "installPostMergeHook"
+    ],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:368a9b7",
+      "synth:provider=claude-cli",
+      "branch:main",
+      "src/integrations/hooks.ts",
+      "src/integrations/providers.ts"
+    ],
+    "last_verified": "2026-09-09T12:03:21.797Z"
+  },
+  "date": "2026-09-09T14:03:03+02:00"
+}
