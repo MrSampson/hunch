@@ -362,15 +362,17 @@ export function writeAntigravityHooks(root: string, inv: Invocation): string {
   return writeJson(file, json);
 }
 
-/** Every generated grounding doc's writer, keyed by its relative path — the single table
- *  every consumer (regenerateGrounding, groundingTargets, tests) reads from, so a provider
- *  can never appear in one and not another. */
+/** Every generated grounding doc's writer, keyed by its repo-relative path (POSIX
+ *  separators, as git prints them — these keys double as git pathspecs elsewhere, e.g.
+ *  isGitCleanPath/headFileContent, which need '/' even on Windows). The single table
+ *  every consumer (regenerateGrounding, groundingTargets, tests) reads from, so a
+ *  provider can never appear in one and not another. */
 const GROUNDING_WRITERS = {
   "CLAUDE.md": updateClaudeMd,
   "AGENTS.md": writeAgentsMd,
-  [join(".github", "copilot-instructions.md")]: writeCopilotInstructions,
-  [join(".cursor", "rules", "hunch.mdc")]: writeCursorRule,
-  [join(".windsurf", "rules", "hunch.md")]: writeWindsurfRule,
+  ".github/copilot-instructions.md": writeCopilotInstructions,
+  ".cursor/rules/hunch.mdc": writeCursorRule,
+  ".windsurf/rules/hunch.md": writeWindsurfRule,
 } as const satisfies Record<string, (root: string, store: HunchStore) => string>;
 
 /** The relative paths of every generated grounding doc, in GROUNDING_WRITERS order —
@@ -386,15 +388,6 @@ export const GROUNDING_DOC_PATHS: readonly string[] = Object.keys(GROUNDING_WRIT
 export function regenerateGrounding(root: string, store: HunchStore): string[] {
   return Object.values(GROUNDING_WRITERS).map((write) => write(root, store));
 }
-
-/** The five grounding docs, repo-relative (POSIX separators, as git prints them). */
-export const GROUNDING_DOC_PATHS: readonly string[] = Object.freeze([
-  "CLAUDE.md",
-  "AGENTS.md",
-  ".github/copilot-instructions.md",
-  ".cursor/rules/hunch.mdc",
-  ".windsurf/rules/hunch.md",
-]);
 
 function groundingTargets(root: string, store: HunchStore): Array<[string, () => string]> {
   return Object.entries(GROUNDING_WRITERS).map(([rel, write]) => [rel, () => write(root, store)]);

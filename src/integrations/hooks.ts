@@ -102,6 +102,10 @@ const MERGE_END = "# <<< hunch post-merge <<<";
 function mergeBlock(invocation: string): string {
   return [
     MERGE_MARK,
+    // Own guard (HUNCH_MERGE_SYNC, not HUNCH_SYNC): this action makes no commit of
+    // its own, so it can't re-trigger itself the way HUNCH_SYNC guards post-commit
+    // against its own commit — kept independent so it never interacts with the
+    // grounding-refresh guard below.
     'if [ -z "$HUNCH_MERGE_SYNC" ]; then',
     "  export HUNCH_MERGE_SYNC=1",
     // No --apply: this only detects a squash-merge orphaning a decision's commit
@@ -111,17 +115,32 @@ function mergeBlock(invocation: string): string {
     // trust an unattended, backgrounded write into shared team memory.
     `  ( ${invocation} repair-provenance --from-hook --quiet >/dev/null 2>&1 || true ) &`,
     "fi",
+    // Re-sync the committed grounding docs when the merge brought .hunch/ content in
+    // behind them (fnd_c402046ac7): two branches that each capture regenerate the same
+    // line, the forge/local merge folds it in without a conflict, and the committed
+    // doc ends up one behind the store. Foreground (it rewrites up to five files) so
+    // the next commit carries them; can never fail the merge. Guarded by HUNCH_SYNC
+    // (shared with post-commit's own guard) rather than HUNCH_MERGE_SYNC, and the
+    // refresh command itself sets HUNCH_SYNC=1 so it can't recursively re-trigger a
+    // hunch-driven git operation into firing this same hook again.
+    'if [ -z "$HUNCH_SYNC" ]; then',
+    "  if ! git diff --quiet ORIG_HEAD HEAD -- .hunch 2>/dev/null; then",
+    `    ( HUNCH_SYNC=1 ${invocation} grounding --refresh 2>/dev/null || true )`,
+    "  fi",
+    "fi",
     MERGE_END,
   ].join("\n");
 }
 
-/** Install a post-merge hook that opportunistically DETECTS a decision's commit
- *  provenance going orphaned right after a squash-merged branch lands locally
- *  (including a fast-forward from `git pull`) — while the original commits are
- *  still fully intact and matchable — and queues the match for a human to
- *  confirm. Own env-var guard, since this hook makes no commit of its own, so
- *  it can't re-trigger itself the way HUNCH_SYNC guards post-commit against its
- *  own commit; kept for consistency with the other two hooks regardless. */
+/** Install a post-merge hook with two independently-guarded actions: (1) opportunistically
+ *  DETECTS a decision's commit provenance going orphaned right after a squash-merged
+ *  branch lands locally (including a fast-forward from `git pull`) — while the original
+ *  commits are still fully intact and matchable — and queues the match for a human to
+ *  confirm (own guard, HUNCH_MERGE_SYNC, since it makes no commit of its own so can't
+ *  re-trigger itself the way HUNCH_SYNC guards post-commit against its own commit); and
+ *  (2) re-syncs the committed grounding docs when the merge brought `.hunch/` content in
+ *  behind them (guarded by HUNCH_SYNC, shared with post-commit, since the refresh it runs
+ *  IS the kind of hunch-driven git operation that guard exists to keep from recursing). */
 export function installPostMergeHook(root: string, invocation: string): HookInstall {
   return installManagedBlock(root, "post-merge", MERGE_MARK, MERGE_END, mergeBlock(invocation));
 }
@@ -141,47 +160,4 @@ export function hookStatus(root: string): { postCommit: boolean; preCommit: bool
     preCommit: has("pre-commit", PRE_MARK),
     postMerge: has("post-merge", MERGE_MARK),
   };
-}
-
-const MERGE_MARK = "# >>> hunch post-merge >>>";
-const MERGE_END = "# <<< hunch post-merge <<<";
-
-/** Install a post-merge hook that re-syncs the committed grounding docs when a merge
- *  brought memory in behind them (fnd_c402046ac7). Two branches that each captured a
- *  record regenerate the same "N+1" counts line; git merges identical lines silently
- *  and the doc ends up one behind the store. The hook regenerates the existing docs
- *  from the PUBLIC store right after a local merge/pull that touched .hunch/, so the
- *  next commit carries them. Foreground (it rewrites five files), loop-guarded via
- *  HUNCH_SYNC, and it can never fail the merge. Preserves any existing hook. */
-export function installPostMergeHook(root: string, invocation: string): HookInstall {
-  const dir = hooksDir(root);
-  const abs = isAbsolute(dir) ? dir : join(root, dir);
-  mkdirSync(abs, { recursive: true });
-  const hookPath = join(abs, "post-merge");
-  const blk = [
-    MERGE_MARK,
-    'if [ -z "$HUNCH_SYNC" ]; then',
-    "  if ! git diff --quiet ORIG_HEAD HEAD -- .hunch 2>/dev/null; then",
-    `    ( HUNCH_SYNC=1 ${invocation} grounding --refresh 2>/dev/null || true )`,
-    "  fi",
-    "fi",
-    MERGE_END,
-  ].join("\n");
-
-  if (!existsSync(hookPath)) {
-    writeFileSync(hookPath, `#!/bin/sh\n${blk}\n`);
-    chmodSync(hookPath, 0o755);
-    return { path: hookPath, action: "created" };
-  }
-  const cur = readFileSync(hookPath, "utf8");
-  if (cur.includes(MERGE_MARK)) {
-    const updated = cur.replace(new RegExp(`${escapeRe(MERGE_MARK)}[\\s\\S]*?${escapeRe(MERGE_END)}`), blk);
-    if (updated === cur) return { path: hookPath, action: "unchanged" };
-    writeFileSync(hookPath, updated);
-    chmodSync(hookPath, 0o755);
-    return { path: hookPath, action: "updated" };
-  }
-  writeFileSync(hookPath, cur.endsWith("\n") ? `${cur}${blk}\n` : `${cur}\n${blk}\n`);
-  chmodSync(hookPath, 0o755);
-  return { path: hookPath, action: "appended" };
 }
