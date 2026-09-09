@@ -362,6 +362,21 @@ export function writeAntigravityHooks(root: string, inv: Invocation): string {
   return writeJson(file, json);
 }
 
+/** Every generated grounding doc's writer, keyed by its relative path — the single table
+ *  every consumer (regenerateGrounding, groundingTargets, tests) reads from, so a provider
+ *  can never appear in one and not another. */
+const GROUNDING_WRITERS = {
+  "CLAUDE.md": updateClaudeMd,
+  "AGENTS.md": writeAgentsMd,
+  [join(".github", "copilot-instructions.md")]: writeCopilotInstructions,
+  [join(".cursor", "rules", "hunch.mdc")]: writeCursorRule,
+  [join(".windsurf", "rules", "hunch.md")]: writeWindsurfRule,
+} as const satisfies Record<string, (root: string, store: HunchStore) => string>;
+
+/** The relative paths of every generated grounding doc, in GROUNDING_WRITERS order —
+ *  the list other consumers (tests included) should read from rather than hand-copying. */
+export const GROUNDING_DOC_PATHS: readonly string[] = Object.keys(GROUNDING_WRITERS);
+
 /** Rewrite the auto-maintained Hunch section in EVERY assistant grounding doc
  *  (CLAUDE.md, AGENTS.md, Copilot instructions, Cursor + Windsurf rules) from the
  *  current store — without touching the MCP/provider config files. `hunch private
@@ -369,31 +384,19 @@ export function writeAntigravityHooks(root: string, inv: Invocation): string {
  *  docs reflect that no engineering memory is published here (renderHunchSection
  *  reads the public store only, so private records never leak into them). */
 export function regenerateGrounding(root: string, store: HunchStore): string[] {
-  return [
-    updateClaudeMd(root, store),
-    writeAgentsMd(root, store),
-    writeCopilotInstructions(root, store),
-    writeCursorRule(root, store),
-    writeWindsurfRule(root, store),
-  ];
+  return Object.values(GROUNDING_WRITERS).map((write) => write(root, store));
 }
 
 function groundingTargets(root: string, store: HunchStore): Array<[string, () => string]> {
-  return [
-    ["CLAUDE.md", () => updateClaudeMd(root, store)],
-    ["AGENTS.md", () => writeAgentsMd(root, store)],
-    [join(".github", "copilot-instructions.md"), () => writeCopilotInstructions(root, store)],
-    [join(".cursor", "rules", "hunch.mdc"), () => writeCursorRule(root, store)],
-    [join(".windsurf", "rules", "hunch.md"), () => writeWindsurfRule(root, store)],
-  ];
+  return Object.entries(GROUNDING_WRITERS).map(([rel, write]) => [rel, () => write(root, store)]);
 }
 
 /** Self-heal: refresh the Hunch section in each grounding doc that ALREADY exists,
  *  and report which ones actually changed. Unlike regenerateGrounding it NEVER creates
  *  a file (so it can't scaffold grounding into a project that opted out of an
  *  assistant). Run by `hunch index` and non-hook `hunch sync` so a project silently
- *  picks up generator fixes (e.g. corrected MCP tool param names) and fresh record
- *  counts on the next refresh — no manual `hunch init`. */
+ *  picks up generator fixes (e.g. corrected MCP tool param names) and fresh graph content
+ *  (constraints, wiki summary) on the next refresh — no manual `hunch init`. */
 export function refreshExistingGrounding(root: string, store: HunchStore): string[] {
   const changed: string[] = [];
   for (const [rel, write] of groundingTargets(root, store)) {
@@ -428,14 +431,15 @@ function generatedDirtOnly(root: string, rel: string, current: string): boolean 
 }
 
 /** Capture-commit refresh: rewrite grounding docs that are git-clean OR whose only
- *  divergence from HEAD is generated content, and return the absolute paths to fold
- *  into the memory commit (commitAndPushHunch alsoStage). This keeps committed record
- *  counts permanently true — every capture used to bump the count and re-stale the
- *  committed docs, failing the release gate's clean-tree check on the next CI index
- *  (the refresh-counts treadmill). The generated-dirt branch closes the second half
- *  (fnd_b269d5c422): once a doc went stale-dirty, the clean-only rule skipped it on
- *  every later flush FOREVER, and each release needed a manual chore commit. A doc
- *  whose USER PROSE differs from HEAD is still left completely untouched. */
+ *  divergence from HEAD is generated content, and return the absolute paths to fold into the
+ *  memory commit (commitAndPushHunch alsoStage). This keeps committed grounding content
+ *  permanently true — record counts used to bump on every capture and re-stale the committed
+ *  docs, failing the release gate's clean-tree check on the next CI index (the refresh-counts
+ *  treadmill; the counts are gone now, but a capture that touches a constraint or the wiki
+ *  manifest still dirties the block the same way). The generated-dirt branch closes the
+ *  second half (fnd_b269d5c422): once a doc went stale-dirty, the clean-only rule skipped it
+ *  on every later flush FOREVER, and each release needed a manual chore commit. A doc whose
+ *  USER PROSE differs from HEAD is still left completely untouched. */
 export function refreshCommittableGrounding(root: string, store: HunchStore): string[] {
   const changed: string[] = [];
   for (const [rel, write] of groundingTargets(root, store)) {
