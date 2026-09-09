@@ -103,6 +103,29 @@ test("repair preserves comments, foreign servers, foreign hooks and unrelated se
   } finally { f.cleanup(); }
 });
 
+test("a harness whose hooks are committed but whose MCP config simply doesn't exist here yet is untested, not a hard issue — only a MALFORMED/broken mcp config is a real issue (#70)", () => {
+  const f = fixture();
+  try {
+    // Only the hooks half — mirrors a harness whose hooks file is intentionally
+    // committed while its MCP config is gitignored/per-developer and hasn't
+    // been generated on this checkout yet (e.g. a fresh clone, before `hunch
+    // init`/local host setup). This must read as "not configured here", not
+    // as a repository-level misconfiguration.
+    installClaudeHooks(f.root, command());
+    const report = inspectIntegrations(f.root, "claude");
+    assert.equal(report.harnesses[0]!.capabilities.mcp.status, "untested");
+    assert.equal(report.issues.some(i => i.file === ".mcp.json"), false, "a simply-absent mcp config must not be scored as an issue");
+    assert.equal(integrationHealthFails(report), false);
+
+    // Contrast: once the file EXISTS but is broken, that's a genuine issue —
+    // this must keep failing exactly as before.
+    f.write(".mcp.json", "{broken");
+    const broken = inspectIntegrations(f.root, "claude");
+    assert.ok(broken.issues.some(i => i.file === ".mcp.json" && i.code === "mcp-config"));
+    assert.equal(integrationHealthFails(broken), true);
+  } finally { f.cleanup(); }
+});
+
 test("malformed config aborts repair before any good file is changed", () => {
   const f = fixture();
   try {
