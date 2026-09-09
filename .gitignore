@@ -35,6 +35,7 @@ docs/superpowers/
 .cursor/hooks.json
 .vscode/mcp.json
 .windsurf/mcp_config.json
+.windsurf/hooks.json
 .codex/config.toml
 .claude/settings.json
 .agents/hooks.json
