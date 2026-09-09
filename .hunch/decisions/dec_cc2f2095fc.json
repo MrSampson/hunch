@@ -1,0 +1,97 @@
+{
+  "id": "dec_cc2f2095fc",
+  "title": "Enforce MCP config/hooks file gitignore parity via fresh-checkout regression test",
+  "topic": null,
+  "status": "accepted",
+  "context": ".windsurf/hooks.json was committed while .windsurf/mcp_config.json was gitignored, breaking the established pattern for every other harness (.cursor, .codex, .agents). This caused `hunch doctor` to detect a harness with a missing config on every fresh clone, failing CI unconditionally.",
+  "decision": "Added .windsurf/hooks.json to .gitignore and deleted it from tracking. Added a regression test that reconstructs a fresh checkout from git-tracked files and asserts `hunch doctor` passes, catching gitignore asymmetries before they break CI.",
+  "consequences": [
+    "Fresh clones now pass `hunch doctor` unconditionally (CI unblocked)",
+    "Regression test guards against similar harness config asymmetries in the future",
+    "Windsurf config pattern now matches every other harness (MCP config + hooks file gitignored as a pair)",
+    "Test uses the repository's own tracked files, making the check self-documenting and impossible to drift from reality"
+  ],
+  "alternatives_rejected": [
+    "Fix only the gitignore without regression test — leaves pattern vulnerable to repeat mistakes",
+    "Commit .windsurf/mcp_config.json instead — violates principle that per-developer harness configs should not be tracked",
+    "Make `hunch doctor` lenient toward missing MCP configs — hides real configuration problems"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Fix only the gitignore without regression test — leaves pattern vulnerable to repeat mistakes",
+      "scope": [
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Commit .windsurf/mcp_config.json instead — violates principle that per-developer harness configs should not be tracked",
+      "scope": [
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Make `hunch doctor` lenient toward missing MCP configs — hides real configuration problems",
+      "scope": [
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_a94a8fe5cc"
+  ],
+  "related_files": [
+    "test/integration-health.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "43c9c02",
+  "valid_from": "2026-09-09T19:01:31+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:43c9c02",
+      "synth:provider=claude-cli",
+      "branch:70-gitignore-windsurf-hooks",
+      "test/integration-health.test.ts"
+    ],
+    "last_verified": "2026-09-09T17:01:48.841Z"
+  },
+  "date": "2026-09-09T19:01:31+02:00"
+}
