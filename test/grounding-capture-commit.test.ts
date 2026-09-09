@@ -15,7 +15,7 @@ import { commitAndPushHunch } from "../src/extractors/git.js";
 import { flushCapture } from "../src/integrations/sync.js";
 import { updateClaudeMd } from "../src/integrations/claudemd.js";
 import { hunchPaths } from "../src/core/paths.js";
-import type { Decision } from "../src/core/types.js";
+import type { Constraint, Decision } from "../src/core/types.js";
 import { HunchStore } from "../src/store/hunchStore.js";
 import { indexRepo } from "../src/extractors/indexer.js";
 import { ensureGitignore } from "../src/integrations/gitignore.js";
@@ -55,6 +55,25 @@ function decision(id: string, title: string): Decision {
     retired: { symbols: [], deps: [] },
     provenance: { source: "human_confirmed", confidence: 0.95, evidence: [] },
     date: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+function constraint(id: string, statement: string): Constraint {
+  return {
+    id,
+    type: "correctness",
+    statement,
+    scope: [],
+    severity: "blocking",
+    enforcement: "advisory_v1",
+    match: null,
+    forbids: null,
+    rationale: "fixture",
+    source_decision: null,
+    violations: [],
+    status: "active",
+    valid_to: null,
+    provenance: { source: "human_confirmed", confidence: 0.95, evidence: [] },
   };
 }
 
@@ -102,18 +121,19 @@ test("flushCapture refreshes a git-clean grounding doc and commits it with the c
     const store = new HunchStore(hunchPaths(root));
     store.json.ensureDirs();
     store.json.put("decisions", decision("dec_one", "first choice"));
-    updateClaudeMd(root, store); // grounding block reflects 1 decision
+    updateClaudeMd(root, store); // grounding block reflects the baseline (no constraints yet)
     git("add", "-A");
     git("commit", "-qm", "baseline");
-    assert.match(readFileSync(join(root, "CLAUDE.md"), "utf8"), /\b1 decisions\b/);
+    assert.doesNotMatch(readFileSync(join(root, "CLAUDE.md"), "utf8"), /Top invariants/);
 
     store.json.put("decisions", decision("dec_two", "second choice"));
+    store.json.put("constraints", constraint("con_one", "never do the thing"));
     const r = flushCapture(store, hunchPaths(root).hunch, false, "hunch: capture dec_two");
     store.close();
 
     assert.equal(r, "committed");
-    assert.equal(git("status", "--porcelain"), "", "counts refresh rides the capture commit — tree stays clean");
-    assert.match(git("show", "HEAD:CLAUDE.md"), /\b2 decisions\b/, "the COMMITTED block holds the fresh count");
+    assert.equal(git("status", "--porcelain"), "", "grounding refresh rides the capture commit — tree stays clean");
+    assert.match(git("show", "HEAD:CLAUDE.md"), /never do the thing/, "the COMMITTED block holds the fresh constraint");
   } finally { cleanup(); }
 });
 
@@ -160,8 +180,9 @@ test("hunch index commits refreshed grounding atomically with an auto-pumped gra
 
     const changed = new HunchStore(hunchPaths(root));
     changed.json.put("decisions", decision("dec_two", "second choice"));
+    changed.json.put("constraints", constraint("con_one", "never do the thing"));
     changed.close();
-    assert.match(readFileSync(join(root, "CLAUDE.md"), "utf8"), /\b1 decisions\b/);
+    assert.doesNotMatch(readFileSync(join(root, "CLAUDE.md"), "utf8"), /Top invariants/);
 
     const run = spawnSync(process.execPath, [TSX, CLI, "index"], {
       cwd: root,
@@ -172,8 +193,8 @@ test("hunch index commits refreshed grounding atomically with an auto-pumped gra
     assert.equal(git("status", "--porcelain"), "", "index must leave graph and generated grounding clean");
     const committed = git("show", "HEAD", "--name-only", "--format=");
     assert.match(committed, /\.hunch\/decisions\/dec_two\.json/);
-    assert.match(committed, /^CLAUDE\.md$/m, "fresh counts belong to the same memory commit");
-    assert.match(git("show", "HEAD:CLAUDE.md"), /\b2 decisions\b/);
+    assert.match(committed, /^CLAUDE\.md$/m, "fresh grounding belongs to the same memory commit");
+    assert.match(git("show", "HEAD:CLAUDE.md"), /never do the thing/);
   } finally { cleanup(); }
 });
 

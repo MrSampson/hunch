@@ -18,9 +18,9 @@
  * docs stale with nothing to notice. This test is that "something", and it fails in
  * ordinary CI with an actionable message instead of at tag time.
  *
- * Deterministic across platforms: the managed block carries RECORD counts (decisions,
- * bugs, constraints, components, policies, findings) which come from .hunch/*.json —
- * not the symbol/edge counts, which legitimately differ between Windows and Linux.
+ * Deterministic across platforms: the managed block's content comes entirely from
+ * .hunch/*.json — never from the symbol/edge counts, which legitimately differ between
+ * Windows and Linux.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -76,30 +76,6 @@ test("the committed CLAUDE.md grounding block matches what the graph generates",
       + "Leaving it stale fails the release gate at TAG time with a message that names "
       + "neither the file nor the cause (fnd_6391b4242f).",
     );
-  } finally {
-    store.close();
-    process.env.HUNCH_PRIVATE_DIR = prior;
-    if (prior === undefined) delete process.env.HUNCH_PRIVATE_DIR;
-    rmSync(emptyPrivate, { recursive: true, force: true });
-  }
-});
-
-test("the record counts in the block are public-store numbers, never the overlay union", () => {
-  // Guards the failure mode of the fix itself: regenerating with a private overlay
-  // attached writes union counts into a committed PUBLIC doc. The public store is the
-  // only legitimate source for this block.
-  const committed = committedBlock(join(repoRoot, "CLAUDE.md"));
-  assert.ok(committed, "block present");
-  const m = /\*\*(\d+) decisions, (\d+) bugs?, (\d+) constraints?/.exec(committed!);
-  assert.ok(m, `block states record counts, got: ${committed!.slice(0, 160)}`);
-
-  const emptyPrivate = mkdtempSync(join(tmpdir(), "hunch-grounding-public-"));
-  const prior = process.env.HUNCH_PRIVATE_DIR;
-  process.env.HUNCH_PRIVATE_DIR = emptyPrivate;
-  const store = new HunchStore(hunchPaths(repoRoot));
-  try {
-    assert.equal(Number(m![1]), store.json.loadAll("decisions").length, "decision count is the PUBLIC store's");
-    assert.equal(Number(m![3]), store.json.loadAll("constraints").length, "constraint count is the PUBLIC store's");
   } finally {
     store.close();
     process.env.HUNCH_PRIVATE_DIR = prior;
