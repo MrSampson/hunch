@@ -465,6 +465,29 @@ test("hunch escalations' drop-target wording for the same duplicate-id queue mat
   }
 });
 
+test("hunch escalations --json marks a duplicate-id queue's non-actionable follower actionable:false, and leaves the genuine drop/apply target actionable (#61)", () => {
+  const fixture = twoDecisionQueueFixture();
+  try {
+    writeFileSync(
+      join(fixture.root, ".hunch", "pending-commit-repairs.json"),
+      JSON.stringify([
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaANew }, // first-queued: the real --apply/--drop target
+        { id: "dec_a", from: "sha_a_old", to: fixture.shaBNew }, // second-queued: not directly actionable by id
+      ], null, 2) + "\n",
+    );
+
+    const escRun = runCli(fixture.root, "escalations", "--json");
+    assert.equal(escRun.status, 1, "still exits non-zero — the drop/apply target genuinely needs a human");
+    const items = JSON.parse(escRun.stdout) as { detail: string; actionable?: boolean }[];
+    const forFirst = items.find((i) => i.detail === `sha_a_old → ${fixture.shaANew}`)!;
+    const forSecond = items.find((i) => i.detail === `sha_a_old → ${fixture.shaBNew}`)!;
+    assert.notEqual(forFirst.actionable, false, "the real --apply/--drop target stays actionable");
+    assert.equal(forSecond.actionable, false, "resolving it requires acting on the entry ahead of it, not this row");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("repair-provenance: a dropped match doesn't resurface when the identical range is re-detected — the tombstone is durable, not just a queue clear", () => {
   const fixture = squashFixture();
   try {

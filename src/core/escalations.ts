@@ -37,6 +37,22 @@ export interface Escalation {
   detail: string;
   /** the concrete resolution the human's answer maps to. */
   resolution: string;
+  /** false ONLY for an entry whose own resolution requires acting on a
+   *  DIFFERENT entry first (a duplicate-id queue's non-drop, non-apply
+   *  follower) — it still surfaces, for transparency, but gating surfaces
+   *  (CI exit code, "needs your call" tallies) must not count it: resolving
+   *  the actionable entry ahead of it is what clears it, not anything a
+   *  human can do to this row directly (#61). Omitted (undefined) means
+   *  true — every other escalation kind is always directly actionable. */
+  actionable?: boolean;
+}
+
+/** Escalations gating surfaces (CI exit codes, "needs your call" counts/lists)
+ *  should act on: everything except an entry explicitly marked
+ *  actionable:false (#61). The full list — including non-actionable
+ *  entries — still belongs in any transparency-facing output (e.g. --json). */
+export function actionableEscalations(items: readonly Escalation[]): Escalation[] {
+  return items.filter((e) => e.actionable !== false);
 }
 
 /** The decisions a human must make NOW, to be asked INLINE. Empty in a healthy graph. */
@@ -153,6 +169,7 @@ export function commitRepairEscalations(queued: readonly CommitRewrite[], decisi
           : "";
         return {
           ...base,
+          actionable: false,
           question: `${named} has a further queued replacement candidate (${r.from} → ${r.to}) sitting behind another entry for the same decision — leave it queued for now?`,
           // Dropping the entry ahead brings this one back into play on the next
           // run (deadRewrites can no longer see a reason to prune it). Applying

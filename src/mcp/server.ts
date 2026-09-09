@@ -72,7 +72,7 @@ import { HUNCH_VERSION } from "../core/version.js";
 import { assertCompleteRepoScan, indexRepo, scanRepo } from "../extractors/indexer.js";
 import type { Decision, Finding, Symbol } from "../core/types.js";
 import { liveForTopic, historyForTopic, rejectedForTopic, captureConflicts } from "../core/topics.js";
-import { pendingEscalations, policyEscalations, commitRepairEscalations, type Escalation } from "../core/escalations.js";
+import { pendingEscalations, policyEscalations, commitRepairEscalations, actionableEscalations, type Escalation } from "../core/escalations.js";
 import { readActivePendingRepairs, withheldRewrites } from "../core/repairqueue.js";
 import { scanRecord, publicationWarning, loadVocabulary } from "../core/publication.js";
 import { premiseEscalations } from "../core/premises.js";
@@ -1401,8 +1401,12 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
       // silent here just because its title is private.
       const hunchNowQueue = readActivePendingRepairs(root);
       escalations.push(...commitRepairEscalations(hunchNowQueue, store.advisoryRecs("decisions"), store.recs("decisions"), withheldRewrites(root, hunchNowQueue)));
-      if (escalations.length) {
-        L.push("", `⚖ ${escalations.length} decision(s) need the human's call — ASK inline (never queue): ${escalations.map((e) => e.question).join(" · ")}`);
+      // Only ACTIONABLE entries are a question the assistant can put to the human
+      // directly — a duplicate-id commit-repair follower whose own resolution
+      // says "act on a different entry first" isn't one (#61).
+      const actionableNow = actionableEscalations(escalations);
+      if (actionableNow.length) {
+        L.push("", `⚖ ${actionableNow.length} decision(s) need the human's call — ASK inline (never queue): ${actionableNow.map((e) => e.question).join(" · ")}`);
       }
       return ok(L.join("\n"));
     },
@@ -1435,7 +1439,15 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         items.push(...policyEscalations(new ConstitutionService(store, root).list({ publicOnly: true }).map((p) => ({ ...p, last_action: p.audit.at(-1)?.action ?? null }))));
       } catch { /* constitution unavailable — memory escalations still surface */ }
       if (!items.length) return ok("✓ Nothing needs a human decision — memory is auto-trusted and self-consistent.");
-      const L = [`${items.length} decision(s) need the human's call — ask each inline, don't decide it for them:`, ""];
+      // Only ACTIONABLE entries are a question to ask the human directly — a
+      // duplicate-id commit-repair follower whose own resolution says "act on
+      // a different entry first" still surfaces below for transparency, but
+      // isn't itself something to raise as a decision (#61).
+      const actionable = actionableEscalations(items);
+      const context = items.length - actionable.length;
+      const L = actionable.length
+        ? [`${actionable.length} decision(s) need the human's call — ask each inline, don't decide it for them${context ? ` (+${context} shown below for context only, not a decision)` : ""}:`, ""]
+        : [`Nothing needs the human's call right now — ${items.length} entr${items.length === 1 ? "y" : "ies"} shown below for context only (resolving another entry will clear them):`, ""];
       for (const e of items) {
         L.push(`⚖ ${e.question}`);
         L.push(`   ${e.detail}`);

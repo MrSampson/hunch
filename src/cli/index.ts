@@ -120,7 +120,7 @@ import { ADR_DIR_CANDIDATES, ADR_FILE_RE, mapAdrCorpus } from "../extractors/adr
 import { applyImportedAdrReview, carryImportedAdrReview, importedAdrReviewHash, importedAdrSourceHash, isImportedAdrDecision, pendingImportedAdrReviews } from "../core/importReview.js";
 import { exportMadrCorpus, isRegenerableMadr } from "../integrations/madrExport.js";
 import { buildMadrManifest, writeMadrManifest, refreshMadrCorpus } from "../integrations/madrManifest.js";
-import { pendingEscalations, policyEscalations, commitRepairEscalations } from "../core/escalations.js";
+import { pendingEscalations, policyEscalations, commitRepairEscalations, actionableEscalations } from "../core/escalations.js";
 import { premiseEscalations } from "../core/premises.js";
 import { parseDocAnchors, renderDocGrounding } from "../core/docanchors.js";
 import { compareCandidates } from "../core/compare.js";
@@ -4441,8 +4441,13 @@ program
             L.push(`Roadmap (${roadmap.length} live proposed): ${roadmap.slice(0, 3).map((r) => r.title).join(" · ")}${roadmap.length > 3 ? " · …" : ""}`);
           }
           if (pendingReview > 0) L.push(`${pendingReview} legacy un-vouched draft(s) — adopt as advisory memory with \`hunch adopt-drafts\` (new captures auto-trust).`);
-          if (escalations.length) {
-            L.push(`⚖ ${escalations.length} decision(s) need YOUR call — ASK the user inline (don't queue): ${escalations.map((e) => e.question).join(" · ")}`);
+          // Only ACTIONABLE entries are worth asking inline — a duplicate-id
+          // commit-repair follower whose own resolution says "act on a
+          // different entry first" isn't a question the assistant can put to
+          // the human directly (#61).
+          const actionableEsc = actionableEscalations(escalations);
+          if (actionableEsc.length) {
+            L.push(`⚖ ${actionableEsc.length} decision(s) need YOUR call — ASK the user inline (don't queue): ${actionableEsc.map((e) => e.question).join(" · ")}`);
           }
           L.push("Orient further: hunch_context(task) · hunch_structure() · `hunch now`.");
           // The operating loop rides session start — guaranteed delivery, once
@@ -5073,18 +5078,28 @@ program
         const { ConstitutionService: CS } = await import("../constitution/service.js");
         items.push(...policyEscalations(new CS(store, root).list().map((p) => ({ ...p, last_action: p.audit.at(-1)?.action ?? null }))));
       } catch { /* constitution unavailable — memory escalations still surface */ }
-      if (opts.json) { console.log(JSON.stringify(items)); if (items.length) process.exitCode = 1; return; }
+      // Gate (exit code + tallies) on the ACTIONABLE subset only — a duplicate-id
+      // commit-repair follower whose own resolution says "act on a different
+      // entry first" still surfaces below for transparency, but must not count
+      // as its own thing needing a decision (#61). --json keeps the full list.
+      const actionable = actionableEscalations(items);
+      if (opts.json) { console.log(JSON.stringify(items)); if (actionable.length) process.exitCode = 1; return; }
       if (!items.length) {
         console.log("✓ Nothing needs your decision — memory is auto-trusted and self-consistent.");
         return;
       }
-      console.log(`${items.length} decision(s) need your call — asked here, never decided for you:\n`);
+      if (actionable.length) {
+        const context = items.length - actionable.length;
+        console.log(`${actionable.length} decision(s) need your call — asked here, never decided for you${context ? ` (+${context} shown below for context only, not gating)` : ""}:\n`);
+      } else {
+        console.log(`Nothing needs your decision right now — ${items.length} entr${items.length === 1 ? "y" : "ies"} shown below for context only (resolving another entry will clear them):\n`);
+      }
       for (const e of items) {
         console.log(`  ⚖ ${e.question}`);
         console.log(`      ${dim(e.detail)}`);
         console.log(`      ${dim("→ " + e.resolution)}\n`);
       }
-      process.exitCode = 1;
+      process.exitCode = actionable.length ? 1 : 0;
     } finally {
       store.close();
     }
