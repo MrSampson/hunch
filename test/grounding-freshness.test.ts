@@ -31,6 +31,7 @@ import { fileURLToPath } from "node:url";
 import { hunchPaths } from "../src/core/paths.js";
 import { HunchStore } from "../src/store/hunchStore.js";
 import { renderHunchSection } from "../src/integrations/claudemd.js";
+import { GROUNDING_DOC_PATHS } from "../src/integrations/providers.js";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const START = "<!-- HUNCH:START — auto-generated, do not edit by hand -->";
@@ -50,14 +51,13 @@ function committedBlock(file: string): string | null {
   return existsSync(file) ? blockContent(readFileSync(file, "utf8")) : null;
 }
 
-const GROUNDING_FILES = ["CLAUDE.md", "AGENTS.md", ".github/copilot-instructions.md", ".cursor/rules/hunch.mdc", ".windsurf/rules/hunch.md"];
-
 test("the committed grounding docs' blocks match what the graph generates", () => {
   // PUBLIC-ONLY, exactly as the gate runs it (gateEnvironment points repository-index at
   // an empty private home). HUNCH_PRIVATE_DIR takes precedence over .hunch/local.json AND
   // the shared pointer in .git/hunch/, so this is deterministic on a dev machine with an
-  // overlay attached — where the union would otherwise render 274 decisions instead of the
-  // public 164, and "fix" the mismatch by writing private counts into a public doc.
+  // overlay attached — where the union would otherwise leak private-only content (e.g. a
+  // private constraint in the Top-invariants slice, or the private wiki manifest) into a
+  // committed PUBLIC doc, and "fix" the mismatch by regenerating from the union.
   const emptyPrivate = mkdtempSync(join(tmpdir(), "hunch-grounding-freshness-"));
   const prior = process.env.HUNCH_PRIVATE_DIR;
   process.env.HUNCH_PRIVATE_DIR = emptyPrivate;
@@ -65,7 +65,7 @@ test("the committed grounding docs' blocks match what the graph generates", () =
   try {
     const rendered = renderHunchSection(store, repoRoot);
     const generated = blockContent(rendered) ?? rendered.trim();
-    for (const rel of GROUNDING_FILES) {
+    for (const rel of GROUNDING_DOC_PATHS) {
       const committed = committedBlock(join(repoRoot, rel));
       assert.ok(committed !== null, `${rel} carries a managed HUNCH block`);
       assert.equal(
@@ -73,8 +73,7 @@ test("the committed grounding docs' blocks match what the graph generates", () =
         generated,
         `${rel}'s grounding block is stale. Regenerate and commit it:\n`
         + "    HUNCH_PRIVATE_DIR=<empty-dir> npx tsx src/cli/index.ts index\n"
-        + "then commit CLAUDE.md, AGENTS.md, .github/copilot-instructions.md, "
-        + ".cursor/rules/hunch.mdc and .windsurf/rules/hunch.md.\n"
+        + `then commit ${GROUNDING_DOC_PATHS.join(", ")}.\n`
         + "Leaving it stale fails the release gate at TAG time with a message that names "
         + "neither the file nor the cause (fnd_6391b4242f).",
       );

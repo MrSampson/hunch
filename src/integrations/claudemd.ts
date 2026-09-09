@@ -36,7 +36,7 @@ export function renderHunchSection(store: HunchStore, root?: string): string {
   lines.push("");
   lines.push(
     "This repo has **Hunch** — a curated graph of *why* the code is the way it is " +
-      "(decisions, bug history, invariants). Run `hunch now` for the current counts and roadmap.",
+      "(decisions, bug history, invariants).",
   );
   lines.push("");
   lines.push("**Consult Hunch via the `hunch_*` MCP tools — pick by MOMENT, not from memory:**");

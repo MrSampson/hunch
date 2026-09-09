@@ -37,6 +37,10 @@ function repo(prefix: string): { root: string; git: (...a: string[]) => string; 
   return { root, git, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
+const CONTENT_CHANGING_CONSTRAINT = Object.freeze({
+  id: "con_one", statement: "never do the thing", severity: "blocking" as const, scope: [] as string[],
+});
+
 function decision(id: string, title: string): Decision {
   return {
     id,
@@ -113,7 +117,7 @@ test("flushCapture refreshes a git-clean grounding doc and commits it with the c
     assert.doesNotMatch(baseline, /Top invariants/, "but carries no invariants yet");
 
     store.json.put("decisions", decision("dec_two", "second choice"));
-    store.json.put("constraints", mkConstraint({ id: "con_one", statement: "never do the thing", severity: "blocking", scope: [] }));
+    store.json.put("constraints", mkConstraint(CONTENT_CHANGING_CONSTRAINT));
     const r = flushCapture(store, hunchPaths(root).hunch, false, "hunch: capture dec_two");
     store.close();
 
@@ -170,7 +174,7 @@ test("hunch index commits refreshed grounding atomically with an auto-pumped gra
 
     const changed = new HunchStore(hunchPaths(root));
     changed.json.put("decisions", decision("dec_two", "second choice"));
-    changed.json.put("constraints", mkConstraint({ id: "con_one", statement: "never do the thing", severity: "blocking", scope: [] }));
+    changed.json.put("constraints", mkConstraint(CONTENT_CHANGING_CONSTRAINT));
     changed.close();
 
     const run = spawnSync(process.execPath, [TSX, CLI, "index"], {
