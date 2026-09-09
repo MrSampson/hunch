@@ -120,7 +120,7 @@ import { ADR_DIR_CANDIDATES, ADR_FILE_RE, mapAdrCorpus } from "../extractors/adr
 import { applyImportedAdrReview, carryImportedAdrReview, importedAdrReviewHash, importedAdrSourceHash, isImportedAdrDecision, pendingImportedAdrReviews } from "../core/importReview.js";
 import { exportMadrCorpus, isRegenerableMadr } from "../integrations/madrExport.js";
 import { buildMadrManifest, writeMadrManifest, refreshMadrCorpus } from "../integrations/madrManifest.js";
-import { pendingEscalations, policyEscalations, commitRepairEscalations, actionableEscalations, summarizeEscalations } from "../core/escalations.js";
+import { pendingEscalations, policyEscalations, commitRepairEscalations, actionableEscalations, escalationHeadline } from "../core/escalations.js";
 import { premiseEscalations } from "../core/premises.js";
 import { parseDocAnchors, renderDocGrounding } from "../core/docanchors.js";
 import { compareCandidates } from "../core/compare.js";
@@ -5085,27 +5085,25 @@ program
       // commit-repair follower whose own resolution says "act on a different
       // entry first" still surfaces below for transparency, but must not count
       // as its own thing needing a decision (#61). --json keeps the full list.
-      const { actionable, context } = summarizeEscalations(items);
+      const actionable = actionableEscalations(items);
       if (opts.json) { console.log(JSON.stringify(items)); if (actionable.length) process.exitCode = 1; return; }
       if (!items.length) {
         console.log("✓ Nothing needs your decision — memory is auto-trusted and self-consistent.");
         return;
       }
-      // The `else` here is currently unreachable: every escalation-producing
-      // function today (pendingEscalations/premiseEscalations/policyEscalations,
-      // and each duplicate-id group commitRepairEscalations emits) guarantees at
-      // least one actionable entry whenever it emits anything at all — see
-      // commitRepairEscalations' own docstring on `firstFor`/dropTarget. Kept
-      // (rather than assuming `actionable.length` is always > 0 here) because
-      // that guarantee lives in the PRODUCERS, not in `Escalation.actionable`'s
-      // own contract, which a future producer could legitimately violate.
-      if (actionable.length) {
-        console.log(`${actionable.length} decision(s) need your call — asked here, never decided for you${context ? ` (+${context} shown below for context only, not gating)` : ""}:\n`);
-      } else {
-        console.log(`Nothing needs your decision right now — ${items.length} entr${items.length === 1 ? "y" : "ies"} shown below for context only (resolving another entry will clear them):\n`);
-      }
+      // escalationHeadline's own "nothing actionable, N shown for context"
+      // fallback is currently unreachable here: every escalation-producing
+      // function today guarantees at least one actionable entry whenever it
+      // emits anything at all — see commitRepairEscalations' own docstring on
+      // `firstFor`/dropTarget. Kept anyway (not assumed away) because that
+      // guarantee lives in the PRODUCERS, not in `Escalation.actionable`'s own
+      // contract, which a future producer could legitimately violate.
+      console.log(escalationHeadline(items, "cli") + "\n");
       for (const e of items) {
-        console.log(`  ⚖ ${e.question}`);
+        // A non-actionable row (a duplicate-id follower) still surfaces for
+        // transparency, but must not read like its own question — marked
+        // distinctly so a skim doesn't mistake it for one of the tally above.
+        console.log(`  ${e.actionable === false ? "·" : "⚖"} ${e.question}`);
         console.log(`      ${dim(e.detail)}`);
         console.log(`      ${dim("→ " + e.resolution)}\n`);
       }

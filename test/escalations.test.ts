@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { pendingEscalations, policyEscalations, commitRepairEscalations, actionableEscalations, summarizeEscalations, type Escalation, type PolicyLite } from "../src/core/escalations.js";
+import { pendingEscalations, policyEscalations, commitRepairEscalations, actionableEscalations, summarizeEscalations, escalationHeadline, type Escalation, type PolicyLite } from "../src/core/escalations.js";
 import type { Decision } from "../src/core/types.js";
 
 const D = (over: Partial<Decision> & { id: string }): Decision => ({
@@ -369,4 +369,27 @@ test("summarizeEscalations: an empty list summarizes to nothing actionable and z
   const summary = summarizeEscalations([]);
   assert.deepEqual(summary.actionable, []);
   assert.equal(summary.context, 0);
+});
+
+test("escalationHeadline (cli audience): an all-actionable list omits the context suffix", () => {
+  const a: Escalation = { kind: "commit-repair-pending", topic: "dec_a", decisionIds: ["dec_a"], question: "q-a", detail: "d-a", resolution: "r-a" };
+  assert.equal(escalationHeadline([a], "cli"), "1 decision(s) need your call — asked here, never decided for you:");
+});
+
+test("escalationHeadline (cli audience): a context remainder is appended, not gating", () => {
+  const a: Escalation = { kind: "commit-repair-pending", topic: "dec_a", decisionIds: ["dec_a"], question: "q-a", detail: "d-a", resolution: "r-a" };
+  const b: Escalation = { kind: "commit-repair-pending", topic: "dec_b", decisionIds: ["dec_b"], question: "q-b", detail: "d-b", resolution: "r-b", actionable: false };
+  assert.equal(escalationHeadline([a, b], "cli"), "1 decision(s) need your call — asked here, never decided for you (+1 shown below for context only, not gating):");
+});
+
+test("escalationHeadline (mcp audience): same shape, distinct wording from the CLI audience", () => {
+  const a: Escalation = { kind: "commit-repair-pending", topic: "dec_a", decisionIds: ["dec_a"], question: "q-a", detail: "d-a", resolution: "r-a" };
+  const b: Escalation = { kind: "commit-repair-pending", topic: "dec_b", decisionIds: ["dec_b"], question: "q-b", detail: "d-b", resolution: "r-b", actionable: false };
+  assert.equal(escalationHeadline([a, b], "mcp"), "1 decision(s) need the human's call — ask each inline, don't decide it for them (+1 shown below for context only, not a decision):");
+});
+
+test("escalationHeadline: a list with nothing actionable (no real producer emits this today, per commitRepairEscalations' own invariant, but the field's contract allows it) falls back to the neutral branch", () => {
+  const b: Escalation = { kind: "commit-repair-pending", topic: "dec_b", decisionIds: ["dec_b"], question: "q-b", detail: "d-b", resolution: "r-b", actionable: false };
+  assert.equal(escalationHeadline([b], "cli"), "Nothing needs your decision right now — 1 entry shown below for context only (resolving another entry will clear them):");
+  assert.equal(escalationHeadline([b, b], "mcp"), "Nothing needs the human's call right now — 2 entries shown below for context only (resolving another entry will clear them):");
 });

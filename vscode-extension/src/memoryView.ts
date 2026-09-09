@@ -91,7 +91,16 @@ export interface PolicyEntry {
 export class EscalationNode extends vscode.TreeItem {
   constructor(public readonly entry: EscalationEntry) {
     super(entry.question, vscode.TreeItemCollapsibleState.None);
-    this.iconPath = new vscode.ThemeIcon("question", new vscode.ThemeColor("notificationsWarningIcon.foreground"));
+    // A non-actionable row (a duplicate-id commit-repair follower) still
+    // surfaces for transparency, but must not read like its own question —
+    // a distinct icon/description keeps a skim from mistaking it for one of
+    // the group label's tally (#61).
+    if (entry.actionable === false) {
+      this.iconPath = new vscode.ThemeIcon("info");
+      this.description = "context only";
+    } else {
+      this.iconPath = new vscode.ThemeIcon("question", new vscode.ThemeColor("notificationsWarningIcon.foreground"));
+    }
     this.contextValue = "hunchEscalation";
     this.tooltip = new vscode.MarkdownString([`**${entry.kind}**`, "", entry.detail, "", `→ ${entry.resolution}`].join("\n"));
     this.command = { command: "hunch.openEscalation", title: "Open escalation", arguments: [this] };
@@ -157,7 +166,9 @@ export class MemoryTreeProvider implements vscode.TreeDataProvider<Node> {
       runHunch(this.root, ["policy", "list", "--json"]),
     ]);
     try { this.moves = log.ok ? JSON.parse(log.stdout) as MemoryMove[] : []; } catch { this.moves = []; }
-    // escalations exits non-zero when entries exist (by design) — parse regardless.
+    // escalations exits non-zero when ACTIONABLE entries exist (#61) — the raw
+    // JSON array can still carry non-actionable ones alongside a zero exit, so
+    // parse regardless of `esc.ok`.
     try { this.escalations = JSON.parse(esc.stdout) as EscalationEntry[]; } catch { this.escalations = []; }
     try { this.policies = pol.ok ? JSON.parse(pol.stdout) as PolicyEntry[] : []; } catch { this.policies = []; }
   }
