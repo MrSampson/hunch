@@ -1,9 +1,11 @@
 /**
- * Kills the refresh-counts treadmill: every public capture bumps record counts, so the
- * generated grounding blocks (CLAUDE.md, AGENTS.md, …) went stale on the very commit that
- * captured a decision — and the release gate's clean-tree check failed on the next CI
- * `hunch index`. A capture flush must now refresh git-CLEAN grounding docs and fold them
- * into the SAME memory commit, while a user-dirty doc is never touched and never swept.
+ * Kills the refresh-counts treadmill: every public capture used to bump record counts baked
+ * into the generated grounding blocks (CLAUDE.md, AGENTS.md, …), which went stale on the very
+ * commit that captured a decision — and the release gate's clean-tree check failed on the next
+ * CI `hunch index`. Those counts are gone now (a decision capture alone no longer changes the
+ * block at all), but a capture that DOES change the block's content — e.g. one that also adds a
+ * constraint — must still refresh git-CLEAN grounding docs and fold them into the SAME memory
+ * commit, while a user-dirty doc is never touched and never swept.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -15,10 +17,11 @@ import { commitAndPushHunch } from "../src/extractors/git.js";
 import { flushCapture } from "../src/integrations/sync.js";
 import { updateClaudeMd } from "../src/integrations/claudemd.js";
 import { hunchPaths } from "../src/core/paths.js";
-import type { Constraint, Decision } from "../src/core/types.js";
+import type { Decision } from "../src/core/types.js";
 import { HunchStore } from "../src/store/hunchStore.js";
 import { indexRepo } from "../src/extractors/indexer.js";
 import { ensureGitignore } from "../src/integrations/gitignore.js";
+import { mkConstraint } from "./helpers.js";
 
 const PROJECT_ROOT = process.cwd();
 const TSX = join(PROJECT_ROOT, "node_modules/tsx/dist/cli.mjs");
@@ -55,25 +58,6 @@ function decision(id: string, title: string): Decision {
     retired: { symbols: [], deps: [] },
     provenance: { source: "human_confirmed", confidence: 0.95, evidence: [] },
     date: "2026-01-01T00:00:00.000Z",
-  };
-}
-
-function constraint(id: string, statement: string): Constraint {
-  return {
-    id,
-    type: "correctness",
-    statement,
-    scope: [],
-    severity: "blocking",
-    enforcement: "advisory_v1",
-    match: null,
-    forbids: null,
-    rationale: "fixture",
-    source_decision: null,
-    violations: [],
-    status: "active",
-    valid_to: null,
-    provenance: { source: "human_confirmed", confidence: 0.95, evidence: [] },
   };
 }
 
@@ -124,10 +108,12 @@ test("flushCapture refreshes a git-clean grounding doc and commits it with the c
     updateClaudeMd(root, store); // grounding block reflects the baseline (no constraints yet)
     git("add", "-A");
     git("commit", "-qm", "baseline");
-    assert.doesNotMatch(readFileSync(join(root, "CLAUDE.md"), "utf8"), /Top invariants/);
+    const baseline = readFileSync(join(root, "CLAUDE.md"), "utf8");
+    assert.match(baseline, /hunch_context\(target\)/, "baseline block was rendered");
+    assert.doesNotMatch(baseline, /Top invariants/, "but carries no invariants yet");
 
     store.json.put("decisions", decision("dec_two", "second choice"));
-    store.json.put("constraints", constraint("con_one", "never do the thing"));
+    store.json.put("constraints", mkConstraint({ id: "con_one", statement: "never do the thing", severity: "blocking", scope: [] }));
     const r = flushCapture(store, hunchPaths(root).hunch, false, "hunch: capture dec_two");
     store.close();
 
@@ -178,11 +164,14 @@ test("hunch index commits refreshed grounding atomically with an auto-pumped gra
     git("add", "-A");
     git("commit", "-qm", "fixture: indexed graph and grounding");
 
+    const baseline = readFileSync(join(root, "CLAUDE.md"), "utf8");
+    assert.match(baseline, /hunch_context\(target\)/, "baseline block was rendered");
+    assert.doesNotMatch(baseline, /Top invariants/, "but carries no invariants yet");
+
     const changed = new HunchStore(hunchPaths(root));
     changed.json.put("decisions", decision("dec_two", "second choice"));
-    changed.json.put("constraints", constraint("con_one", "never do the thing"));
+    changed.json.put("constraints", mkConstraint({ id: "con_one", statement: "never do the thing", severity: "blocking", scope: [] }));
     changed.close();
-    assert.doesNotMatch(readFileSync(join(root, "CLAUDE.md"), "utf8"), /Top invariants/);
 
     const run = spawnSync(process.execPath, [TSX, CLI, "index"], {
       cwd: root,

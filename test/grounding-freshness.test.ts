@@ -50,7 +50,9 @@ function committedBlock(file: string): string | null {
   return existsSync(file) ? blockContent(readFileSync(file, "utf8")) : null;
 }
 
-test("the committed CLAUDE.md grounding block matches what the graph generates", () => {
+const GROUNDING_FILES = ["CLAUDE.md", "AGENTS.md", ".github/copilot-instructions.md", ".cursor/rules/hunch.mdc", ".windsurf/rules/hunch.md"];
+
+test("the committed grounding docs' blocks match what the graph generates", () => {
   // PUBLIC-ONLY, exactly as the gate runs it (gateEnvironment points repository-index at
   // an empty private home). HUNCH_PRIVATE_DIR takes precedence over .hunch/local.json AND
   // the shared pointer in .git/hunch/, so this is deterministic on a dev machine with an
@@ -63,19 +65,20 @@ test("the committed CLAUDE.md grounding block matches what the graph generates",
   try {
     const rendered = renderHunchSection(store, repoRoot);
     const generated = blockContent(rendered) ?? rendered.trim();
-    const committed = committedBlock(join(repoRoot, "CLAUDE.md"));
-    assert.ok(committed !== null, "CLAUDE.md carries a managed HUNCH block");
-    assert.equal(
-      committed,
-      generated,
-      "CLAUDE.md's grounding block is stale. Regenerate and commit it WITH the change that "
-      + "moved the counts:\n"
-      + "    HUNCH_PRIVATE_DIR=<empty-dir> npx tsx src/cli/index.ts index\n"
-      + "then commit CLAUDE.md, AGENTS.md, .github/copilot-instructions.md, "
-      + ".cursor/rules/hunch.mdc and .windsurf/rules/hunch.md.\n"
-      + "Leaving it stale fails the release gate at TAG time with a message that names "
-      + "neither the file nor the cause (fnd_6391b4242f).",
-    );
+    for (const rel of GROUNDING_FILES) {
+      const committed = committedBlock(join(repoRoot, rel));
+      assert.ok(committed !== null, `${rel} carries a managed HUNCH block`);
+      assert.equal(
+        committed,
+        generated,
+        `${rel}'s grounding block is stale. Regenerate and commit it:\n`
+        + "    HUNCH_PRIVATE_DIR=<empty-dir> npx tsx src/cli/index.ts index\n"
+        + "then commit CLAUDE.md, AGENTS.md, .github/copilot-instructions.md, "
+        + ".cursor/rules/hunch.mdc and .windsurf/rules/hunch.md.\n"
+        + "Leaving it stale fails the release gate at TAG time with a message that names "
+        + "neither the file nor the cause (fnd_6391b4242f).",
+      );
+    }
   } finally {
     store.close();
     process.env.HUNCH_PRIVATE_DIR = prior;
