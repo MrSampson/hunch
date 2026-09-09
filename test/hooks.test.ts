@@ -297,3 +297,22 @@ test("strict pre-commit enforces the exact alternate index Git is committing", {
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+test("post-merge hook: refreshes grounding only when the merge touched .hunch/, loop-guarded, never fatal", () => {
+  const r = repo();
+  try {
+    const first = installPostMergeHook(r, "hunch");
+    assert.equal(first.action, "created");
+    const h = readFileSync(join(r, ".git", "hooks", "post-merge"), "utf8");
+    assert.match(h, /git diff --quiet ORIG_HEAD HEAD -- \.hunch/);
+    assert.match(h, /HUNCH_SYNC=1 hunch grounding --refresh 2>\/dev\/null \|\| true/);
+    assert.match(h, /if \[ -z "\$HUNCH_SYNC" \]/);
+    assert.equal(installPostMergeHook(r, "hunch").action, "unchanged");
+    assert.equal(installPostMergeHook(r, "npx hunch").action, "updated");
+    assert.equal((readFileSync(join(r, ".git", "hooks", "post-merge"), "utf8").match(/hunch post-merge >>>/g) ?? []).length, 1, "one managed block");
+    // An existing user hook is preserved.
+    writeFileSync(join(r, ".git", "hooks", "post-merge"), "#!/bin/sh\necho user-hook\n");
+    assert.equal(installPostMergeHook(r, "hunch").action, "appended");
+    assert.match(readFileSync(join(r, ".git", "hooks", "post-merge"), "utf8"), /^#!\/bin\/sh\necho user-hook\n# >>> hunch post-merge >>>/);
+  } finally { rmSync(r, { recursive: true, force: true }); }
+});

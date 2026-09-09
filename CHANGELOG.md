@@ -1,6 +1,274 @@
 # Changelog
 
-## Unreleased
+## 1.29.0 — 2026-09-09
+
+### The chain: incident → decision → change proof → closure
+
+Gate 4's cross-domain chain is a contract feature, not a demo script. A receipt names what it
+rested on — `ActionReceipt.rests_on` (additive): the decision it implements, the change proof
+for the shipped revision (`external` ref, system `hunch`, object type `change_proof`, keyed by
+`proof_id` + `content_hash`), the commitment or incident it answers; a `record` ref may carry a
+`scope` to point into another partition (the repository decision from an organization drawer).
+The binding verifies what it can see, grants first: a ref outside the grants is refused by
+scope; a ref into a held partition must exist with the hash the writer saw (`rests_on target
+absent` / `hash mismatch` / `scope mismatch`, each naming the way out); a ref into a partition
+the store does not hold is a pointer for the reader. A closure names the receipt —
+`Commitment.closed_by` (additive) must be a succeeded/verified receipt on record within the
+grants, on a `done` commitment; the closure's change event has `cause: { kind: "receipt" }`.
+The read answers the chain: `done` carries fulfilled commitments beside the receipts that
+closed them, `depends_on` concatenates every done receipt's `rests_on`, and `nuryel_read`
+renders `rests on record dec_… in repository/…` / `rests on hunch change_proof:hproof_…` and
+`closed by nrc_…`. Write results and change events now hash the record ON FILE (a private-mode
+decision is enriched on put), with the payload hash kept in the ledger journal for replay.
+Older receipts and commitments are untouched. `hunch_record_decision` and `hunch_change_proof`
+now hand back the ready-made `rests_on` ref (id + hash on file + repository partition; proof id +
+content hash), so an engineering agent never rests a receipt on a pre-store hash; the contract
+doc carries the five-step recipe for closing an incident from a repository.
+`test/state-chain.test.ts`: three principals, one store, the whole chain and every refusal.
+
+**The farm runs the chain.** `tooling/agent-farm` now serves a repository partition beside the
+organization drawer; every other customer raises an incident and an escalation engineering owes
+(shared keys, replayed by the second sofia), and the engineer closes each one through the chain —
+union read, decision in the repository partition, proof pointer, `shipped` receipt resting on all
+three, escalation closed by it — with the two chain refusals provoked once. Every sofia must see
+the closure, the orc verifies all five links per incident and is refused the repository partition,
+and the ledger replay finds each closure caused by its receipt; a missing link is a contradiction.
+3 sofias × 5 customers: 3 incidents, 9 closures seen, 0 contradictions, 3.3 s. The Sofia emulation
+(real Sofia code, 3 Sofias, 10-clinic year) runs the same chain against a served organization +
+repository partition: Sofia's `summary()` now reads the drawer's state of record first and rests
+on its receipts and fulfilled commitments as record dependencies, so every Sofia serving a closed
+clinic re-derived and cited the engineer's receipt — 5 of 5, 0 contradictions — and the receipt
+rests on a real `hunch prove` proof sealed from the engineer's commit, re-verified by the ORC
+against its pointer and binding the decision hash for hash. Sofia's chat now reads the drawer
+first too: a status question about an event is answered from held state (receipts done,
+commitments in force, the current summary) under the read's receipt, marked as such when no
+source was read — 12 of 12 in the emulation, 0 unsourced replies.
+
+**The `changed` facet, written.** `WriteRequest.cause` (additive): `{ kind: "external", ref }` says why
+a write happened when it is not the writer's doing. A current derived record written back as
+`stale` is an `invalidated` change (`invalidates: [subject]`, the pointer as cause), never an
+`updated` one. Sofia's source sweep is the first writer: it re-stamps what a current summary rests
+on and invalidates it when a source moved, so the drawer is trustworthy between reads. New invariant
+`derived-state-writer-owns-currentness`: the writer of a derived statement owns keeping its
+dependencies true; an agent that will not do this must not write derived state.
+
+### Merge lag is not a release blocker
+
+Two branches that each capture one record both regenerate the very same "N+1 decisions"
+counts line in the grounding docs; the forge merges identical lines with no conflict, the
+merged store holds N+2, and the committed CLAUDE.md is one behind — no hook ran, nobody
+erred, and the next capture heals it. Every red of that class (PR #128, #135, v1.26.2's first
+tagged run, `fnd_c402046ac7`) was this lag, and each cost a manual regenerate-and-retag.
+
+**Direction-aware freshness.** `test/grounding-freshness` now classifies the committed block
+against the generated one (`src/core/groundingLag.ts`): byte-equal is `fresh`; a difference
+confined to the counts sentence where no append-only count (decisions, bugs, constraints,
+components, policies) exceeds the store is `lagging` — reported as a diagnostic, never red;
+an append-only count AHEAD of the store is the never-committed-record defect
+(`fnd_6391b4242f`, the only defect the counts ever caught) and still fails, as does any
+difference outside the counts sentence. Open findings move both ways (resolved on one
+branch, recorded on another), so a differing findings count alone is lag.
+
+**`hunch grounding`.** One command for the five grounding docs: the verdict per doc, the
+exact delta (`CLAUDE.md: counts lag the store (decisions 228 → 229)`), exit 1 only on
+`ahead`/`diverged`; `--refresh` regenerates every existing doc from the PUBLIC store
+(`HUNCH_PRIVATE_DIR` pinned to an empty overlay, so a dev machine with an overlay attached
+can never write union counts into a committed public doc) and never scaffolds a doc the
+project lacks; `--json` for scripts.
+
+**Post-merge hook.** `hunch init` installs a `post-merge` hook that runs `hunch grounding
+--refresh` when the merge or pull brought `.hunch/` changes in, so a local merge leaves the
+docs re-synced for the developer's next commit (never auto-committed, loop-guarded via
+`HUNCH_SYNC`, never fatal, existing hooks preserved). End-to-end in
+`test/grounding-merge-lag.test.ts`: the silent merge, the lag verdict, the ahead refusal,
+the refresh, the hook.
+
+Also: `hono` (transitive, via the MCP SDK's optional HTTP transport) 4.13.0 → 4.13.7 in the
+lockfile — `npm audit --omit=dev` reported three moderate advisories (GHSA-gqvv-2mrq-wpjv,
+GHSA-g6gw-c38x-mqfc, GHSA-crvj-82cr-hjcx) fixed in 4.13.5, in range for both dependents, so
+the production dependency audit passes again without a reviewed exception.
+
+### Positioning: competing for the deterministic state layer, from the organizational side
+
+Neotoma has called itself "a deterministic state layer for AI agents" since March 2026; the
+dated comparison, a same-day sweep of the nearer peers (Jaybase, Zep/Graphiti, the memory
+layers, durable execution, the receipts papers), and the peer material worth building are in
+`docs/competitive-landscape.md` and the ROADMAP's landscape table. Hunch keeps competing for the
+position and never claims to have named it (`dec_327dbd3c78`). The site hero is now the thesis
+line with a "the moat" section (git as the source of truth, refusal not convergence, drawers with
+a key per agent, receipts and commitments as facts, Never Twice, the code-conformance spoke) in
+all five locales; the README top, its "Why Hunch, not another memory layer" section, the
+state section (1.25.0–1.28.0 as shipped, install pins current) and the npm package description
+speak the same language. No engine change.
+
+## 1.28.0 — 2026-09-08
+
+### Many agents, one subject
+
+Three changes from running three Sofias over one emulated organization (ten clinics, a year of
+mail, chat and CRM) and from the first two-drawer principal on the live pilot.
+
+**Union read.** A key that opens several drawers reads them in one call: `ReadRequest.scopes`
+(1..64) resolves every granted partition the server hosts and merges one `state_of_record` —
+refs concatenate (each already carries its partition), `depends_on` concatenates,
+`invalidated_by` and `denied_scopes` union, `records` merge by id. `ReadResponse.scopes` names
+the partitions actually read and `ReadResponse.receipts` carries one delivery receipt per
+partition; the primary's envelope and `receipt_id` lead. An ungranted extra scope is named in
+`denied_scopes`, never described and never a refusal; only an ungranted primary refuses, as
+before. Single-partition reads are byte-identical. Over MCP a single-root host declares
+`scopes: [primary]` so it is never a silent union. Closes `fnd_a16aee3105`.
+
+**A supersede target must still be open.** Two writers racing to replace the same incumbent
+could both succeed and leave two current records for one subject (`fnd_eeb8bf3cb8`, found when
+subjects became shared across Sofias). A `supersedes` that names an already-closed commitment or
+derived record is now a `conflict` naming the record that is current for that subject, so the
+loser re-reads and supersedes that one. The writer that closed the incumbent itself (same
+derived id under a new key) is exempt and is an in-place update.
+
+### State records are searchable and delivered by subject
+
+The five `nuryel.state/1` kinds registered in 1.25 — receipts, commitments, derived, entities,
+relationships — were stored and counted but neither indexed nor delivered: `hunch_query
+("customer:Site:7")` could not surface a current summary, an open commitment or a verified
+receipt, and `hunch_context("clinic elevator")` had nothing to say about state. Reindex now adds
+every state record to the `search` index under its own kind (same FTS shape, no schema bump):
+title = the subject key, body = the summary/title + actor/owner + status label + dates, so a
+subject id, an action kind, a principal and a phrase from a summary all hit. History stays
+indexed and findable but ranks below the state of record: a superseded summary, a done or
+cancelled commitment, a failed receipt or a retired entity has its bm25 score scaled toward
+zero (`HUNCH_STATE_HISTORY_SCORE_FACTOR`, default 0.5) on the raw path, and carries the same
+bounded liveness prior a superseded decision does on the ranked/hybrid path; state kinds join
+the memory-record prior so a subject query is answered by state, not by symbols that share its
+words. `hunch_query` and `hunch query` render one line per kind — `[commitment/in_force]
+customer:Site:7 — "send report" due 2026-09-11 (owner sofia)`, `[derived/current] customer:Site:7
+— <first 120 chars>`, `[receipt/verified] event:10042 — events_add_actions by sofia@david
+2026-09-08` — with the record id on the detail line. `hunch_context` and `hunch context` carry a
+bounded **State** section when the target's tokens all match a subject or a record's text
+(AND, prefix-tolerant, so a file path never drags in a summary that merely mentions "store"):
+at most 3 current derived, 5 in-force commitments and 3 latest receipts, ordered by score, then
+observed_at descending, then id, delivered as supplements that share the brief's budget and
+receipt; state hits are no longer echoed as raw `search-*` lines. Time-travel briefs withhold the
+section (state records have no as-of view). A store with zero state records is byte-identical.
+New: `src/core/stateDelivery.ts` (liveness, search doc, one-line render, slice ordering,
+supplements), `HunchStore.stateSlice(target)`, `formatSearchHit`; `test/state-kinds-search.test.ts`.
+
+Also: public fixtures and docs use fictional organization, customer and CRM ids; a second
+category post, *Knowledge is what's true. State is what happened.*, in five locales.
+
+## 1.27.0 — 2026-09-08
+
+### The contract learns from its first writers
+
+Three additive changes to `nuryel.state/1`, each from a defect a real writer hit on the live
+pilot. A write refused for a reused idempotency key now names the differing fields and the way
+out: re-send the original payload to replay it, or use a new key; the record keeps its derived
+id and is updated in place. `WriteResult.record` returns the record as stored, so a writer can
+verify what landed. A `records` verb (`nuryel.state.records/1`, in the capability list) fetches
+records by id, grants first: found with its facet, denied by scope (named, never described) or
+missing. It is bound on the store, over MCP as `nuryel_records`, over HTTP as
+`POST /nuryel/v1/records`, and in the typed client. Reads already carried the records behind
+their refs; subscribe events only named them, and consumers had no way to the body.
+
+The per-scope change ledger gains compaction (`hunch serve compact --partition kind:id --keep N`:
+newest events kept, floor moved up, idempotency table kept whole), an explicit `resync` on
+subscribe when a cursor is below the floor, and a three-way merge through the existing git merge
+driver so two clones that appended to one partition merge to one re-sequenced ledger; a key used
+for two records is a conflict the driver refuses to resolve silently. `tooling/agent-farm` runs
+K sofia-like agents, an orc and an engineer against an in-process `hunch serve` on loopback and
+reports writes, replays, refusals, reuse and contradictions (which must be zero) — a demo and a
+benchmark for "many agents, one truth".
+
+## 1.26.2 — 2026-09-08
+
+### Served partitions commit, pin, and answer
+
+Three defects found on the first live pilot after a real receipt, each fixed with a test.
+Served writes now commit: `hunch serve` flushes inside its cross-process write lock, the lock
+file was staged with the record, and the staged-memory backstop refused the commit quietly, so
+every write reported durability `local`; `write.lock` is a derived artifact now and `serve init`
+writes the partition's `.gitignore`. `hunch mcp --root <dir>` pins the MCP server to a served
+partition and ignores the client's workspace roots and per-call `cwd` hints, so a second agent
+opened on any repository reads the same drawer. A read carries the referenced records
+(`ReadResponse.records`, additive) and `nuryel_read` renders the state of record — current
+derived content, commitments with due and owner, receipts with action, target and verification —
+so a consumer answers from the drawer without a second lookup. `nuryel_write` over MCP takes
+the same partition write lock as `hunch serve`, so a second agent writing over stdio cannot race
+the server.
+
+## 1.26.1 — 2026-09-08
+
+### `serve init` honors its own options
+
+In 1.26.0, `hunch serve init --config <file> --port <n>` silently wrote the default
+`hunch-serve.json` into the current directory with the default port: `serve` and `serve init`
+both declare those options and the parent command claimed the values. `init` now reads both
+levels; a regression test spawns the CLI from another directory and checks the file location and
+the recorded port. No runtime code of the server, the store binding or the contract changed.
+
+## 1.26.0 — 2026-09-08
+
+### `hunch serve`: the state layer served, and Hunch Memory folded in
+
+`hunch serve --config <file>` hosts organization, team, user and repository partitions over
+HTTP on `127.0.0.1` with the contract's three verbs (`/nuryel/v1/read`, `/write`, `/subscribe`)
+plus `/capabilities` and `/health`. A served partition is a directory whose
+`.hunch/partition.json` names the scope it is, so user and organization state needs no overlay.
+The bearer token resolves the principal; the request body never names one, and grants come from
+the config only. `hunch serve init --partition user:david --root <dir> --principal sofia@david`
+declares a partition and mints a token (printed once; only its sha256 is stored). Writes run
+under a cross-process write lock per partition so a stdio MCP process on the same store cannot
+race the server. A typed client ships as `@davesheffer/hunch/state`. This is the fold of the
+separate Hunch Memory service into Hunch: its loopback-bind, bearer, problem+json, body-limit and
+write-lock decisions carry over; its concurrency gate, consistency watermarks and intake routes
+do not. Every rule still lives in the store binding; the transport only maps HTTP to it.
+
+## 1.25.0 — 2026-09-08
+
+### The state contract ships: nuryel.state/1 over the store and MCP
+
+Hunch now exposes ONE contract every orchestrator and agent speaks to organizational state.
+`nuryel.state/1` freezes three verbs — `read` (under the delivery envelope's receipt), `write`
+(provenance and an idempotency key in, durability out) and `subscribe` (a strictly ordered change
+stream after a cursor) — plus five new record facets: action receipts (what was done),
+commitments (what someone owes by when), derived state that names what it rests on, external
+entities and their relationships. Ids are derived from a record's facts, never chosen; a replay
+returns the original; a second live decision on a topic is refused with the incumbent named;
+derived state without dependencies is not state. The store registers the facets additively and
+keeps a per-scope, git-native change ledger under `.hunch/changes/`. Organization, team and user
+partitions never ride a repository: they are homed in an overlay only. Four client-agnostic MCP
+tools bind the contract: `nuryel_capabilities`, `nuryel_read`, `nuryel_write`, `nuryel_subscribe`.
+Legacy stores load unchanged; the JSON schema version is untouched. HTTP and CLI bindings, and
+search or delivery ranking of the new kinds, are not in this release.
+
+## 1.24.0 — 2026-09-06
+
+### Update Hunch and every configured harness in one command
+
+`hunch update` resolves the latest npm release, updates a standalone npm project's
+Hunch dependency to an exact version in its existing dependency section, and repairs
+all configured harness pins using the newly installed version. Without a repository
+dependency it updates the global CLI. `--global` also updates the global CLI alongside
+a local dependency; `--dry-run` previews the commands without changing files.
+Generated agent instructions map “update Hunch” to this command. Existing hook settings
+are preserved, failures stop the update, and active MCP sessions must reconnect afterward.
+
+The newer DNA hero and its floating particles are now committed with the matching styles
+and all five localized homepages. Automatic site deployments from `main` retain the
+design that was previously present only in a manual Vercel deployment.
+
+## 1.23.3 — 2026-09-05
+
+### Harness coverage and version drift become visible
+
+`hunch integrations check` reports repository-local MCP and lifecycle coverage for Claude,
+Codex, Cursor, VS Code, Windsurf, and Antigravity. Configuration alone never counts as
+verified delivery. Explicit capability requirements fail when support is advisory, missing,
+or untested; an opt-in fresh-process MCP probe verifies version identity and a memory read.
+
+`hunch integrations repair-pins` aligns existing exact npm launchers with the consuming
+repository's Hunch dependency while preserving other settings. Setup, doctor, and supported
+session hooks surface integration problems. This release does not add lifecycle support to
+harnesses whose Hunch adapters lack it, or certify existing host sessions or model compliance.
 
 ## 1.23.2 — 2026-09-03
 

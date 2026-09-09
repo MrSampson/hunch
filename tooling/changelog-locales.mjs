@@ -8,6 +8,14 @@ export const changelogLocales = {
       footer: "© Hunch — התאמה ארכיטקטונית לקוד AI.", home: "בית", githubReleases: "גרסאות ב-GitHub"
     },
     titles: [
+      "השרשרת נסגרת",
+      "סוכנים רבים, נושא אחד",
+      "החוזה לומד מהכותבים הראשונים שלו",
+      "מחיצות מוגשות: שומרות, מוצמדות ועונות",
+      "serve init מכבד את האפשרויות שלו",
+      "שכבת המצב מוגשת: hunch serve ו-Hunch Memory מתמזג פנימה",
+      "חוזה המצב יוצא לדרך: nuryel.state/1 מעל המאגר ו-MCP",
+      "פקודה אחת מעדכנת את Hunch ואת כלי העבודה המחוברים",
       "האתר הציבורי עובר ל-hunchmemory.com",
       "חוזי הוכחת השינוי באמת נשלחים",
       "שינויים מדויקים נושאים הוכחה סמנטית מקורית",
@@ -49,6 +57,14 @@ export const changelogLocales = {
       footer: "© Hunch — архитектурное соответствие для ИИ-кода.", home: "Главная", githubReleases: "Релизы на GitHub"
     },
     titles: [
+      "Цепочка замкнута",
+      "Много агентов, один субъект",
+      "Контракт учится у своих первых писателей",
+      "Обслуживаемые разделы: коммитят, закрепляются и отвечают",
+      "serve init учитывает собственные параметры",
+      "Слой состояния как сервис: hunch serve, Hunch Memory влит внутрь",
+      "Контракт состояния выходит: nuryel.state/1 поверх хранилища и MCP",
+      "Одна команда обновляет Hunch и подключённые инструменты",
       "Публичный сайт переезжает на hunchmemory.com",
       "Контракты доказательства изменений действительно поставляются",
       "Точные изменения несут собственное семантическое доказательство",
@@ -90,6 +106,14 @@ export const changelogLocales = {
       footer: "© Hunch — التوافق المعماري لكود الذكاء الاصطناعي.", home: "الرئيسية", githubReleases: "الإصدارات على GitHub"
     },
     titles: [
+      "السلسلة مغلقة",
+      "وكلاء كثيرون، موضوع واحد",
+      "العقد يتعلم من كتّابه الأوائل",
+      "الأقسام المخدومة: تلتزم وتُثبَّت وتجيب",
+      "serve init يحترم خياراته",
+      "طبقة الحالة كخدمة: hunch serve ودمج Hunch Memory",
+      "عقد الحالة يصدر: nuryel.state/1 فوق المخزن وMCP",
+      "أمر واحد لتحديث Hunch والأدوات المتصلة",
       "الموقع العام ينتقل إلى hunchmemory.com",
       "عقود إثبات التغيير تُشحن فعلًا",
       "التغييرات الدقيقة تحمل إثباتًا دلاليًا أصليًا",
@@ -131,6 +155,14 @@ export const changelogLocales = {
       footer: "© Hunch — conformidad arquitectónica para código de IA.", home: "Inicio", githubReleases: "Versiones en GitHub"
     },
     titles: [
+      "La cadena, cerrada",
+      "Muchos agentes, un sujeto",
+      "El contrato aprende de sus primeros escritores",
+      "Particiones servidas: confirman, se fijan y responden",
+      "serve init respeta sus propias opciones",
+      "La capa de estado, servida: hunch serve y Hunch Memory integrado",
+      "El contrato de estado se publica: nuryel.state/1 sobre el almacén y MCP",
+      "Un comando actualiza Hunch y las herramientas conectadas",
       "El sitio público se muda a hunchmemory.com",
       "Los contratos de prueba de cambio realmente se publican",
       "Los cambios exactos llevan prueba semántica nativa",

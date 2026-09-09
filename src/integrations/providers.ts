@@ -387,6 +387,15 @@ export function regenerateGrounding(root: string, store: HunchStore): string[] {
   return Object.values(GROUNDING_WRITERS).map((write) => write(root, store));
 }
 
+/** The five grounding docs, repo-relative (POSIX separators, as git prints them). */
+export const GROUNDING_DOC_PATHS: readonly string[] = Object.freeze([
+  "CLAUDE.md",
+  "AGENTS.md",
+  ".github/copilot-instructions.md",
+  ".cursor/rules/hunch.mdc",
+  ".windsurf/rules/hunch.md",
+]);
+
 function groundingTargets(root: string, store: HunchStore): Array<[string, () => string]> {
   return Object.entries(GROUNDING_WRITERS).map(([rel, write]) => [rel, () => write(root, store)]);
 }

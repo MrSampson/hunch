@@ -18,6 +18,18 @@
  * docs stale with nothing to notice. This test is that "something", and it fails in
  * ordinary CI with an actionable message instead of at tag time.
  *
+ * The managed block used to open with a record-counts sentence (fnd_c402046ac7): two
+ * branches that each captured a record would both regenerate the same "N+1" counts
+ * line, the forge would merge it without a conflict, and the committed doc would be one
+ * BEHIND the store — no hook ran, nobody erred. classifyGroundingBlock() below still
+ * tolerates that as "lagging" rather than failing, but this fork went further and
+ * dropped the counts sentence entirely: with MULTIPLE contributors/agents capturing on
+ * parallel branches, two counts commonly differ by more than one, which merges as a real
+ * CONFLICT (not a silent lag) on the identical line duplicated across all five generated
+ * files. classifyGroundingBlock() degrades gracefully with no counts sentence to find —
+ * it just never takes the "lagging" branch — so it's kept for whatever content could
+ * still merge-lag the same way (and so `hunch grounding` keeps working).
+ *
  * Deterministic across platforms: the managed block's content comes entirely from
  * .hunch/*.json — never from the symbol/edge counts, which legitimately differ between
  * Windows and Linux.
@@ -32,6 +44,7 @@ import { hunchPaths } from "../src/core/paths.js";
 import { HunchStore } from "../src/store/hunchStore.js";
 import { renderHunchSection } from "../src/integrations/claudemd.js";
 import { GROUNDING_DOC_PATHS } from "../src/integrations/providers.js";
+import { classifyGroundingBlock, describeGroundingFreshness } from "../src/core/groundingLag.js";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const START = "<!-- HUNCH:START — auto-generated, do not edit by hand -->";
@@ -51,7 +64,7 @@ function committedBlock(file: string): string | null {
   return existsSync(file) ? blockContent(readFileSync(file, "utf8")) : null;
 }
 
-test("the committed grounding docs' blocks match what the graph generates", () => {
+test("the committed grounding docs' blocks match what the graph generates (merge lag tolerated)", (t) => {
   // PUBLIC-ONLY, exactly as the gate runs it (gateEnvironment points repository-index at
   // an empty private home). HUNCH_PRIVATE_DIR takes precedence over .hunch/local.json AND
   // the shared pointer in .git/hunch/, so this is deterministic on a dev machine with an
@@ -68,15 +81,29 @@ test("the committed grounding docs' blocks match what the graph generates", () =
     for (const rel of GROUNDING_DOC_PATHS) {
       const committed = committedBlock(join(repoRoot, rel));
       assert.ok(committed !== null, `${rel} carries a managed HUNCH block`);
+      const verdict = classifyGroundingBlock(committed, generated);
+      if (verdict.kind === "lagging") {
+        // Records merged in behind the doc (fnd_c402046ac7). Transient by construction:
+        // refreshCommittableGrounding folds the regenerated docs into the next capture
+        // commit, and the release gate's repository-index stage regenerates them and
+        // already treats the dirt as memory churn. Say so; do not go red.
+        t.diagnostic(describeGroundingFreshness(rel, verdict));
+        continue;
+      }
       assert.equal(
-        committed,
-        generated,
-        `${rel}'s grounding block is stale. Regenerate and commit it:\n`
-        + "    HUNCH_PRIVATE_DIR=<empty-dir> npx tsx src/cli/index.ts index\n"
+        verdict.kind,
+        "fresh",
+        `${describeGroundingFreshness(rel, verdict)}\n`
+        + "Regenerate and commit it:\n"
+        + "    HUNCH_PRIVATE_DIR=<empty-dir> npx tsx src/cli/index.ts grounding --refresh\n"
         + `then commit ${GROUNDING_DOC_PATHS.join(", ")}.\n`
         + "Leaving it stale fails the release gate at TAG time with a message that names "
         + "neither the file nor the cause (fnd_6391b4242f).",
       );
+      if (verdict.kind === "fresh") {
+        // Belt and braces: the classifier's "fresh" must mean byte-equal.
+        assert.equal(committed, generated);
+      }
     }
   } finally {
     store.close();

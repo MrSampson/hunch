@@ -3,10 +3,91 @@
    global so it works on a static host with no build step. */
 window.POSTS = [
   {
+    slug: "knowledge-vs-state",
+    title: "Knowledge is what's true. State is what happened.",
+    dek: "A knowledge base tells an agent what is true about the world. It does not tell it what the organization decided, did, owes and currently believes — and which of those a colleague agent is about to contradict. We ran ten clinics, a year of mail, chat and CRM, and three agents through the state layer to find out where the line is.",
+    date: "2026-09-08", tag: "Deterministic State", read: "6 min", pinned: false,
+    body: `
+<p class="lead">Every serious agent stack is getting a knowledge layer: documents, embeddings, a retrieval step, a place where "the truth about the company" lives. That is a good thing and we are not building one. <strong>Knowledge is what is true. State is what happened.</strong> They look similar from a distance, they fail in different ways, and an organization running several agents needs the second one at least as badly as the first.</p>
+
+<h2>Two questions that sound alike</h2>
+<p>Ask an agent <em>"what is our refund policy?"</em> and you are asking about knowledge. The answer is a fact about the world; it changes rarely; the best answer is the same for everyone who asks; you want it retrieved from the most authoritative document you have. Ask the same agent <em>"did we refund this customer, and who promised them what?"</em> and you are asking about state. The answer is a sequence of things that happened, in order, done by particular actors, some verified and some not, some still open. It changes every hour. It is different for every customer. And it is not written down anywhere authoritative, because the authoritative place is the sum of a CRM, a mailbox, a chat and three people's memory.</p>
+<p>A knowledge layer answers the first question well and reconstructs an answer to the second from raw material, every time, slightly differently. That reconstruction is where two agents diverge. Neither hallucinated; each guessed. The guess has no receipt, no order, no owner, and no way for the next agent to check it instead of guessing again.</p>
+
+<h2>What state is made of</h2>
+<p>State is a small number of plain facts, each with an author, a source and a place in an ordered log: something was <strong>decided</strong>; a rule or promise is <strong>in force</strong>; an action was <strong>done</strong> in an external system, with a receipt that says whether it was verified; something is <strong>owed</strong>, by whom, by when; and a statement is <strong>current</strong> together with exactly what it rests on, so it dies the moment a source moves. None of these are opinions about the world. They are records of what the organization and its agents did, in a shape the next agent can read, cite and refuse to contradict.</p>
+<p>The contract that holds them is deliberately dull. Read gets you a receipt for what you were shown. Write demands a source and a key, so re-sending never duplicates and a malformed fact is refused with a reason rather than stored. Subscribe is a strictly ordered stream, so a reader can tell whether what it holds is still current. Keys, not names, decide who may open which drawer. The whole thing is git-native: every fact is a file, every change a commit, nothing is ever deleted.</p>
+
+<h2>We ran a year of a fake company through it</h2>
+<p>The first agent on the contract is Sofia, an operations agent over a CRM, Gmail and WhatsApp. She has one real business behind her and we will not run experiments on it. So we built an organization: ten clinics, one year of mail, chat and CRM events generated from a seed, with storylines that span months (an elevator saga in five acts, a generator that trips the fire alarm, a pest problem that comes back) and deliberate traps (a cancelled commitment, a reopened event, two customers with near-identical names, a visit whose date moved). Three copies of Sofia served overlapping clinics against mocked versions of those systems, and a conductor replayed five working days, pacing requests the way a real day would.</p>
+<div class="wide"><table>
+  <tr><th>Replay, three Sofias, ten clinics, five days</th><th class="num">Result</th></tr>
+  <tr><td>Customer summaries written as current, cited state</td><td class="num">96</td></tr>
+  <tr><td>Summaries the reader could not find again by identity</td><td class="num">0</td></tr>
+  <tr><td>Approved actions that became receipts</td><td class="num">24</td></tr>
+  <tr><td>Follow-ups that became commitments with a due date</td><td class="num">24</td></tr>
+  <tr><td>Change log, ordered and gap-free</td><td class="num">96 / 96</td></tr>
+  <tr><td>Writes stuck undelivered at the end</td><td class="num">0</td></tr>
+  <tr><td>Contradictions between agents on a shared clinic</td><td class="num">0</td></tr>
+</table></div>
+<p>A second, cheaper harness ran five generic agents over forty customers with no model at all, only the contract: no contradictions, and nine summaries in ten reused rather than recomputed once the evidence had not moved. On the live system the same reuse turned a fifty-second re-summary into a four-and-a-half-second one, with no model call.</p>
+
+<h2>What the fake company found</h2>
+<p>The first replay was not clean, and that is the point of running one. Sofia wrote the name of a CRM operation as the kind of an action, in the CRM's own casing; the contract refused every one of those receipts, correctly, and the outbox held twelve undelivered writes at the end of the day. Nothing was lost and nothing was silently accepted: a refused write is a refusal with a reason, not a corrupted fact. The fix was one function. The second replay was clean. We would rather learn that from a generated clinic than from a real one, and we would rather the contract refuse than guess.</p>
+<p>The replay also showed the next gap. Two Sofias serving the same clinic each named the clinic by their own internal id, so a shared customer was two subjects and a follow-up they both noticed was two commitments. Not a contradiction, but a duplicate the state layer should have collapsed. Subjects are now keyed by the CRM's own identity for the site, so a duplicate replays instead of doubling. And a key that opens two drawers still had to read them one at a time; one read across everything the key may open is landing this week.</p>
+
+<h2>Why this is not a knowledge base</h2>
+<p>A knowledge base is right when its documents are right, and it is allowed to be a little wrong: a stale paragraph costs you an imprecise answer. State is not allowed to be a little wrong. A receipt that says an action was verified when it was not, a commitment that vanished, a summary still marked current after its source moved: these are the failures that make an organization stop trusting its agents. So the design choices are inverted. Knowledge optimizes recall; state optimizes refusal. Knowledge merges freely; state keeps one live decision per topic and makes you supersede it explicitly. Knowledge copies the world in; state holds pointers and fingerprints and never fetches. Knowledge is a library. State is a ledger.</p>
+<p>You need both. We think the ledger is the one nobody has built for agents yet, and the one that becomes urgent the day a second agent shares a customer with the first.</p>
+
+<h2>What is still open</h2>
+<p>The synthetic numbers above are honest but synthetic. The measurement that matters is the live one: a week of Sofia before the state layer, in which two of three replies had no observable source, against a week after, with a second agent writing. That runs next and is published either way. Until then the generated organization, the conductor and the contract are all in the repository, and anyone can replay the year.</p>
+`,
+  },
+  {
+    slug: "the-state-layer",
+    title: "Agents are probabilistic. Organizations need deterministic state.",
+    dek: "Every employee is getting an agent. Each one reconstructs what was decided, what was done and what is still owed — and each one gets it slightly differently. Hunch is becoming the state layer between the agents and the organization. Here is what that means, in plain words, and what shipped this week.",
+    date: "2026-09-08", tag: "Deterministic State", read: "6 min", pinned: true,
+    body: `
+<p class="lead"><strong>Agents are probabilistic. Organizations need deterministic state.</strong> The category is <strong>Deterministic State</strong>, and Hunch competes for it from the organizational side: drawers per company, team and person, a key per agent, a second contradicting fact refused at write time instead of merged later, receipts and commitments as first-class facts, and every fact a file in git. Others hold deterministic state for one person’s agents. Hunch holds it for an organization. That sentence is the whole roadmap. The rest of this post explains it without jargon, and says exactly what exists today versus what is still a promise.</p>
+
+<h2>The problem shows up the moment you have two agents</h2>
+<p>One agent is a convenience. Two agents working on the same organization are a problem. Sofia answers a customer question by reading the CRM, the mail thread and the WhatsApp chat, and forms an opinion. A second agent, asked something nearby an hour later, reads the same sources and forms a slightly different opinion. Neither is wrong. Both are guesses, made fresh, from raw material. Nobody wrote down what was <em>decided</em>, what was <em>actually done</em>, or what is still <em>owed</em> in a form the next agent can trust without re-deriving it.</p>
+<p>Models are probabilistic by nature; that is what makes them useful. An organization cannot run on probabilities. It runs on state: this was decided, this rule is in force, this action happened and was verified, this promise is due Thursday, this summary is current and rests on these three sources. Today that state lives in people's heads and in scattered tools. Agents reconstruct it, every time, differently.</p>
+
+<h2>What "deterministic state" means</h2>
+<p>Think of a shared filing cabinet with drawers: one for the company, one per team, one per person, one per code repository. Each drawer holds a small set of plain facts:</p>
+<ul>
+  <li><strong>Decided</strong> — the one live decision on a topic. A second one is refused until the first is explicitly replaced.</li>
+  <li><strong>In force</strong> — rules and commitments with a start and, when it ends, an end.</li>
+  <li><strong>Done</strong> — a receipt for an action that actually happened in an external system, and whether it was verified.</li>
+  <li><strong>Owed</strong> — who promised what, to whom, by when.</li>
+  <li><strong>Current, and why</strong> — a derived statement (a customer summary, say) together with exactly what it rests on, so it can be invalidated the moment a source changes.</li>
+</ul>
+<p>Every fact carries where it came from. Nothing is deleted; superseded facts stay readable. And the cabinet never goes to fetch anything: it holds pointers and fingerprints to the CRM or the mailbox, never copies of their contents. Agents keep their own hands on the live systems. The cabinet only remembers what they did and concluded, in a shape the next agent can check instead of guess.</p>
+
+<h2>Keys, not names</h2>
+<p>Every agent, person or service gets a key. The key says who you are and which drawers you may open. An agent cannot claim to be someone else by writing a different name on its request; the key decides, before anything is looked up. Two agents that share a drawer see the same facts and cannot create contradicting ones. That is the entire trick, and it is deliberately boring.</p>
+
+<h2>What shipped this week</h2>
+<p><strong>1.25.0 — the contract.</strong> Three verbs any agent can speak: <em>read</em> (you get a receipt for what you were shown), <em>write</em> (you must say where the fact came from and give it a key so re-sending it never duplicates it), <em>subscribe</em> (a strictly ordered stream of what changed, so an agent can tell whether what it holds is still current). The five new kinds of fact above, stored the same git-native way Hunch has always stored decisions. Older stores load unchanged.</p>
+<p><strong>1.26.0 — the service.</strong> <code>hunch serve</code> hosts the drawers as one process on your machine or server, with keys, and a small client library any program can use. The separate service we had been building for this was folded in; its good decisions came along.</p>
+<p>The first agent on it is <strong>Sofia</strong>, a working operations agent over a CRM, Gmail and WhatsApp. Her approved actions become receipts, her follow-ups become commitments, her cited summaries become derived state that rests on its citations. Before she summarizes a customer again, she asks the cabinet whether her last summary is still current. If it is, no model call.</p>
+
+<h2>The analogy we use internally</h2>
+<p>Git is an engine: a precise, local, content-addressed store with no opinions about teams. GitHub is the platform that made the engine social: identity, permissions, a shared place. Hunch is the engine for organizational state. The platform around it — the drawers served, the keys, the shared place — is what <code>hunch serve</code> starts to be. Whether it keeps the name Hunch or gets its own is deferred on purpose; a product name is not a category, and the category is <em>Deterministic State</em>: the facts an organization runs on, held in a form agents can check instead of guess.</p>
+
+<h2>What we do not know yet</h2>
+<p>We measured Sofia for a week before any of this: two of three replies had no observable source, and she re-summarized the same customer from the same evidence again and again. The claim is that a state layer drives both numbers toward zero. That claim is unproven until the next measurement, with Sofia and a second, different agent writing through the same contract. We will publish the numbers either way.</p>
+<p>Until then: the contract is frozen as code and documented in the repository, the service is on npm, and the thesis is public. If you are building agents that share an organization, this is the layer we think you will need, and we would rather be corrected in public than be right in private.</p>
+`,
+  },
+  {
     slug: "testing-hunch-memory-safety",
     title: "We tested whether Hunch memory degrades. Here is what passed — and what did not.",
     dek: "A new research paper showed that continuously rewritten LLM memory can become harmful. We audited Hunch against that failure mode, ran 312 direct-memory model calls, followed a suspicious result into a preregistered replication, and wrote down the production boundary we can actually defend.",
-    date: "2026-08-27", tag: "Research", read: "8 min", pinned: true,
+    date: "2026-08-27", tag: "Research", read: "8 min", pinned: false,
     cover: {
       src: "/assets/research/hunch-memory-safety-assurance-cover.png",
       alt: "Cover of the Hunch Memory Safety production readiness assurance report",

@@ -20,10 +20,14 @@ import { join, relative, dirname, basename, resolve, isAbsolute } from "node:pat
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
-import { hunchPaths, hunchPathsForDir, findRoot, toPosixTarget } from "../core/paths.js";
+import { hunchPaths, hunchPathsForDir, findRoot, toPosixTarget, isDir } from "../core/paths.js";
 import { writeFileAtomic } from "../core/io.js";
 import { looksLikeCorrection, CORRECTION_NUDGE } from "../core/correction.js";
 import { HUNCH_VERSION } from "../core/version.js";
+import { registerIntegrationCommands } from "./integrations.js";
+import { registerServeCommands } from "./serve.js";
+import { registerUpdateCommand } from "./update.js";
+import { inspectIntegrations, formatIntegrationHealth, integrationHealthFails, integrationSessionWarning } from "../integrations/health.js";
 import { HunchStore } from "../store/hunchStore.js";
 import { JsonStore } from "../store/jsonStore.js";
 import { selectEmbedder } from "../store/embedder.js";
@@ -58,11 +62,13 @@ import { flushCapture, flushMemoryHome, flushMemoryHomes, pinSharedRemote, share
 import { installMergeDriver } from "../integrations/mergeDriver.js";
 import { ensureGitignore, ignoreHunchMemory, HUNCH_MEMORY_DIRS } from "../integrations/gitignore.js";
 import { writeCiWorkflow } from "../integrations/ciAction.js";
-import { updateClaudeMd } from "../integrations/claudemd.js";
+import { updateClaudeMd, renderHunchSection } from "../integrations/claudemd.js";
+import { classifyGroundingBlock, describeGroundingFreshness } from "../core/groundingLag.js";
 import { writeMcpJson, writeSlashCommands, installClaudeHooks } from "../integrations/scaffold.js";
-import { scaffoldProviders, regenerateGrounding, refreshExistingGrounding, refreshCommittableGrounding } from "../integrations/providers.js";
+import { scaffoldProviders, regenerateGrounding, refreshExistingGrounding, refreshCommittableGrounding, GROUNDING_DOC_PATHS } from "../integrations/providers.js";
 import { healClaudeConfigCaseSplit } from "../integrations/claudeConfig.js";
-import { formatContext, formatStructure } from "../core/format.js";
+import { formatContext, formatSearchHit, formatStructure } from "../core/format.js";
+import { isStateKind, renderStateLine, stateSupplements, type StateRecord } from "../core/stateDelivery.js";
 import { diagnoseIssueCorrectionStage, formatCorrectionStageDiagnostic } from "../core/correctionStage.js";
 import { compileVerifiedEvidenceMap, formatVerifiedEvidenceMap } from "../core/evidenceMap.js";
 import { collectCorrectionStageSources } from "../extractors/correctionSources.js";
@@ -148,6 +154,9 @@ import { checkForUpdate, formatUpdateNotice, shouldCheckForUpdate } from "../cor
 
 const program = new Command();
 program.name("hunch").description("Hunch — engineering memory and a deterministic Change Gate for AI-assisted codebases.").version(HUNCH_VERSION);
+registerIntegrationCommands(program);
+registerServeCommands(program);
+registerUpdateCommand(program);
 
 // Fire-and-forget: never awaited, so a slow/unreachable registry never delays
 // the command's own work. See shouldCheckForUpdate for the full gate
@@ -348,7 +357,7 @@ program
       const h = installPostCommitHook(root, inv.shell, { private: syncToOverlay, commit: opts.autoCommit, localOnly: syncToOverlay });
       console.log(`  ✓ post-commit hook ${h.action} (learning loop)${syncToOverlay ? " — syncs to the shared overlay" : ""}${opts.autoCommit ? " — auto-commit on" : ""}`);
       const pm = installPostMergeHook(root, inv.shell);
-      console.log(`  ✓ post-merge hook ${pm.action} (squash-merge provenance repair)`);
+      console.log(`  ✓ post-merge hook ${pm.action} (squash-merge provenance repair + grounding re-sync)`);
       const m = installMergeDriver(root, inv.shell);
       console.log(`  ✓ team merge driver ${m.action}`);
       // Auto-install the pre-commit guard by default (advisory: flags invariants
@@ -418,6 +427,7 @@ program
     }
 
     store.close();
+    console.log("\n" + formatIntegrationHealth(inspectIntegrations(root)));
     console.log("\nNext: make a commit (the hook captures a decision), then ask your coding assistant \"why is X built this way?\"");
     console.log("Cold start? Seed from history:  hunch backfill --since 90d");
     console.log("\n⭐ If Hunch earns its keep, a star helps others find it → https://github.com/davesheffer/hunch");
@@ -1382,7 +1392,7 @@ program
       console.log(`No matches for "${q}".`);
     } else {
       console.log(`Top matches for "${q}"${how}:\n`);
-      for (const h of hits) console.log(`• [${h.kind}] ${h.ref} — ${h.title}\n    ${h.snippet}`);
+      for (const h of hits) console.log(formatSearchHit(h, isStateKind(h.kind) ? store.resolve(h.ref)?.record : undefined));
     }
     store.close();
   });
@@ -3927,11 +3937,22 @@ program
       !ctx.findings.length &&
       !ctx.landscape?.resources.length &&
       !ctx.landscape?.relationships.length;
+    // The "State" section (nuryel.state/1): current derived, in-force commitments, latest
+    // receipts matching the target — the same slice and render as hunch_context.
+    const slice = asOf ? null : store.stateSlice(target);
+    const stateGrounding = slice ? stateSupplements(slice, target) : [];
     if (empty && !asOf) {
-      const hits = store.rankedSearch(target, 8);
-      if (hits.length) {
+      const hits = store.rankedSearch(target, 8).filter((h) => !isStateKind(h.kind));
+      if (hits.length || stateGrounding.length) {
         console.log(`No file/symbol resolves for "${target}" — closest graph matches instead:\n`);
         for (const h of hits) console.log(`• ${h.ref} — ${h.title}\n    ${h.snippet}`);
+        if (slice) {
+          const stateHits = [...slice.derived, ...slice.commitments, ...slice.receipts];
+          if (stateHits.length) {
+            console.log(`${hits.length ? "\n" : ""}State (nuryel.state/1):`);
+            for (const hit of stateHits) console.log(`• ${renderStateLine(hit.kind, hit.record as StateRecord)}`);
+          }
+        }
         console.log(`\n(For a file/symbol brief use a concrete target; for free-text this is what \`hunch query\` returns.)`);
         store.close();
         return;
@@ -3944,6 +3965,7 @@ program
       decisionCorpus: store.recs("decisions"),
       historical: !!asOf,
       profile: opts.profile as DeliveryProfile,
+      supplements: stateGrounding,
     }));
     store.close();
   });
@@ -4959,8 +4981,15 @@ function printAutoReviewPlan(plan: AutoReviewPlan): void {
 program
   .command("mcp")
   .description("Start the MCP server over stdio (Claude Code connects here).")
-  .action(async () => {
+  .option("--root <dir>", "serve exactly this store or served partition and ignore the client's workspace roots and cwd hints")
+  .action(async (opts: { root?: string }) => {
     const { startServer } = await import("../mcp/server.js");
+    if (opts.root) {
+      const pinned = resolve(opts.root);
+      if (!isDir(join(pinned, ".hunch"))) throw new Error(`--root ${pinned} has no .hunch/ store`);
+      await startServer(pinned, { pinned: true });
+      return;
+    }
     await startServer(process.cwd());
   });
 
@@ -5600,6 +5629,70 @@ program
     }
   });
 
+// ---- grounding (the committed grounding docs vs the PUBLIC graph) -------------
+const GROUNDING_START = "<!-- HUNCH:START — auto-generated, do not edit by hand -->";
+const GROUNDING_END = "<!-- HUNCH:END -->";
+function groundingBlockContent(text: string): string | null {
+  const i = text.indexOf(GROUNDING_START);
+  const j = text.indexOf(GROUNDING_END);
+  if (i === -1 || j === -1 || j < i) return null;
+  return text.slice(i + GROUNDING_START.length, j).trim();
+}
+
+program
+  .command("grounding")
+  .description("Check the committed grounding docs (CLAUDE.md, AGENTS.md, copilot-instructions, hunch.mdc, hunch.md) against what the PUBLIC graph generates — direction-aware: counts that merely LAG a merge are reported, counts AHEAD of the store (a record never committed) or divergent prose fail. --refresh regenerates every existing doc from the public store (never the overlay union, never a doc the project lacks). Exits 1 on ahead/diverged unless refreshed.")
+  .option("--refresh", "regenerate the existing grounding docs from the public store (what the post-merge hook and the release remedy run)")
+  .option("--json", "machine-readable verdicts")
+  .option("--quiet", "print nothing on success")
+  .action((opts: { refresh?: boolean; json?: boolean; quiet?: boolean }) => {
+    const root = findRoot();
+    // PUBLIC-ONLY by construction, exactly as the release gate and the freshness test
+    // read it: HUNCH_PRIVATE_DIR at an empty overlay beats .hunch/local.json and the
+    // shared pointer, so a dev machine with an overlay attached can never write union
+    // counts into a committed public doc.
+    const emptyPrivate = mkdtempSync(join(tmpdir(), "hunch-grounding-public-"));
+    const prior = process.env.HUNCH_PRIVATE_DIR;
+    process.env.HUNCH_PRIVATE_DIR = emptyPrivate;
+    const store = new HunchStore(hunchPaths(root));
+    try {
+      const rendered = renderHunchSection(store, root);
+      const generated = groundingBlockContent(rendered) ?? rendered.trim();
+      const verdicts = GROUNDING_DOC_PATHS.map((rel) => {
+        const file = join(root, ...rel.split("/"));
+        if (!existsSync(file)) return { doc: rel, verdict: { kind: "absent" as const } };
+        const committed = groundingBlockContent(readFileSync(file, "utf8"));
+        if (committed === null) return { doc: rel, verdict: { kind: "diverged" as const, reason: "no managed HUNCH block" } };
+        return { doc: rel, verdict: classifyGroundingBlock(committed, generated) };
+      });
+      const refreshed = opts.refresh ? refreshExistingGrounding(root, store) : [];
+      const failing = verdicts.filter((v) => v.verdict.kind === "ahead" || v.verdict.kind === "diverged");
+      const lagging = verdicts.filter((v) => v.verdict.kind === "lagging");
+      if (opts.json) {
+        console.log(JSON.stringify({ docs: verdicts, refreshed, ok: opts.refresh ? true : failing.length === 0 }, null, 2));
+      } else if (opts.refresh) {
+        if (!opts.quiet) console.log(refreshed.length ? `grounding refreshed: ${refreshed.join(", ")}` : "grounding already fresh — nothing to regenerate");
+      } else {
+        for (const v of verdicts) {
+          if (v.verdict.kind === "absent") continue;
+          if (v.verdict.kind === "fresh" && opts.quiet) continue;
+          console.log(`${v.verdict.kind === "fresh" ? "✓" : v.verdict.kind === "lagging" ? "·" : "✗"} ${describeGroundingFreshness(v.doc, v.verdict)}`);
+        }
+        if (!opts.quiet && !failing.length) {
+          console.log(lagging.length
+            ? `\n${lagging.length} doc(s) lag a merge — transient; the next capture commit or \`hunch grounding --refresh\` heals it.`
+            : "✓ grounding docs are fresh.");
+        }
+      }
+      if (!opts.refresh && failing.length) process.exitCode = 1;
+    } finally {
+      store.close();
+      process.env.HUNCH_PRIVATE_DIR = prior;
+      if (prior === undefined) delete process.env.HUNCH_PRIVATE_DIR;
+      rmSync(emptyPrivate, { recursive: true, force: true });
+    }
+  });
+
 // ---- findings (the open-observations ledger) --------------------------------
 program
   .command("findings")
@@ -6041,6 +6134,11 @@ program
   .command("doctor")
   .description("Diagnose the environment (git, synthesis provider, index freshness).")
   .action(async () => {
+    const integrations = inspectIntegrations(findRoot());
+    console.log(formatIntegrationHealth(integrations));
+    // A shared-memory or CLI-only checkout may intentionally have no local
+    // assistant config. The explicit integrations check still fails that case.
+    if (integrations.harnesses.length > 0 && integrationHealthFails(integrations)) process.exitCode = 1;
     const { store, root } = storeFor();
     console.log(`Hunch root: ${root}`);
     console.log(`git repo:   ${isGitRepo(root) ? "yes" : "no"}  ${isGitRepo(root) ? `(HEAD ${headSha(root).slice(0, 8)})` : ""}`);
@@ -6225,6 +6323,10 @@ function emitContext(
   event: "PreToolUse" | "PostToolUse" | "PostToolUseFailure" | "UserPromptSubmit" | "SessionStart" | "SubagentStart",
   text: string,
 ): void {
+  if (event === "SessionStart") {
+    const warning = integrationSessionWarning(findRoot(), provider);
+    if (warning) text = `${warning}\n\n${text}`;
+  }
   const output = contextHookOutput(provider, event, text);
   if (output) process.stdout.write(JSON.stringify(output));
 }

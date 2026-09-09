@@ -13,6 +13,8 @@ import { z } from "zod";
 import { hunchPaths, findRoot, toPosixTarget } from "../core/paths.js";
 import { canonicalRootPath, resolveActiveRoot } from "./roots.js";
 import { HunchStore } from "../store/hunchStore.js";
+import { StateRefusal, SubscribeResponseSchema, capabilities, partitionOf, readState, recordsState, subscribeState, writeState } from "../store/stateBinding.js";
+import { ReadRequestSchema, ReadResponseSchema, WriteRequestSchema, WriteResultSchema, SubscribeRequestSchema, RecordsRequestSchema, RecordsResponseSchema, STATE_READ_VERSION, STATE_WRITE_VERSION, STATE_SUBSCRIBE_VERSION, STATE_RECORDS_VERSION, stateHash } from "../core/stateContract.js";
 import { selectEmbedder } from "../store/embedder.js";
 import { decisionId, findingId } from "../core/ids.js";
 import { buildCorrectionConstraint } from "../core/correction.js";
@@ -20,8 +22,10 @@ import { knownRepoDeps } from "../synthesis/tripwires.js";
 import { refreshExistingGrounding } from "../integrations/providers.js";
 import { revParse, asOfDate, revExists, lastChangeDate, rangeFiles, rangeDiff, commitFiles, commitDiff, stagedFiles, stagedDiff, workingFiles, workingDiff, pullHunchStatus, sameRemoteUrl, currentBranch, worktreePaths, pathKnownToHistory, type HunchPullStatus } from "../extractors/git.js";
 import { flushCapture, flushMemoryHome, pinSharedRemote } from "../integrations/sync.js";
+import { withWriteLock } from "../serve/writelock.js";
 import { advertisedTeamRemoteContract, ensureTeamOverlay, overlayMatchesTeamRemote, readTeamConfig, teamRemoteContract, teamSharedRef } from "../integrations/team.js";
-import { formatStructure } from "../core/format.js";
+import { formatSearchHit, formatStructure } from "../core/format.js";
+import { isStateKind, stateSupplements } from "../core/stateDelivery.js";
 import { diagnoseIssueCorrectionStage, formatCorrectionStageDiagnostic } from "../core/correctionStage.js";
 import {
   compileVerifiedEvidenceMap,
@@ -643,13 +647,23 @@ export type RootControlledServer = {
   server: McpServer;
   getRoot: () => string;
   setRoot: (next: string) => void;
+  /** True when the root was pinned at launch (`hunch mcp --root`): client roots and per-call
+   *  `cwd` hints are ignored, so a served partition stays the partition whatever workspace
+   *  the client opened. */
+  pinned: boolean;
   /** Drop a swap parked by `setRoot` while a request was in flight. The roots
    *  wiring calls this when a LATER resolution is ambiguous, so a stale parked
    *  swap can never apply after the client stopped unambiguously advertising it. */
   cancelPendingRoot: () => void;
 };
 
-export function buildServerWithRootControl(initialRoot: string): RootControlledServer {
+export interface RootControlOptions {
+  /** Serve exactly `initialRoot`; never re-home to client roots or `cwd` hints. */
+  pinned?: boolean;
+}
+
+export function buildServerWithRootControl(initialRoot: string, options: RootControlOptions = {}): RootControlledServer {
+  const pinned = options.pinned === true;
   const explicitOverlay = !!process.env.HUNCH_PRIVATE_DIR?.trim();
   const initial = prepareRoot(initialRoot, explicitOverlay, false);
   let root = initial.root;
@@ -818,7 +832,9 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
       // sole in-flight request — re-homing under a concurrent request would tear its
       // root/store out from under it, so that case is refused rather than risked.
       const cwdHint = extractCwdHint(args[0]);
-      if (cwdHint !== undefined) {
+      // A pinned root is the whole point of `hunch mcp --root`: a served partition must not
+      // follow the caller's working directory into some other checkout.
+      if (cwdHint !== undefined && !pinned) {
         const target = canonicalRootPath(findRoot(cwdHint));
         if (target !== canonicalRootPath(root)) {
           if (activeRequests) {
@@ -900,7 +916,7 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
       if (!hits.length) return ok(`No matches for "${query}".`);
       const lines = hits.map((h) => {
         const r = store.resolve(h.ref);
-        return `• [${h.kind}] ${h.ref} — ${h.title}\n    ${h.snippet}${provLine(r?.record)}`;
+        return `${formatSearchHit(h, r?.record)}${provLine(r?.record)}`;
       });
       return ok(`Top matches for "${query}":\n\n${lines.join("\n")}`);
     },
@@ -1117,7 +1133,9 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
         return {
           content: [{
             type: "text",
-            text: `${proof.proof_id} — ${proof.verdict.toUpperCase()}; ${proof.changed_file_count} exact file delta(s), ${proof.blast_radius_count} dependent path(s), ${proof.omissions.length + proof.unknowns.length} explicit gap(s); sealed ${proof.content_hash}. Evidence only; no execution or merge authority.`,
+            text: `${proof.proof_id} — ${proof.verdict.toUpperCase()}; ${proof.changed_file_count} exact file delta(s), ${proof.blast_radius_count} dependent path(s), ${proof.omissions.length + proof.unknowns.length} explicit gap(s); sealed ${proof.content_hash}. Evidence only; no execution or merge authority.`
+              // The chain: a `shipped` receipt rests on this proof as a credential-free pointer.
+              + `\n\nrests_on ref (for a nuryel receipt that shipped this change): ${JSON.stringify({ kind: "external", ref: { system: "hunch", object_type: "change_proof", object_key: proof.proof_id, content_hash: proof.content_hash, observed_at: new Date().toISOString().replace(/\.\d{3}Z$/, "Z") } })}`,
           }],
           structuredContent: proof,
         };
@@ -1242,6 +1260,10 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
         // Git checkout cannot provide DNA; the dedicated DNA tool reports the
         // exact derivation error when a caller needs diagnostics.
       }
+      // The "State" section (nuryel.state/1): current derived, in-force commitments and the
+      // latest receipts whose subject/text matches the target — bounded, ordered, sharing the
+      // brief's budget as supplements. Withheld on time-travel: state records carry no as-of view.
+      const stateGrounding = asOf ? [] : stateSupplements(store.stateSlice(target), target);
       const options = {
         root,
         symbols: store.recs("symbols"),
@@ -1249,7 +1271,7 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
         decisionCorpus: store.recs("decisions"),
         historical: !!asOf,
         profile: profile ?? "builder",
-        supplements: dnaSupplement ? [dnaSupplement] : [],
+        supplements: [...(dnaSupplement ? [dnaSupplement] : []), ...stateGrounding],
       };
       // Task-phrase input ("improve retrieval ranking") resolves no file/symbol and
       // used to return an empty brief while the graph held the answer — fall back to
@@ -1277,8 +1299,10 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
             ...options,
             supplements: [
               ...(dnaSupplement ? [dnaSupplement] : []),
+              ...stateGrounding,
               ...hits
-              .filter((hit) => !["constraints", "decisions", "bugs", "findings"].includes(hit.kind))
+              // State hits are delivered through the State section above, not as raw search lines.
+              .filter((hit) => !["constraints", "decisions", "bugs", "findings"].includes(hit.kind) && !isStateKind(hit.kind))
               .map((hit, index) => ({
                 id: hit.ref,
                 kind: `search-${hit.kind}`,
@@ -1815,7 +1839,13 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
           ? ` [PRIVATE overlay — not committed to this repo]${flushed}`
           : home === "private" ? ` [SHARED store — one source of truth for the whole team]${flushed}` : flushed;
         const dest = destinationNote(resolveDestRoot(home, store, root));
-        return ok(`Recorded decision ${id}: "${rec.title}" (status ${rec.status}, ${source}).${where}${dest}${supNote}${note}${captureNote}${quality}`);
+        // The chain (nuryel.state/1): a `shipped` receipt in an organization drawer rests on
+        // this decision by id + the hash ON FILE + this repository's partition. Hand the ref
+        // over now so the agent never rests on a pre-store hash or re-derives the scope.
+        const onFile = store.getRec("decisions", id) ?? rec;
+        const restsOn = JSON.stringify({ kind: "record", id, record_hash: stateHash(onFile), scope: partitionOf(store) });
+        const chainNote = `\n\nrests_on ref (for a nuryel receipt that implements this decision): ${restsOn}`;
+        return ok(`Recorded decision ${id}: "${rec.title}" (status ${rec.status}, ${source}).${where}${dest}${supNote}${note}${chainNote}${captureNote}${quality}`);
       } catch (e) {
         return err(`Failed to record decision: ${(e as Error).message}`);
       }
@@ -1971,6 +2001,150 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
         return ok(`${existing ? "Updated" : "Recorded"} finding ${id}: "${rec.title}" (${rec.triage}/${rec.severity}, observed ${rec.observed_at.slice(0, 10)}).${where}${dest} It now grounds edits to: ${[...rec.affected_files, ...rec.affected_symbols].join(", ") || "(nothing — add affected_files/symbols so it surfaces at edit time)"}.${danglingCon}${noEvidence}`);
       } catch (e) {
         return err(`Failed to record finding: ${(e as Error).message}`);
+      }
+    },
+  );
+
+  // -- nuryel.state/1 — the ONE contract, bound over MCP -------------------------
+  // These four tools are a BINDING of src/store/stateBinding.ts, never a second
+  // implementation: every rule (grants first, provenance + idempotency, one live
+  // decision per topic, derived state carries dependencies, partition homing) lives
+  // there and is shared with every other transport. Client-agnostic (con_e04226bd05).
+  const stateRefusal = (e: unknown): ToolResult => {
+    if (e instanceof StateRefusal) {
+      const conflict = e.conflict ? ` incumbent=${e.conflict.incumbent_id} (${e.conflict.reason})` : "";
+      return err(`nuryel.state/1 refused [${e.code}]: ${e.message}.${conflict}`);
+    }
+    if (e instanceof z.ZodError) return err(`nuryel.state/1 malformed request: ${e.issues.map((i) => `${i.path.join(".") || "request"}: ${i.message}`).join("; ")}`);
+    return err(`nuryel.state/1 failed: ${(e as Error).message}`);
+  };
+  const stateResult = (text: string, structured: Record<string, unknown>): ToolResult => ({ content: [{ type: "text", text }], structuredContent: structured });
+
+  server.registerTool(
+    "nuryel_capabilities",
+    {
+      title: "nuryel.state/1 — what this state layer supports",
+      description:
+        "Negotiate before depending on anything: returns the contract version, the capability list (verbs + record schemas), the repository partition this store serves, and which partition kinds it can hold. A capability you need that is missing here is a typed refusal on use, never a degraded answer.",
+      inputSchema: {},
+    },
+    async (): Promise<ToolResult> => {
+      const caps = capabilities(store);
+      return stateResult(`${caps.protocol} · repository ${caps.repository.id} · partitions ${caps.partitions.join(", ")} · ${caps.capabilities.length} capabilities`, caps);
+    },
+  );
+
+  server.registerTool(
+    "nuryel_read",
+    {
+      title: "nuryel.state/1 read — the system-of-record answer for a subject",
+      description:
+        "Read organizational state under a delivery receipt. Pass the principal (id, kind, grants) and the scope; optionally a subject (an entity id, a decision topic, an external `object_type:object_key`) to get state_of_record — what is current, in force, done, what it depends on and what invalidates it — plus a task phrase for the ranked delivery envelope. Scopes the principal is not granted are named in denied_scopes, never silently dropped.",
+      inputSchema: ReadRequestSchema.omit({ schema: true }).shape,
+      outputSchema: ReadResponseSchema.shape,
+    },
+    async (input): Promise<ToolResult> => {
+      try {
+        const { response, envelope } = readState(store, { schema: STATE_READ_VERSION, ...input });
+        const sor = response.state_of_record;
+        const summary = sor
+          ? `subject ${sor.subject}: current ${sor.current.length} · in force ${sor.in_force.length} · done ${sor.done.length} · depends on ${sor.depends_on.length} · invalidated by ${sor.invalidated_by.length}`
+          : "no subject — delivery envelope only";
+        const deniedNote = response.denied_scopes.length ? `\ndenied scopes: ${response.denied_scopes.map((s) => `${s.kind}/${s.id}`).join(", ")}` : "";
+        // Render the state of record itself, not only its refs: a consumer answers from this text.
+        const line = (label: string, ref: { facet: string; id: string }): string => {
+          const r = (response.records ?? {})[ref.id] ?? {};
+          const g = (k: string): string => { const v = r[k]; return typeof v === "string" ? v : v == null ? "" : JSON.stringify(v); };
+          if (ref.facet === "derived") return `- ${label} derived ${ref.id} · computed ${g("computed_at")} · ${(r.dependencies as unknown[] | undefined)?.length ?? 0} dependencies\n    ${g("content").slice(0, 1200)}`;
+          if (ref.facet === "commitments") return `- ${label} commitment ${ref.id} · ${g("status")} · due ${g("due")} · owner ${g("owner")}: ${g("title")}${r.closed_by ? ` · closed by ${g("closed_by")}` : ""}`;
+          if (ref.facet === "receipts") {
+            const t = (r.target ?? {}) as Record<string, unknown>;
+            // The chain: what the action rested on, one pointer per line, so a reader follows
+            // incident → decision → change proof → closure without a second call.
+            const rests = (Array.isArray(r.rests_on) ? r.rests_on : []) as Array<Record<string, unknown>>;
+            const restLines = rests.map((d) => {
+              if (d.kind === "record") { const sc = d.scope as { kind?: string; id?: string } | undefined; return `\n    rests on record ${String(d.id)}${sc ? ` in ${String(sc.kind)}/${String(sc.id)}` : ""}`; }
+              if (d.kind === "external") { const x = (d.ref ?? {}) as Record<string, unknown>; return `\n    rests on ${String(x.system ?? "")} ${String(x.object_type ?? "")}:${String(x.object_key ?? "")}`; }
+              return `\n    rests on ${String(d.kind)} ${String((d as { name?: unknown }).name ?? "")}`;
+            }).join("");
+            return `- ${label} receipt ${ref.id} · ${g("action_kind")} on ${String(t.system ?? "")} ${String(t.object_type ?? "")}:${String(t.object_key ?? "")} · ${g("state")} at ${g("occurred_at")} by ${g("actor")}${restLines}`;
+          }
+          if (ref.facet === "decisions") return `- ${label} decision ${ref.id} · ${g("status")}: ${g("title")}`;
+          if (ref.facet === "constraints") return `- ${label} constraint ${ref.id} · ${g("severity")}: ${g("statement")}`;
+          if (ref.facet === "entities") return `- ${label} entity ${ref.id} · ${g("kind")} ${g("name")} · ${g("lifecycle")}`;
+          return `- ${label} ${ref.facet} ${ref.id}`;
+        };
+        const stateText = sor
+          ? [...sor.current.map((r) => line("current", r)), ...sor.in_force.map((r) => line("in force", r)), ...sor.done.map((r) => line("done", r)),
+             ...(sor.invalidated_by.length ? [`- invalidated by: ${sor.invalidated_by.join(", ")}`] : [])].join("\n") || "(nothing on record for this subject)"
+          : "";
+        return stateResult(`${response.receipt_id} · ${summary}${deniedNote}${stateText ? `\n\nState of record:\n${stateText}` : ""}\n\n${envelope.text}`, response);
+      } catch (e) {
+        return stateRefusal(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "nuryel_write",
+    {
+      title: "nuryel.state/1 write — provenance + idempotency in, durability out",
+      description:
+        "Write one record into a facet (receipts, commitments, derived, entities, relationships, or the legacy decisions/constraints/bugs/findings). The record must carry provenance; the request must carry an idempotency_key — a replay returns the original, a reused key with a different payload is refused. Ids are derived from the record's facts, never chosen. A second live decision on a topic is refused with the incumbent named; pass supersedes to replace it explicitly. organization/team/user partitions never ride a repository: they require an overlay.",
+      inputSchema: { ...WriteRequestSchema.omit({ schema: true }).shape, cwd: cwdHintField },
+      outputSchema: WriteResultSchema.shape,
+    },
+    async ({ cwd: _cwd, ...input }): Promise<ToolResult> => {
+      try {
+        // Same cross-process lock `hunch serve` takes: a second agent writing over stdio must
+        // not race the HTTP server between the ledger read and the record write.
+        const result = await withWriteLock(hunchPaths(root).hunch, () => writeState(store, { schema: STATE_WRITE_VERSION, ...input }, {
+          flush: (isPrivate, message) => flushCapture(store, hunchPaths(root).hunch, isPrivate, message, startupTeamRoute ?? undefined),
+        }));
+        return stateResult(`${result.outcome} ${result.record_id} (${result.durability}) ${result.record_hash}`, result);
+      } catch (e) {
+        return stateRefusal(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "nuryel_subscribe",
+    {
+      title: "nuryel.state/1 subscribe — the scope's ordered change stream after a cursor",
+      description:
+        "Return the change events for a scope with seq > after_seq, strictly ordered. Unfiltered, the events are contiguous (a gap means resynchronize); with facets/subjects filters the response is a subsequence and head_seq is still your next cursor. Each event names the record, its hash, what changed, what it invalidates, and the cause.",
+      inputSchema: SubscribeRequestSchema.omit({ schema: true }).shape,
+      outputSchema: SubscribeResponseSchema.shape,
+    },
+    async (input): Promise<ToolResult> => {
+      try {
+        const response = subscribeState(store, { schema: STATE_SUBSCRIBE_VERSION, ...input });
+        const lines = response.events.map((e) => `${e.seq} ${e.at} ${e.change} ${e.facet}/${e.record_id}${e.invalidates.length ? ` invalidates ${e.invalidates.join(", ")}` : ""}`);
+        return stateResult(`${response.scope.kind}/${response.scope.id} head_seq ${response.head_seq} · ${response.events.length} event(s)${response.filtered ? " (filtered)" : ""}\n${lines.join("\n")}`, response);
+      } catch (e) {
+        return stateRefusal(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "nuryel_records",
+    {
+      title: "nuryel.state/1 records — fetch records by id, grants first",
+      description:
+        "Fetch state records by id (from a subscribe event, a read ref, or a write result). Every id is accounted for: found (with its facet), denied (its scope is outside your grants — named, never described) or missing.",
+      inputSchema: RecordsRequestSchema.omit({ schema: true }).shape,
+      outputSchema: RecordsResponseSchema.shape,
+    },
+    async (input): Promise<ToolResult> => {
+      try {
+        const response = recordsState(store, { schema: STATE_RECORDS_VERSION, ...input });
+        const lines = Object.entries(response.records).map(([id, r]) => `- ${response.facets[id]} ${id}: ${JSON.stringify(r).slice(0, 600)}`);
+        const tail = [...(response.missing.length ? [`missing: ${response.missing.join(", ")}`] : []), ...(response.denied.length ? [`denied: ${response.denied.join(", ")}`] : [])];
+        return stateResult(`${Object.keys(response.records).length} record(s)\n${lines.join("\n")}${tail.length ? `\n${tail.join("\n")}` : ""}`, response);
+      } catch (e) {
+        return stateRefusal(e);
       }
     },
   );
@@ -2627,7 +2801,8 @@ export function buildServerWithRootControl(initialRoot: string): RootControlledS
   return {
     server,
     getRoot: () => root,
-    setRoot,
+    setRoot: (next: string) => { if (!pinned) setRoot(next); },
+    pinned,
     cancelPendingRoot: () => { pendingRoot = null; },
   };
 }
@@ -2648,6 +2823,7 @@ function provLine(record: unknown): string {
 /** Query client roots after initialization and follow later list changes.
  *  Generation ordering prevents a slow stale roots/list response from winning. */
 export function wireClientRoots(control: RootControlledServer, fallback: string): void {
+  if (control.pinned) return; // `hunch mcp --root`: the client's workspace is not this server's store
   let generation = 0;
   const syncRoots = async (): Promise<void> => {
     const mine = ++generation;
@@ -2686,11 +2862,13 @@ export function wireClientRoots(control: RootControlledServer, fallback: string)
 }
 
 /** Start the stdio server (called by `hunch mcp`). */
-export async function startServer(cwd: string = process.cwd()): Promise<void> {
-  const fallback = findRoot(cwd);
-  const control = buildServerWithRootControl(fallback);
+export async function startServer(cwd: string = process.cwd(), options: RootControlOptions = {}): Promise<void> {
+  const fallback = options.pinned ? cwd : findRoot(cwd);
+  const control = buildServerWithRootControl(fallback, options);
   wireClientRoots(control, fallback);
   const transport = new StdioServerTransport();
   await control.server.connect(transport);
-  console.error(`[hunch-mcp] serving Hunch over stdio (spawn root ${control.getRoot()}; resolving client roots…)`);
+  console.error(control.pinned
+    ? `[hunch-mcp] serving Hunch over stdio (pinned root ${control.getRoot()}; client roots ignored)`
+    : `[hunch-mcp] serving Hunch over stdio (spawn root ${control.getRoot()}; resolving client roots…)`);
 }
