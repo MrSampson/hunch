@@ -55,6 +55,24 @@ export function actionableEscalations(items: readonly Escalation[]): Escalation[
   return items.filter((e) => e.actionable !== false);
 }
 
+export interface EscalationSummary {
+  /** the subset a gating surface should count/exit/ask on. */
+  actionable: Escalation[];
+  /** how many entries were filtered out — informational-only, shown for
+   *  transparency but not itself a decision to raise. */
+  context: number;
+}
+
+/** One computation for every "N need your call (+M shown for context)"
+ *  consumer (CLI `escalations`, SessionStart, the `hunch_now`/`hunch_escalations`
+ *  MCP tools) — introduced alongside `actionable` (#61) specifically so a
+ *  future consumer of Escalation[] can't repeat the mistake of hand-rolling
+ *  the filter and forgetting it (the VS Code panel did, before this existed). */
+export function summarizeEscalations(items: readonly Escalation[]): EscalationSummary {
+  const actionable = actionableEscalations(items);
+  return { actionable, context: items.length - actionable.length };
+}
+
 /** The decisions a human must make NOW, to be asked INLINE. Empty in a healthy graph. */
 export function pendingEscalations(decisions: readonly Decision[]): Escalation[] {
   const out: Escalation[] = [];
@@ -132,6 +150,13 @@ export function commitRepairEscalations(queued: readonly CommitRewrite[], decisi
   // this fix (see #56) and isn't new here — it just means a queue whose first
   // entry is about to be evicted by a fresh match still reads as the ordinary,
   // ask-normally case rather than something rarer.
+  // `byId.get(r.id)` is the SAME decision object for every entry sharing an id,
+  // so liveness (liveRewrites) and deadness (deadRewrites) are uniform across
+  // an id-group, not per-entry — `survivors` restricted to one id is therefore
+  // exactly that id's live entries, in the same order. Consequence relied on
+  // below (#61): the FIRST live entry per id is always `dropTarget(id)`, so it
+  // always stays actionable — no id-group's escalations can ever be entirely
+  // actionable:false.
   const deadSet = new Set(deadRewrites(queued, live));
   const survivors = queued.filter((q) => !deadSet.has(q));
   // What `--drop <id>` targets (src/cli/index.ts: `firstFor(queue, opts.drop)`

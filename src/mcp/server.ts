@@ -72,7 +72,7 @@ import { HUNCH_VERSION } from "../core/version.js";
 import { assertCompleteRepoScan, indexRepo, scanRepo } from "../extractors/indexer.js";
 import type { Decision, Finding, Symbol } from "../core/types.js";
 import { liveForTopic, historyForTopic, rejectedForTopic, captureConflicts } from "../core/topics.js";
-import { pendingEscalations, policyEscalations, commitRepairEscalations, actionableEscalations, type Escalation } from "../core/escalations.js";
+import { pendingEscalations, policyEscalations, commitRepairEscalations, actionableEscalations, summarizeEscalations, type Escalation } from "../core/escalations.js";
 import { readActivePendingRepairs, withheldRewrites } from "../core/repairqueue.js";
 import { scanRecord, publicationWarning, loadVocabulary } from "../core/publication.js";
 import { premiseEscalations } from "../core/premises.js";
@@ -1443,8 +1443,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
       // duplicate-id commit-repair follower whose own resolution says "act on
       // a different entry first" still surfaces below for transparency, but
       // isn't itself something to raise as a decision (#61).
-      const actionable = actionableEscalations(items);
-      const context = items.length - actionable.length;
+      const { actionable, context } = summarizeEscalations(items);
       const L = actionable.length
         ? [`${actionable.length} decision(s) need the human's call — ask each inline, don't decide it for them${context ? ` (+${context} shown below for context only, not a decision)` : ""}:`, ""]
         : [`Nothing needs the human's call right now — ${items.length} entr${items.length === 1 ? "y" : "ies"} shown below for context only (resolving another entry will clear them):`, ""];

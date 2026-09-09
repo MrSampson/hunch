@@ -70,6 +70,11 @@ export interface EscalationEntry {
   question: string;
   detail: string;
   resolution: string;
+  /** false ONLY for an entry whose own resolution requires acting on a
+   *  DIFFERENT entry first (a duplicate-id commit-repair follower) — it still
+   *  surfaces below for transparency, but must not count toward the group
+   *  label's "needs your decision" tally (#61). Omitted means true. */
+  actionable?: boolean;
 }
 
 /** One Constitution policy — mirrors `hunch policy list --json` (JSON consumer). */
@@ -163,7 +168,15 @@ export class MemoryTreeProvider implements vscode.TreeDataProvider<Node> {
     if (!element) {
       if (!this.loaded) await this.load();
       const roots: Node[] = [];
-      if (this.escalations.length) roots.push(new GroupNode(`⚖ Needs your decision (${this.escalations.length})`, "issues", "escalations"));
+      if (this.escalations.length) {
+        // Tally only the ACTIONABLE entries — a duplicate-id commit-repair
+        // follower whose own resolution says "act on a different entry
+        // first" still appears in the group's children for transparency, but
+        // must not inflate the "needs your decision" count (#61).
+        const actionableCount = this.escalations.filter((e) => e.actionable !== false).length;
+        const context = this.escalations.length - actionableCount;
+        roots.push(new GroupNode(`⚖ Needs your decision (${actionableCount}${context ? `, +${context} for context` : ""})`, "issues", "escalations"));
+      }
       if (this.policies.length) roots.push(new GroupNode(`🏛 Constitution (${this.policies.length})`, "law", "policies"));
       return [...roots, ...this.moves.map((m) => new MoveNode(m))];
     }

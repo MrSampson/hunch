@@ -120,7 +120,7 @@ import { ADR_DIR_CANDIDATES, ADR_FILE_RE, mapAdrCorpus } from "../extractors/adr
 import { applyImportedAdrReview, carryImportedAdrReview, importedAdrReviewHash, importedAdrSourceHash, isImportedAdrDecision, pendingImportedAdrReviews } from "../core/importReview.js";
 import { exportMadrCorpus, isRegenerableMadr } from "../integrations/madrExport.js";
 import { buildMadrManifest, writeMadrManifest, refreshMadrCorpus } from "../integrations/madrManifest.js";
-import { pendingEscalations, policyEscalations, commitRepairEscalations, actionableEscalations } from "../core/escalations.js";
+import { pendingEscalations, policyEscalations, commitRepairEscalations, actionableEscalations, summarizeEscalations } from "../core/escalations.js";
 import { premiseEscalations } from "../core/premises.js";
 import { parseDocAnchors, renderDocGrounding } from "../core/docanchors.js";
 import { compareCandidates } from "../core/compare.js";
@@ -4423,7 +4423,15 @@ program
             const { ConstitutionService: CS } = await import("../constitution/service.js");
             escalations.push(...policyEscalations(new CS(s, paths.root).list({ publicOnly: true }).map((p) => ({ ...p, last_action: p.audit.at(-1)?.action ?? null }))));
           } catch { /* constitution unavailable */ }
-          if (!decisions.length && !escalations.length) {
+          // Only ACTIONABLE entries are worth asking inline — a duplicate-id
+          // commit-repair follower whose own resolution says "act on a
+          // different entry first" isn't a question the assistant can put to
+          // the human directly (#61). Filtered BEFORE the bail check below so
+          // "is there anything to say" and "what do we say" share one
+          // predicate — an escalations list that's entirely non-actionable
+          // must bail exactly like an empty one would.
+          const actionableEsc = actionableEscalations(escalations);
+          if (!decisions.length && !actionableEsc.length) {
             // Fresh graph and nothing else to raise: nothing to orient on, but
             // the operating loop still ships. A queued commit-repair escalation
             // (checked against the full store above) is enough reason NOT to
@@ -4441,11 +4449,6 @@ program
             L.push(`Roadmap (${roadmap.length} live proposed): ${roadmap.slice(0, 3).map((r) => r.title).join(" · ")}${roadmap.length > 3 ? " · …" : ""}`);
           }
           if (pendingReview > 0) L.push(`${pendingReview} legacy un-vouched draft(s) — adopt as advisory memory with \`hunch adopt-drafts\` (new captures auto-trust).`);
-          // Only ACTIONABLE entries are worth asking inline — a duplicate-id
-          // commit-repair follower whose own resolution says "act on a
-          // different entry first" isn't a question the assistant can put to
-          // the human directly (#61).
-          const actionableEsc = actionableEscalations(escalations);
           if (actionableEsc.length) {
             L.push(`⚖ ${actionableEsc.length} decision(s) need YOUR call — ASK the user inline (don't queue): ${actionableEsc.map((e) => e.question).join(" · ")}`);
           }
@@ -5082,14 +5085,21 @@ program
       // commit-repair follower whose own resolution says "act on a different
       // entry first" still surfaces below for transparency, but must not count
       // as its own thing needing a decision (#61). --json keeps the full list.
-      const actionable = actionableEscalations(items);
+      const { actionable, context } = summarizeEscalations(items);
       if (opts.json) { console.log(JSON.stringify(items)); if (actionable.length) process.exitCode = 1; return; }
       if (!items.length) {
         console.log("✓ Nothing needs your decision — memory is auto-trusted and self-consistent.");
         return;
       }
+      // The `else` here is currently unreachable: every escalation-producing
+      // function today (pendingEscalations/premiseEscalations/policyEscalations,
+      // and each duplicate-id group commitRepairEscalations emits) guarantees at
+      // least one actionable entry whenever it emits anything at all — see
+      // commitRepairEscalations' own docstring on `firstFor`/dropTarget. Kept
+      // (rather than assuming `actionable.length` is always > 0 here) because
+      // that guarantee lives in the PRODUCERS, not in `Escalation.actionable`'s
+      // own contract, which a future producer could legitimately violate.
       if (actionable.length) {
-        const context = items.length - actionable.length;
         console.log(`${actionable.length} decision(s) need your call — asked here, never decided for you${context ? ` (+${context} shown below for context only, not gating)` : ""}:\n`);
       } else {
         console.log(`Nothing needs your decision right now — ${items.length} entr${items.length === 1 ? "y" : "ies"} shown below for context only (resolving another entry will clear them):\n`);

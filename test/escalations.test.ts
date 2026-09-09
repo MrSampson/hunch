@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { pendingEscalations, policyEscalations, commitRepairEscalations, actionableEscalations, type Escalation, type PolicyLite } from "../src/core/escalations.js";
+import { pendingEscalations, policyEscalations, commitRepairEscalations, actionableEscalations, summarizeEscalations, type Escalation, type PolicyLite } from "../src/core/escalations.js";
 import type { Decision } from "../src/core/types.js";
 
 const D = (over: Partial<Decision> & { id: string }): Decision => ({
@@ -305,21 +305,20 @@ test("commitRepairEscalations: a duplicate-id queue's non-actionable follower (n
   const items = commitRepairEscalations([first, second], decs);
   const forFirst = items.find((i) => i.detail === "sha_a_old → sha_first")!;
   const forSecond = items.find((i) => i.detail === "sha_a_old → sha_second")!;
-  assert.notEqual(forFirst.actionable, false, "the genuine drop-target/apply-target stays actionable");
-  assert.equal(forSecond.actionable, false, "resolving it requires acting on a different entry first — must not gate on this row itself");
+  assert.deepEqual(actionableEscalations(items), [forFirst], "only the genuine drop-target/apply-target passes the filter — resolving it requires acting on a different entry first, so `forSecond` must not gate on this row itself");
 });
 
 test("commitRepairEscalations: an ordinary, non-duplicate entry is actionable (field left true/undefined)", () => {
   const decs = [D({ id: "dec_1", title: "Add the feature", commit: "sha_old" })];
   const items = commitRepairEscalations([{ id: "dec_1", from: "sha_old", to: "sha_new" }], decs);
-  assert.notEqual(items[0]!.actionable, false);
+  assert.deepEqual(actionableEscalations(items), items);
 });
 
 test("commitRepairEscalations: a withheld entry that IS the drop-target stays actionable — only the drop-only wording changes, not the actionable flag", () => {
   const decs = [D({ id: "dec_1", title: "Add the feature", commit: "sha_old" })];
   const entry = { id: "dec_1", from: "sha_old", to: "sha_ghost" };
   const items = commitRepairEscalations([entry], decs, decs, new Set([entry]));
-  assert.notEqual(items[0]!.actionable, false);
+  assert.deepEqual(actionableEscalations(items), items);
 });
 
 test("commitRepairEscalations: a three-way duplicate — only the middle (neither drop- nor apply-target) entry is actionable:false; the drop-target and apply-target both stay actionable", () => {
@@ -331,15 +330,13 @@ test("commitRepairEscalations: a three-way duplicate — only the middle (neithe
   const forGhost1 = items.find((i) => i.detail === "sha_a_old → sha_ghost1")!;
   const forGhost2 = items.find((i) => i.detail === "sha_a_old → sha_ghost2")!;
   const forResolvable = items.find((i) => i.detail === "sha_a_old → sha_real")!;
-  assert.notEqual(forGhost1.actionable, false, "the drop-target");
-  assert.equal(forGhost2.actionable, false, "neither drop- nor apply-target");
-  assert.notEqual(forResolvable.actionable, false, "the apply-target");
+  assert.deepEqual(actionableEscalations(items), [forGhost1, forResolvable], "the drop-target and the apply-target pass; the middle entry (neither) is filtered out");
 });
 
 test("pendingEscalations: a topic-conflict entry is always actionable (only commit-repair followers ever set actionable:false)", () => {
   const decs = [D({ id: "dec_a", topic: "store.writes" }), D({ id: "dec_b", topic: "store.writes" })];
   const items = pendingEscalations(decs);
-  assert.notEqual(items[0]!.actionable, false);
+  assert.deepEqual(actionableEscalations(items), items);
 });
 
 test("actionableEscalations: drops only entries explicitly marked actionable:false, preserving order", () => {
@@ -351,4 +348,25 @@ test("actionableEscalations: drops only entries explicitly marked actionable:fal
 
 test("actionableEscalations: an empty list stays empty", () => {
   assert.deepEqual(actionableEscalations([]), []);
+});
+
+test("summarizeEscalations: splits a mixed list into its actionable subset and a context count of the rest", () => {
+  const a: Escalation = { kind: "commit-repair-pending", topic: "dec_a", decisionIds: ["dec_a"], question: "q-a", detail: "d-a", resolution: "r-a" };
+  const b: Escalation = { kind: "commit-repair-pending", topic: "dec_b", decisionIds: ["dec_b"], question: "q-b", detail: "d-b", resolution: "r-b", actionable: false };
+  const summary = summarizeEscalations([a, b]);
+  assert.deepEqual(summary.actionable, [a]);
+  assert.equal(summary.context, 1);
+});
+
+test("summarizeEscalations: an all-actionable list has a zero context count", () => {
+  const a: Escalation = { kind: "commit-repair-pending", topic: "dec_a", decisionIds: ["dec_a"], question: "q-a", detail: "d-a", resolution: "r-a" };
+  const summary = summarizeEscalations([a]);
+  assert.deepEqual(summary.actionable, [a]);
+  assert.equal(summary.context, 0);
+});
+
+test("summarizeEscalations: an empty list summarizes to nothing actionable and zero context", () => {
+  const summary = summarizeEscalations([]);
+  assert.deepEqual(summary.actionable, []);
+  assert.equal(summary.context, 0);
 });
