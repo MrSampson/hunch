@@ -17,7 +17,7 @@ import { StateRefusal, SubscribeResponseSchema, capabilities, partitionOf, readS
 import { ReadRequestSchema, ReadResponseSchema, WriteRequestSchema, WriteResultSchema, SubscribeRequestSchema, RecordsRequestSchema, RecordsResponseSchema, STATE_READ_VERSION, STATE_WRITE_VERSION, STATE_SUBSCRIBE_VERSION, STATE_RECORDS_VERSION, stateHash } from "../core/stateContract.js";
 import { selectEmbedder } from "../store/embedder.js";
 import { decisionId, findingId, manualDecisionId } from "../core/ids.js";
-import { buildCorrectionConstraint, repoRelativeHint } from "../core/correction.js";
+import { buildCorrectionConstraint, correctionScopeHint, repoRelativeHint } from "../core/correction.js";
 import { knownRepoDeps } from "../synthesis/tripwires.js";
 import { refreshExistingGrounding } from "../integrations/providers.js";
 import { revParse, asOfDate, revExists, lastChangeDate, rangeFiles, rangeDiff, commitFiles, commitDiff, stagedFiles, stagedDiff, workingFiles, workingDiff, pullHunchStatus, sameRemoteUrl, currentBranch, worktreePaths, pathKnownToHistory, type HunchPullStatus } from "../extractors/git.js";
@@ -176,12 +176,12 @@ const destinationNote = (destRoot: string): string => {
  *  it only catches a related file that's new/untracked at the resolved root but
  *  already exists in a sibling worktree — the common "edited an existing tracked
  *  file" case is invisible to a pure existence check (the file exists at every
- *  worktree, just with different content) and still reproduces (tracked in #62,
- *  which also extended this guard from hunch_record_decision alone to every
- *  auto-committing write tool that names files — hunch_record_correction's
- *  scope_hint_file and hunch_record_finding's affected_files share it via
- *  misrouteGuard below). Every matching sibling is named as a candidate `cwd` and
- *  the write is refused rather than risked;
+ *  worktree, just with different content) and still reproduces (tracked in #75 —
+ *  #62, which this guard now covers, was extending it from hunch_record_decision
+ *  alone to every auto-committing write tool that names files:
+ *  hunch_record_correction's scope_hint_file and hunch_record_finding's
+ *  affected_files share it via misrouteGuard below). Every matching sibling is
+ *  named as a candidate `cwd` and the write is refused rather than risked;
  *  it returns every match rather than the first, since confidently naming just one
  *  would let a caller that blindly retries as instructed land in the WRONG worktree —
  *  the same failure mode one level removed.
@@ -224,7 +224,7 @@ export const misroutedWorktreeCandidates = (root: string, relatedFiles: readonly
  *  #62) — one message so the three call sites stay in lockstep instead of drifting.
  *  Returns the refusal ToolResult when misroutedWorktreeCandidates finds a better
  *  home, else null (proceed as normal). `subject` names what's being recorded,
- *  e.g. `"the decision" "Foo"` or `finding "Foo"`, for the refusal text. */
+ *  e.g. `"Foo"` or `finding "Foo"`, for the refusal text. */
 function misrouteGuard(root: string, subject: string, relatedFiles: readonly string[]): ToolResult | null {
   const misroutes = misroutedWorktreeCandidates(root, relatedFiles);
   if (!misroutes.length) return null;
@@ -242,6 +242,18 @@ function misrouteGuard(root: string, subject: string, relatedFiles: readonly str
     `argument (issue #54) — ${retry}, or wherever this work actually happened.`,
   );
 }
+
+/** Normalize file evidence for the misroute-guard CHECK ONLY — never for what a
+ *  record actually stores. An absolute path (agents naturally send them; edit-tool
+ *  payloads and MCP roots are absolute) silently bypassed the guard before this:
+ *  `existsSync(join(root, "/abs/path"))` checks a nonsense joined path that exists
+ *  nowhere, so the guard found nothing to compare and stayed silent (PR #76 review
+ *  R1) — the exact absolute-path bypass hunch_record_correction's scope_hint_file
+ *  already had to be relativized against, generalized here to a whole file list.
+ *  A hint outside the repo (or empty) relativizes to "" and is dropped, same as
+ *  today: nothing to compare, not "absent here, check the siblings". */
+const guardFiles = (files: readonly string[], root: string): string[] =>
+  files.map((f) => repoRelativeHint(toPosixTarget(f), root)).filter(Boolean);
 
 /** Where a capture keyed to `home` actually lands: the private overlay directory when
  *  one is configured, else the public repo root. Centralizes the branch used at every
@@ -1686,7 +1698,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     },
     async ({ decision, capture_token }): Promise<ToolResult> => {
       try {
-        const misroute = misrouteGuard(root, `"${decision.title}"`, (decision.related_files ?? []).map(toPosixTarget));
+        const misroute = misrouteGuard(root, `"${decision.title.slice(0, 60)}"`, guardFiles(decision.related_files ?? [], root));
         if (misroute) return misroute;
         // Commit-keyed on the CANONICAL full sha (resolved via git rev-parse), so a
         // human passing the short sha they see in `commit` produces the SAME id as
@@ -1909,22 +1921,24 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     async (input): Promise<ToolResult> => {
       try {
         if (!input.rule || !input.rule.trim()) return err("rule is required — state the invariant in plain words.");
-        // root: relativizes an ABSOLUTE scope_hint_file. Agents naturally send absolute
-        // paths (edit-tool payloads and MCP roots are absolute) and every consumer matches
-        // repo-relative — without this the rule would be blocking-but-inert and would leak
-        // the local filesystem path into the committed graph.
         // Same misroute guard as hunch_record_decision (issue #54, extended here by #62):
         // a scope_hint_file that exists in a sibling linked worktree but not here is very
         // likely a subagent that forgot cwd, about to silently scope-and-commit a
-        // constraint against the wrong checkout.
-        const scopeHintRepoRelative = input.scope_hint_file ? repoRelativeHint(toPosixTarget(input.scope_hint_file), root) : "";
-        const correctionMisroute = misrouteGuard(root, `correction "${input.rule}"`, scopeHintRepoRelative ? [scopeHintRepoRelative] : []);
+        // constraint against the wrong checkout. correctionScopeHint is the SAME
+        // normalization buildCorrectionConstraint uses below, so the guard checks
+        // exactly the path the constraint will actually be scoped to.
+        const scopeHintRepoRelative = correctionScopeHint(input.scope_hint_file, root);
+        const correctionMisroute = misrouteGuard(root, `correction "${input.rule.slice(0, 60)}"`, scopeHintRepoRelative ? [scopeHintRepoRelative] : []);
         if (correctionMisroute) return correctionMisroute;
         // Same authorship tier as hunch_record_decision: a consumed token mints the
         // signature, an un-token'd write is testimony. Here the stakes are HIGHER — a
         // blocking constraint DENIES edits, so an un-vouched write is capped at
         // "warning" rather than being refused. Never Twice still lands immediately.
         const vouched = consumeCaptureToken(input.capture_token);
+        // root: relativizes an ABSOLUTE scope_hint_file. Agents naturally send absolute
+        // paths (edit-tool payloads and MCP roots are absolute) and every consumer matches
+        // repo-relative — without this the rule would be blocking-but-inert and would leak
+        // the local filesystem path into the committed graph.
         const rec = buildCorrectionConstraint({ ...input, knownDeps: knownRepoDeps(root), root, vouched }, new Date().toISOString());
         // Private corrections go to the overlay (enforced locally via the merged read,
         // never rendered into the public CI comment, which is public-only by construction).
@@ -2002,7 +2016,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         if (!finding.title.trim()) return err("title is required.");
         if (!finding.observation.trim()) return err("observation is required — state what you saw.");
         // Same misroute guard as hunch_record_decision (issue #54, extended here by #62).
-        const findingMisroute = misrouteGuard(root, `finding "${finding.title}"`, (finding.affected_files ?? []).map(toPosixTarget));
+        const findingMisroute = misrouteGuard(root, `finding "${finding.title.slice(0, 60)}"`, guardFiles(finding.affected_files ?? [], root));
         if (findingMisroute) return findingMisroute;
         const id = findingId(finding.title);
         const home = store.captureHome(!!finding.private);
