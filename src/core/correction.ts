@@ -87,7 +87,7 @@ export interface CorrectionInput {
  *  repo). The caller then falls back to "**", where the existing severity guard
  *  down-ranks a non-explicit blocking rule to a warning — fail-safe and honest, rather
  *  than a blocking rule enforced nowhere. */
-function repoRelativeHint(rawHint: string, root?: string): string {
+export function repoRelativeHint(rawHint: string, root?: string): string {
   if (!rawHint) return "";
   const looksAbsolute = isAbsolute(rawHint) || /^[a-zA-Z]:/.test(rawHint);
   if (!looksAbsolute) return rawHint;

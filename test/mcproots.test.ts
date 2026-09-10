@@ -655,6 +655,148 @@ test("a capture with related_files that don't exist in any worktree still succee
   assert.equal(existsSync(join(fixture.root, ".hunch", "decisions", filename)), true, "must actually land at root, not just avoid erroring");
 });
 
+test("hunch_record_correction is refused when scope_hint_file only exists in a linked worktree (issue #62)", async (t) => {
+  const fixture = repoWithWorktree();
+  writeFileSync(join(fixture.worktree, "worktree-only.ts"), "export const onlyHere = 1;\n");
+  const control = buildServerWithRootControl(fixture.root);
+  const client = new Client({ name: "misroute-guard-correction-test", version: "0.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  t.after(async () => {
+    await client.close().catch(() => {});
+    await control.server.close().catch(() => {});
+    fixture.cleanup();
+  });
+
+  await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
+
+  const result = await client.callTool({
+    name: "hunch_record_correction",
+    arguments: {
+      rule: "never touch worktree-only.ts without a review",
+      scope_hint_file: "worktree-only.ts",
+      // Deliberately no `cwd` — same shape as issue #54's original report.
+    },
+  }) as { content: Array<{ text: string }>; isError?: boolean };
+
+  assert.equal(result.isError, true, "should refuse rather than silently scope-and-commit against the wrong root");
+  const text = result.content.map((c) => c.text ?? "").join("\n");
+  assert.ok(text.includes(fixture.worktree), `refusal should name the likely-correct worktree: ${text}`);
+  assert.ok(/cwd/.test(text), `refusal should tell the caller to pass cwd: ${text}`);
+  assert.equal(git(fixture.root, "log", "-1", "--format=%s"), "fixture", "primary checkout must have no new commit");
+});
+
+test("hunch_record_correction relativizes an ABSOLUTE scope_hint_file before checking for a misroute (issue #62)", async (t) => {
+  const fixture = repoWithWorktree();
+  writeFileSync(join(fixture.worktree, "worktree-only.ts"), "export const onlyHere = 1;\n");
+  const control = buildServerWithRootControl(fixture.root);
+  const client = new Client({ name: "misroute-guard-correction-absolute-test", version: "0.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  t.after(async () => {
+    await client.close().catch(() => {});
+    await control.server.close().catch(() => {});
+    fixture.cleanup();
+  });
+
+  await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
+
+  // Agents naturally send absolute paths (edit-tool payloads are absolute) — the
+  // guard must relativize against `root` the same way buildCorrectionConstraint
+  // does, not compare an absolute path against a repo-relative existence check.
+  const result = await client.callTool({
+    name: "hunch_record_correction",
+    arguments: {
+      rule: "never touch worktree-only.ts without a review",
+      scope_hint_file: join(fixture.root, "worktree-only.ts"),
+    },
+  }) as { isError?: boolean };
+  assert.equal(result.isError, true, "an absolute scope_hint_file must still trip the guard, not be silently ignored");
+});
+
+test("hunch_record_correction with no scope_hint_file, or a file that exists nowhere, still succeeds (no false positive)", async (t) => {
+  const fixture = repoWithWorktree();
+  const control = buildServerWithRootControl(fixture.root);
+  const client = new Client({ name: "misroute-guard-correction-negative-test", version: "0.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  t.after(async () => {
+    await client.close().catch(() => {});
+    await control.server.close().catch(() => {});
+    fixture.cleanup();
+  });
+
+  await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
+
+  const noHint = await client.callTool({
+    name: "hunch_record_correction",
+    arguments: { rule: "never do the risky thing repo-wide", applies_to_all: true },
+  }) as { isError?: boolean };
+  assert.equal(!!noHint.isError, false, "no scope_hint_file means nothing to compare across worktrees");
+
+  const nowhereFile = await client.callTool({
+    name: "hunch_record_correction",
+    arguments: { rule: "plan ahead of the file that will land here", scope_hint_file: "not-yet-created.ts" },
+  }) as { isError?: boolean };
+  assert.equal(!!nowhereFile.isError, false, "no plausible alternate worktree means proceed as before");
+});
+
+test("hunch_record_finding is refused when affected_files only exist in a linked worktree (issue #62)", async (t) => {
+  const fixture = repoWithWorktree();
+  writeFileSync(join(fixture.worktree, "worktree-only.ts"), "export const onlyHere = 1;\n");
+  const control = buildServerWithRootControl(fixture.root);
+  const client = new Client({ name: "misroute-guard-finding-test", version: "0.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  t.after(async () => {
+    await client.close().catch(() => {});
+    await control.server.close().catch(() => {});
+    fixture.cleanup();
+  });
+
+  await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
+
+  const result = await client.callTool({
+    name: "hunch_record_finding",
+    arguments: {
+      finding: {
+        title: "worktree-only.ts is missing null checks",
+        observation: "audited during work entirely in the linked worktree",
+        affected_files: ["worktree-only.ts"],
+      },
+      // Deliberately no `cwd`.
+    },
+  }) as { content: Array<{ text: string }>; isError?: boolean };
+
+  assert.equal(result.isError, true, "should refuse rather than silently record the finding against the wrong root");
+  const text = result.content.map((c) => c.text ?? "").join("\n");
+  assert.ok(text.includes(fixture.worktree), `refusal should name the likely-correct worktree: ${text}`);
+  assert.ok(/cwd/.test(text), `refusal should tell the caller to pass cwd: ${text}`);
+  assert.equal(git(fixture.root, "log", "-1", "--format=%s"), "fixture", "primary checkout must have no new commit");
+});
+
+test("hunch_record_finding with affected_files that exist nowhere still succeeds (no false positive)", async (t) => {
+  const fixture = repoWithWorktree();
+  const control = buildServerWithRootControl(fixture.root);
+  const client = new Client({ name: "misroute-guard-finding-negative-test", version: "0.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  t.after(async () => {
+    await client.close().catch(() => {});
+    await control.server.close().catch(() => {});
+    fixture.cleanup();
+  });
+
+  await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
+
+  const result = await client.callTool({
+    name: "hunch_record_finding",
+    arguments: {
+      finding: {
+        title: "future-file audit",
+        observation: "notes ahead of the file that will land here",
+        affected_files: ["not-yet-created.ts"],
+      },
+    },
+  }) as { isError?: boolean };
+  assert.equal(!!result.isError, false, "no plausible alternate worktree means proceed as before");
+});
+
 test("a cwd hint that fails to activate (invalid team.json) reports the error and leaves the previous root active", async (t) => {
   const fixture = repoWithWorktree();
   const invalid = repo("hunch-roots-invalid-team-cwd-");

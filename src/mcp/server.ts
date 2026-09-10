@@ -17,7 +17,7 @@ import { StateRefusal, SubscribeResponseSchema, capabilities, partitionOf, readS
 import { ReadRequestSchema, ReadResponseSchema, WriteRequestSchema, WriteResultSchema, SubscribeRequestSchema, RecordsRequestSchema, RecordsResponseSchema, STATE_READ_VERSION, STATE_WRITE_VERSION, STATE_SUBSCRIBE_VERSION, STATE_RECORDS_VERSION, stateHash } from "../core/stateContract.js";
 import { selectEmbedder } from "../store/embedder.js";
 import { decisionId, findingId, manualDecisionId } from "../core/ids.js";
-import { buildCorrectionConstraint } from "../core/correction.js";
+import { buildCorrectionConstraint, repoRelativeHint } from "../core/correction.js";
 import { knownRepoDeps } from "../synthesis/tripwires.js";
 import { refreshExistingGrounding } from "../integrations/providers.js";
 import { revParse, asOfDate, revExists, lastChangeDate, rangeFiles, rangeDiff, commitFiles, commitDiff, stagedFiles, stagedDiff, workingFiles, workingDiff, pullHunchStatus, sameRemoteUrl, currentBranch, worktreePaths, pathKnownToHistory, type HunchPullStatus } from "../extractors/git.js";
@@ -214,6 +214,30 @@ export const misroutedWorktreeCandidates = (root: string, relatedFiles: readonly
   }
   return candidates;
 };
+
+/** Shared misroute-guard refusal for every auto-committing write tool that names
+ *  files (issue #54, extended to hunch_record_correction/hunch_record_finding by
+ *  #62) — one message so the three call sites stay in lockstep instead of drifting.
+ *  Returns the refusal ToolResult when misroutedWorktreeCandidates finds a better
+ *  home, else null (proceed as normal). `subject` names what's being recorded,
+ *  e.g. `"the decision" "Foo"` or `finding "Foo"`, for the refusal text. */
+function misrouteGuard(root: string, subject: string, relatedFiles: readonly string[]): ToolResult | null {
+  const misroutes = misroutedWorktreeCandidates(root, relatedFiles);
+  if (!misroutes.length) return null;
+  const branch = currentBranch(root);
+  const plural = misroutes.length > 1;
+  const where = plural
+    ? `they do in these linked worktrees: ${misroutes.join(", ")}`
+    : `they do in the linked worktree ${misroutes[0]}`;
+  const retry = plural
+    ? `retry with cwd pointing at whichever of those is actually correct`
+    : `retry with cwd:"${misroutes[0]}"`;
+  return err(
+    `Refusing to record ${subject} in ${root}${branch ? ` (branch ${branch})` : ""}: ` +
+    `none of the files it names exist there, but ${where}. This call is very likely missing the cwd ` +
+    `argument (issue #54) — ${retry}, or wherever this work actually happened.`,
+  );
+}
 
 /** Where a capture keyed to `home` actually lands: the private overlay directory when
  *  one is configured, else the public repo root. Centralizes the branch used at every
@@ -1658,22 +1682,8 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     },
     async ({ decision, capture_token }): Promise<ToolResult> => {
       try {
-        const misroutes = misroutedWorktreeCandidates(root, (decision.related_files ?? []).map(toPosixTarget));
-        if (misroutes.length) {
-          const branch = currentBranch(root);
-          const plural = misroutes.length > 1;
-          const where = plural
-            ? `they do in these linked worktrees: ${misroutes.join(", ")}`
-            : `they do in the linked worktree ${misroutes[0]}`;
-          const retry = plural
-            ? `retry with cwd pointing at whichever of those is actually correct`
-            : `retry with cwd:"${misroutes[0]}"`;
-          return err(
-            `Refusing to record "${decision.title}" in ${root}${branch ? ` (branch ${branch})` : ""}: ` +
-            `none of its related_files exist there, but ${where}. This call is very likely missing the cwd ` +
-            `argument (issue #54) — ${retry}, or wherever this decision's work actually happened.`,
-          );
-        }
+        const misroute = misrouteGuard(root, `"${decision.title}"`, (decision.related_files ?? []).map(toPosixTarget));
+        if (misroute) return misroute;
         // Commit-keyed on the CANONICAL full sha (resolved via git rev-parse), so a
         // human passing the short sha they see in `commit` produces the SAME id as
         // the auto-sync path (which keys on the full sha) — UPGRADING the auto-draft
@@ -1899,6 +1909,13 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         // paths (edit-tool payloads and MCP roots are absolute) and every consumer matches
         // repo-relative — without this the rule would be blocking-but-inert and would leak
         // the local filesystem path into the committed graph.
+        // Same misroute guard as hunch_record_decision (issue #54, extended here by #62):
+        // a scope_hint_file that exists in a sibling linked worktree but not here is very
+        // likely a subagent that forgot cwd, about to silently scope-and-commit a
+        // constraint against the wrong checkout.
+        const scopeHintRepoRelative = input.scope_hint_file ? repoRelativeHint(toPosixTarget(input.scope_hint_file), root) : "";
+        const correctionMisroute = misrouteGuard(root, `correction "${input.rule}"`, scopeHintRepoRelative ? [scopeHintRepoRelative] : []);
+        if (correctionMisroute) return correctionMisroute;
         // Same authorship tier as hunch_record_decision: a consumed token mints the
         // signature, an un-token'd write is testimony. Here the stakes are HIGHER — a
         // blocking constraint DENIES edits, so an un-vouched write is capped at
@@ -1980,6 +1997,9 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
       try {
         if (!finding.title.trim()) return err("title is required.");
         if (!finding.observation.trim()) return err("observation is required — state what you saw.");
+        // Same misroute guard as hunch_record_decision (issue #54, extended here by #62).
+        const findingMisroute = misrouteGuard(root, `finding "${finding.title}"`, (finding.affected_files ?? []).map(toPosixTarget));
+        if (findingMisroute) return findingMisroute;
         const id = findingId(finding.title);
         const home = store.captureHome(!!finding.private);
         const existing = home === "private" ? store.getPrivateRec("findings", id) : store.json.get("findings", id);
