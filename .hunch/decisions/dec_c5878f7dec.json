@@ -1,0 +1,46 @@
+{
+  "id": "dec_c5878f7dec",
+  "title": "Manual decision-id fallback is seeded by branch, not just title",
+  "topic": "decision-id.manual-fallback",
+  "status": "accepted",
+  "context": "Issue #54's first follow-up comment reported that hunch_record_decision's fallback id (used whenever no `commit` is supplied, decisionId(`manual:${title}`)) collided across two genuinely different decisions that happened to share a title but were captured on two different branches (the classic shape: a misrouted call that landed on the primary checkout's branch, plus a corrected re-call on the calling worktree's own branch). The second write silently overwrote the first's content in the same store, and an eventual git merge of the two branches would hit the same add/add collision, with mergeHunchJson's pickWinner heuristic silently discarding whichever side lost the tiebreak. PR #63 already fixed the commit-keyed id path and the related_files misroute guard, but did not touch this title-only fallback seed.",
+  "decision": "Seed the manual (no-commit) decisionId fallback with the resolved root's CURRENT BRANCH in addition to the title: decisionId(`manual:${currentBranch(root) || root}:${title}`), falling back to the root path only in detached HEAD. Git refuses to check out the same branch in two worktrees simultaneously, so this keeps the intentional same-branch re-record/upgrade path working exactly as before (same branch + same title -> same id, upgrades in place) while two different branches with the same title now mint different ids and never collide.",
+  "consequences": [],
+  "alternatives_rejected": [
+    "A true full-content hash of the decision body — rejected because it would ALSO change the id on every intentional re-record/refine (the documented 'upgrade the draft' workflow used throughout the record_decision handler), defeating the whole point of the manual fallback's stable id.",
+    "A random/UUID component in the seed — rejected for the same reason: it would break the same-title re-record upgrade path entirely, since no caller can reproduce a random seed to land on the same slot.",
+    "Keying on the resolved root's absolute path instead of branch name — considered, but branch name better matches the issue reporter's own suggested fix ('the actual git ref it's being committed against') and survives a worktree being removed/recreated at a different path for the same branch."
+  ],
+  "rejected_tripwires": [],
+  "related_components": [],
+  "related_files": [
+    "src/mcp/server.ts",
+    "src/core/ids.ts",
+    "test/decision-collision.test.ts",
+    "test/mcproots.test.ts",
+    "test/testimony.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": null,
+  "valid_from": "2026-09-10T12:37:32.349Z",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "premises": [],
+  "provenance": {
+    "source": "agent_recorded",
+    "confidence": 0.75,
+    "evidence": [
+      "src/mcp/server.ts",
+      "src/core/ids.ts",
+      "test/decision-collision.test.ts",
+      "test/mcproots.test.ts",
+      "test/testimony.test.ts"
+    ]
+  },
+  "date": "2026-09-10T12:37:32.349Z"
+}
