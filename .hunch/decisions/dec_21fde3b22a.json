@@ -1,0 +1,108 @@
+{
+  "id": "dec_21fde3b22a",
+  "title": "Share path normalization via exported functions to prevent silent divergence",
+  "topic": null,
+  "status": "accepted",
+  "context": "Code review found that absolute file paths (naturally sent by agents in edit-tool payloads and MCP calls) were silently bypassing the misroute guard because join(root, \"/abs/path\") creates a nonsense path that never matches. The guard and the actual write path were independently deriving normalization, allowing them to disagree. Touches invariant(s): con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
+  "decision": "Extract normalization into shared functions: export correctionScopeHint() from correction.ts so both buildCorrectionConstraint (the write path) and the MCP handler's misroute guard use the SAME normalization, and create guardFiles() to normalize file lists for the guard check only. This establishes a single source of truth for path transformations across related code paths.",
+  "consequences": [
+    "Absolute paths are now consistently normalized before guard checks, preventing bypass",
+    "If path normalization logic changes, both the write path and guard path change together, eliminating silent divergence risk",
+    "Pattern is reusable: other code that must agree on path handling can follow the same approach"
+  ],
+  "alternatives_rejected": [
+    "Fixing only one code path (correctionScopeHint or guardFiles) separately, leaving potential for divergence",
+    "Re-deriving normalization expressions at each call site, which allows independent evolution and silent disagreement",
+    "Moving normalization inside each function rather than exporting it, which hides the shared dependency from readers"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Fixing only one code path (correctionScopeHint or guardFiles) separately, leaving potential for divergence",
+      "scope": [
+        "src/core/**",
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Re-deriving normalization expressions at each call site, which allows independent evolution and silent disagreement",
+      "scope": [
+        "src/core/**",
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Moving normalization inside each function rather than exporting it, which hides the shared dependency from readers",
+      "scope": [
+        "src/core/**",
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_a94a8fe5cc",
+    "cmp_b256a6aed0",
+    "cmp_dfa5b5acde"
+  ],
+  "related_files": [
+    "src/core/correction.ts",
+    "src/mcp/server.ts",
+    "test/mcproots.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "2c2a8db",
+  "valid_from": "2026-09-10T18:34:47+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:2c2a8db",
+      "synth:provider=claude-cli",
+      "branch:62-extend-misroute-guard",
+      "src/core/correction.ts",
+      "src/mcp/server.ts",
+      "test/mcproots.test.ts"
+    ],
+    "last_verified": "2026-09-10T16:35:05.849Z"
+  },
+  "date": "2026-09-10T18:34:47+02:00"
+}
