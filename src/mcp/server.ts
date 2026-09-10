@@ -1682,7 +1682,20 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         // unverified string that could collide with (or orphan) a real commit id.
         const resolved = decision.commit ? revParse(decision.commit, root) : null;
         const fullSha = resolved && /^[0-9a-f]{40}$/.test(resolved) ? resolved : null;
-        const id = fullSha ? decisionId(fullSha) : decisionId(`manual:${decision.title}`);
+        // The manual fallback used to seed on the title ALONE — so two genuinely
+        // different decisions with the same title, captured with no commit on two
+        // DIFFERENT branches (e.g. a misrouted call that landed on the primary
+        // checkout's branch and a corrected re-call on the calling worktree's own
+        // branch), collided on one id and silently overwrote each other, or lost
+        // one side at a later git merge (issue #54). Git forbids checking out the
+        // same branch in two worktrees at once, so folding the resolved root's
+        // CURRENT BRANCH into the seed makes same-branch re-record (the intended
+        // draft-upgrade path) keep colliding on purpose, while cross-branch
+        // captures with the same title no longer do. Detached HEAD has no branch
+        // name (currentBranch returns ""); the root path is still per-worktree
+        // unique there.
+        const manualScope = currentBranch(root) || root;
+        const id = fullSha ? decisionId(fullSha) : decisionId(`manual:${manualScope}:${decision.title}`);
 
         // Preserve the ADR lineage from the SAME home this write will use. A private
         // re-record must retain its own optional fields, but must never inherit a

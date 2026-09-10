@@ -48,7 +48,10 @@ export function resourceRelationshipId(from: string, to: string, type: string): 
 
 /** Decision id. Seed with the CANONICAL full commit sha (the auto-sync and MCP
  *  commit paths both do this, so a recorded decision upgrades the auto-draft for
- *  the same commit), or with "manual:<title>" for an ad-hoc MCP decision. */
+ *  the same commit), or with "manual:<branch-or-root>:<title>" for an ad-hoc MCP
+ *  decision with no commit — the branch (or root path in detached HEAD) keeps
+ *  same-branch re-record upgrading in place while stopping two different
+ *  decisions on two different branches from colliding on one id (issue #54). */
 export function decisionId(seed: string): string {
   return "dec_" + shortHash(seed);
 }

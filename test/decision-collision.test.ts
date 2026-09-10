@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -27,6 +27,25 @@ function decisionRepo(): { root: string; sha: string } {
   mkdirSync(join(root, ".hunch"), { recursive: true });
   writeFileSync(join(root, ".hunch", "local.json"), `${JSON.stringify({ autoCommit: false })}\n`);
   return { root, sha: git(root, "rev-parse", "HEAD") };
+}
+
+function decisionRepoWithWorktree(): { root: string; worktree: string; branch: string; cleanup: () => void } {
+  const { root } = decisionRepo();
+  const branch = "feature-decision-collision";
+  const worktree = `${root}-wt`;
+  git(root, "worktree", "add", "-q", "-b", branch, worktree);
+  mkdirSync(join(worktree, ".hunch"), { recursive: true });
+  writeFileSync(join(worktree, ".hunch", "local.json"), `${JSON.stringify({ autoCommit: false })}\n`);
+  return {
+    root,
+    worktree,
+    branch,
+    cleanup: () => {
+      try { git(root, "worktree", "remove", "--force", worktree); } catch { /* best effort */ }
+      try { rmSync(worktree, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+      try { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+    },
+  };
 }
 
 async function connect(root: string): Promise<{ client: Client; server: McpServer }> {
@@ -182,4 +201,52 @@ test("same-topic human re-record may refine the title without minting a duplicat
   )) as { title: string; topic: string };
   assert.equal(saved.title, "Clearer wording");
   assert.equal(saved.topic, "stable-topic");
+});
+
+test("same-titled manual captures (no commit) on different branches do not collide on one id (#54)", async (t) => {
+  const fixture = decisionRepoWithWorktree();
+  const rootConn = await connect(fixture.root);
+  const worktreeConn = await connect(fixture.worktree);
+  t.after(async () => {
+    await rootConn.client.close().catch(() => {});
+    await rootConn.server.close().catch(() => {});
+    await worktreeConn.client.close().catch(() => {});
+    await worktreeConn.server.close().catch(() => {});
+    fixture.cleanup();
+  });
+
+  // Same title, deliberately, and no `commit` field — this is the exact shape a
+  // misrouted-then-corrected re-call produced in the field: the manual-fallback id
+  // seed must not collide just because a subagent phrased two genuinely different
+  // decisions with the same title on two different branches.
+  const title = "Use a retry queue for flaky uploads";
+  const onRoot = await record(rootConn.client, {
+    title,
+    topic: "upload-retry-root",
+    context: "captured from the primary checkout",
+    decision: "Retry with backoff",
+  });
+  assert.equal(onRoot.isError, false, onRoot.text);
+
+  const onWorktree = await record(worktreeConn.client, {
+    title,
+    topic: "upload-retry-worktree",
+    context: "captured from the linked worktree — a genuinely different decision",
+    decision: "Retry via a dead-letter queue instead",
+  });
+  assert.equal(onWorktree.isError, false, onWorktree.text);
+
+  const rootDecisions = readdirSync(join(fixture.root, ".hunch", "decisions"));
+  const worktreeDecisions = readdirSync(join(fixture.worktree, ".hunch", "decisions"));
+  assert.equal(rootDecisions.length, 1, `expected exactly one decision at the root: ${rootDecisions.join(", ")}`);
+  assert.equal(worktreeDecisions.length, 1, `expected exactly one decision at the worktree: ${worktreeDecisions.join(", ")}`);
+  assert.notEqual(
+    rootDecisions[0], worktreeDecisions[0],
+    "the same title on two different branches must not collide on one manual-fallback id",
+  );
+
+  const rootRec = JSON.parse(readFileSync(join(fixture.root, ".hunch", "decisions", rootDecisions[0]!), "utf8")) as { context: string };
+  const worktreeRec = JSON.parse(readFileSync(join(fixture.worktree, ".hunch", "decisions", worktreeDecisions[0]!), "utf8")) as { context: string };
+  assert.equal(rootRec.context, "captured from the primary checkout");
+  assert.equal(worktreeRec.context, "captured from the linked worktree — a genuinely different decision");
 });
