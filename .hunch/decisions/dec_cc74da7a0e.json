@@ -2,7 +2,7 @@
   "id": "dec_cc74da7a0e",
   "title": "Seed manual decision IDs by branch context, not just title",
   "topic": null,
-  "status": "accepted",
+  "status": "superseded",
   "context": "Decision records with identical titles but no commit reference would collide on the same ID when created on different branches, silently overwriting each other and causing data loss during git merges. Touches invariant(s): con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
   "decision": "Include the current branch (or root path in detached HEAD) in the manual ID seed: 'manual:<branch-or-root>:<title>' instead of 'manual:<title>'. Git's constraint that the same branch cannot be checked out in two worktrees simultaneously ensures same-branch re-records still upgrade the same slot while cross-branch captures are properly isolated.",
   "consequences": [
@@ -104,11 +104,11 @@
     "test/testimony.test.ts"
   ],
   "supersedes": null,
-  "superseded_by": null,
+  "superseded_by": "dec_8b1b016d68",
   "caused_by_bug": null,
   "commit": "f748aff",
   "valid_from": "2026-09-10T14:37:46+02:00",
-  "valid_to": null,
+  "valid_to": "2026-09-10T14:56:06+02:00",
   "retired": {
     "symbols": [],
     "deps": []
