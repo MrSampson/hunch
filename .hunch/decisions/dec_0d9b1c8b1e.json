@@ -1,0 +1,91 @@
+{
+  "id": "dec_0d9b1c8b1e",
+  "title": "Scope manual decision IDs to current branch to prevent cross-branch collisions",
+  "topic": null,
+  "status": "accepted",
+  "context": "Manual decision IDs for no-commit captures were colliding when different branches captured same-titled decisions to a shared overlay, causing data loss. But same-branch re-records must still collide (draft-upgrade workflow). Touches invariant(s): con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
+  "decision": "Embed the current branch (or root path if detached HEAD) into the manual decision ID seed: `manual:<branch-or-root>:<title>`. Since Git forbids checking out the same branch in two worktrees simultaneously, same-branch re-records still collide by design, while different branches now mint different IDs.",
+  "consequences": [
+    "Manual decision ID collisions are now scoped by checkout, preventing silent overwrites in shared overlays",
+    "Same-branch re-records still upgrade in place (intended draft-upgrade behavior preserved)",
+    "Collision prevention is immediate and structural, not deferred to git merge resolution"
+  ],
+  "alternatives_rejected": [
+    "Adding worktree ID or session ID would require new tracking outside Git semantics",
+    "Fixing collisions only at merge time (mergeHunchJson) is too late—data already lost"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Adding worktree ID or session ID would require new tracking outside Git semantics",
+      "scope": [
+        "src/core/**",
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Fixing collisions only at merge time (mergeHunchJson) is too late—data already lost",
+      "scope": [
+        "src/core/**",
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_a94a8fe5cc",
+    "cmp_b256a6aed0",
+    "cmp_dfa5b5acde"
+  ],
+  "related_files": [
+    "src/core/ids.ts",
+    "src/mcp/server.ts",
+    "test/decision-collision.test.ts",
+    "test/mcproots.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "70826ea",
+  "valid_from": "2026-09-10T15:34:33+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:70826ea",
+      "synth:provider=claude-cli",
+      "branch:54-manual-decision-id-branch-seed",
+      "src/core/ids.ts",
+      "src/mcp/server.ts",
+      "test/decision-collision.test.ts",
+      "test/mcproots.test.ts"
+    ],
+    "last_verified": "2026-09-10T13:34:48.802Z"
+  },
+  "date": "2026-09-10T15:34:33+02:00"
+}

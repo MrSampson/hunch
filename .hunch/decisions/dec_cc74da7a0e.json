@@ -1,0 +1,132 @@
+{
+  "id": "dec_cc74da7a0e",
+  "title": "Seed manual decision IDs by branch context, not just title",
+  "topic": null,
+  "status": "superseded",
+  "context": "Decision records with identical titles but no commit reference would collide on the same ID when created on different branches, silently overwriting each other and causing data loss during git merges. Touches invariant(s): con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
+  "decision": "Include the current branch (or root path in detached HEAD) in the manual ID seed: 'manual:<branch-or-root>:<title>' instead of 'manual:<title>'. Git's constraint that the same branch cannot be checked out in two worktrees simultaneously ensures same-branch re-records still upgrade the same slot while cross-branch captures are properly isolated.",
+  "consequences": [
+    "Same-branch re-recording continues to upgrade the same decision slot (backward compatible for intended use)",
+    "Decisions with identical titles on different branches now mint different IDs and cannot collide",
+    "Detached HEAD states fall back to root path, maintaining per-worktree uniqueness",
+    "ID format changes from 'manual:<title>' to 'manual:<branch>:<title>' across all fixtures and callers"
+  ],
+  "alternatives_rejected": [
+    "Include only branch name without root fallback (fails in detached HEAD; loses uniqueness)",
+    "Require explicit commit SHA for all decisions (breaks API contract; users need no-commit path)",
+    "Use topic field instead of branch (users may legitimately repeat topics across branches)",
+    "Use UUID or random seed (loses determinism; same-branch re-records cannot upgrade existing slot)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Include only branch name without root fallback (fails in detached HEAD; loses uniqueness)",
+      "scope": [
+        "src/core/**",
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Require explicit commit SHA for all decisions (breaks API contract; users need no-commit path)",
+      "scope": [
+        "src/core/**",
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Use topic field instead of branch (users may legitimately repeat topics across branches)",
+      "scope": [
+        "src/core/**",
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Use UUID or random seed (loses determinism; same-branch re-records cannot upgrade existing slot)",
+      "scope": [
+        "src/core/**",
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_a94a8fe5cc",
+    "cmp_b256a6aed0",
+    "cmp_dfa5b5acde"
+  ],
+  "related_files": [
+    "src/core/ids.ts",
+    "src/mcp/server.ts",
+    "test/decision-collision.test.ts",
+    "test/mcproots.test.ts",
+    "test/testimony.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": "dec_c5878f7dec",
+  "caused_by_bug": null,
+  "commit": "f748aff",
+  "valid_from": "2026-09-10T14:37:46+02:00",
+  "valid_to": "2026-09-10T12:37:32.349Z",
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:f748aff",
+      "synth:provider=claude-cli",
+      "branch:worktree-54-decision-id-collision",
+      "src/core/ids.ts",
+      "src/mcp/server.ts",
+      "test/decision-collision.test.ts",
+      "test/mcproots.test.ts",
+      "test/testimony.test.ts"
+    ],
+    "last_verified": "2026-09-10T12:38:06.227Z"
+  },
+  "date": "2026-09-10T14:37:46+02:00"
+}
