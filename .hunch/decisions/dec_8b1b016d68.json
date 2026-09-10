@@ -78,7 +78,7 @@
     "CLAUDE.md",
     ".cursor/rules/hunch.mdc"
   ],
-  "supersedes": "dec_cc74da7a0e",
+  "supersedes": null,
   "superseded_by": null,
   "caused_by_bug": null,
   "commit": "47a19c8",

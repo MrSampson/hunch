@@ -104,11 +104,11 @@
     "test/testimony.test.ts"
   ],
   "supersedes": null,
-  "superseded_by": "dec_8b1b016d68",
+  "superseded_by": "dec_c5878f7dec",
   "caused_by_bug": null,
   "commit": "f748aff",
   "valid_from": "2026-09-10T14:37:46+02:00",
-  "valid_to": "2026-09-10T14:56:06+02:00",
+  "valid_to": "2026-09-10T12:37:32.349Z",
   "retired": {
     "symbols": [],
     "deps": []
