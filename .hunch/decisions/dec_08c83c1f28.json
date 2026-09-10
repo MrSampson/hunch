@@ -1,0 +1,79 @@
+{
+  "id": "dec_08c83c1f28",
+  "title": "Extend misroute guard to all auto-committing write tools",
+  "topic": null,
+  "status": "accepted",
+  "context": "Issue #62 identified that the worktree misrouting guard was only protecting hunch_record_decision, leaving hunch_record_correction and hunch_record_finding exposed to the same errors. Touches invariant(s): con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
+  "decision": "Unified the misroute guard via a shared misrouteGuard mechanism that checks file evidence (related_files, scope_hint_file, affected_files) across all auto-committing write tools, eliminating the inconsistency.",
+  "consequences": [
+    "hunch_record_correction and hunch_record_finding now have the same new/untracked file detection protection as hunch_record_decision",
+    "Guard checks are now consistent across tools, reducing the attack surface for worktree misroutes",
+    "The modified-tracked-file detection gap remains unresolved (known open issue in #62)"
+  ],
+  "alternatives_rejected": [
+    "Fixing each tool individually without centralizing the guard logic",
+    "Solving the modified-tracked-file gap simultaneously in this commit"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Fixing each tool individually without centralizing the guard logic",
+      "scope": [
+        "src/mcp/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Solving the modified-tracked-file gap simultaneously in this commit",
+      "scope": [
+        "src/mcp/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_dfa5b5acde"
+  ],
+  "related_files": [
+    "src/mcp/server.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "68aa5c5",
+  "valid_from": "2026-09-10T18:07:33+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:68aa5c5",
+      "synth:provider=claude-cli",
+      "branch:62-extend-misroute-guard",
+      "src/mcp/server.ts"
+    ],
+    "last_verified": "2026-09-10T16:07:46.185Z"
+  },
+  "date": "2026-09-10T18:07:33+02:00"
+}
