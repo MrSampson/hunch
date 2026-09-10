@@ -1,0 +1,106 @@
+{
+  "id": "dec_8b1b016d68",
+  "title": "Use repo's own doc generator as source of truth, not external tools",
+  "topic": null,
+  "status": "accepted",
+  "context": "An auto-commit hook regenerated docs using a globally-installed hunch MCP server with newer code, which emits inventory count sentences. The repo's own in-tree generator doesn't emit these yet, so committed docs drifted from what the repo's own tooling produces, breaking the grounding-freshness test.",
+  "decision": "Remove the Hunch inventory count sentence from all documentation, and always regenerate via the in-tree CLI (src/integrations/claudemd.ts) rather than external/global tools. Keep the repo's own generator as the authoritative source for what docs should contain.",
+  "consequences": [
+    "Docs lose Hunch inventory details (239 decisions, 2 bugs, etc.) in promotional sections",
+    "Doc generation is now deterministic and reproducible within this repo's own tooling",
+    "grounding-freshness test passes because committed docs match in-tree generator output",
+    "Prevents silent drift when external tools diverge from in-tree generators"
+  ],
+  "alternatives_rejected": [
+    "Update the in-tree generator to emit count sentences (delays fix, requires feature parity work)",
+    "Keep using the global MCP server (violates grounding-freshness invariant)",
+    "Maintain version-specific docs for different generators (accepts perpetual drift)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Update the in-tree generator to emit count sentences (delays fix, requires feature parity work)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Keep using the global MCP server (violates grounding-freshness invariant)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Maintain version-specific docs for different generators (accepts perpetual drift)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_4c40eab00f"
+  ],
+  "related_files": [
+    ".github/copilot-instructions.md",
+    ".windsurf/rules/hunch.md",
+    "AGENTS.md",
+    "CLAUDE.md"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "47a19c8",
+  "valid_from": "2026-09-10T14:56:06+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:47a19c8",
+      "synth:provider=claude-cli",
+      "branch:54-manual-decision-id-branch-seed",
+      ".github/copilot-instructions.md",
+      ".windsurf/rules/hunch.md",
+      "AGENTS.md",
+      "CLAUDE.md"
+    ],
+    "last_verified": "2026-09-10T12:56:21.019Z"
+  },
+  "date": "2026-09-10T14:56:06+02:00"
+}
