@@ -16,7 +16,7 @@ import { HunchStore } from "../store/hunchStore.js";
 import { StateRefusal, SubscribeResponseSchema, capabilities, partitionOf, readState, recordsState, subscribeState, writeState } from "../store/stateBinding.js";
 import { ReadRequestSchema, ReadResponseSchema, WriteRequestSchema, WriteResultSchema, SubscribeRequestSchema, RecordsRequestSchema, RecordsResponseSchema, STATE_READ_VERSION, STATE_WRITE_VERSION, STATE_SUBSCRIBE_VERSION, STATE_RECORDS_VERSION, stateHash } from "../core/stateContract.js";
 import { selectEmbedder } from "../store/embedder.js";
-import { decisionId, findingId } from "../core/ids.js";
+import { decisionId, findingId, manualDecisionId } from "../core/ids.js";
 import { buildCorrectionConstraint } from "../core/correction.js";
 import { knownRepoDeps } from "../synthesis/tripwires.js";
 import { refreshExistingGrounding } from "../integrations/providers.js";
@@ -1687,15 +1687,11 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         // DIFFERENT branches (e.g. a misrouted call that landed on the primary
         // checkout's branch and a corrected re-call on the calling worktree's own
         // branch), collided on one id and silently overwrote each other, or lost
-        // one side at a later git merge (issue #54). Git forbids checking out the
-        // same branch in two worktrees at once, so folding the resolved root's
-        // CURRENT BRANCH into the seed makes same-branch re-record (the intended
-        // draft-upgrade path) keep colliding on purpose, while cross-branch
-        // captures with the same title no longer do. Detached HEAD has no branch
-        // name (currentBranch returns ""); the root path is still per-worktree
-        // unique there.
-        const manualScope = currentBranch(root) || root;
-        const id = fullSha ? decisionId(fullSha) : decisionId(`manual:${manualScope}:${decision.title}`);
+        // one side at a later git merge (issue #54). manualDecisionId folds the
+        // resolved root's current branch into the seed instead (see its doc
+        // comment in core/ids.ts for why that closes the collision without
+        // breaking the intended same-branch draft-upgrade path).
+        const id = fullSha ? decisionId(fullSha) : manualDecisionId(root, decision.title);
 
         // Preserve the ADR lineage from the SAME home this write will use. A private
         // re-record must retain its own optional fields, but must never inherit a

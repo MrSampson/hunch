@@ -250,3 +250,84 @@ test("same-titled manual captures (no commit) on different branches do not colli
   assert.equal(rootRec.context, "captured from the primary checkout");
   assert.equal(worktreeRec.context, "captured from the linked worktree — a genuinely different decision");
 });
+
+test("a same-titled manual re-record on the SAME branch still upgrades the same slot, in a real git repo (#54)", async (t) => {
+  // The fix must not break the intentional draft-upgrade workflow it shares a code
+  // path with: re-recording the same title with no commit, on the SAME branch,
+  // is how a manual capture gets refined. test/testimony.test.ts covers this in a
+  // fixture with NO git repo at all (branch component stably absent); this
+  // exercises it against a real branch, so a future change to the seed that
+  // accidentally makes it branch-AND-something-else-volatile would be caught here.
+  const fixture = decisionRepo();
+  const { client, server } = await connect(fixture.root);
+  t.after(async () => {
+    await client.close().catch(() => {});
+    await server.close().catch(() => {});
+    try { rmSync(fixture.root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+  });
+
+  const title = "Cache invalidation strategy";
+  const first = await record(client, { title, context: "first pass", decision: "TTL-based" });
+  assert.equal(first.isError, false, first.text);
+
+  const second = await record(client, { title, context: "refined after review", decision: "TTL-based with explicit purge" });
+  assert.equal(second.isError, false, second.text);
+
+  const decisions = readdirSync(join(fixture.root, ".hunch", "decisions"));
+  assert.equal(decisions.length, 1, `same-branch re-record must upgrade in place, not mint a second slot: ${decisions.join(", ")}`);
+  const rec = JSON.parse(readFileSync(join(fixture.root, ".hunch", "decisions", decisions[0]!), "utf8")) as { context: string; decision: string };
+  assert.equal(rec.context, "refined after review");
+  assert.equal(rec.decision, "TTL-based with explicit purge");
+});
+
+test("same-titled manual captures from two different branches sharing ONE private overlay do not overwrite each other (#54)", async (t) => {
+  // The two-store comparison above only proves the collision is avoided; the
+  // actual data-loss shape the bug report worried about (and mergeHunchJson's
+  // pickWinner would otherwise silently resolve) is TWO branches racing to write
+  // the SAME store — exactly what a shared/team private overlay is. This proves
+  // the fix closes that immediately, not just eventually at a git merge.
+  const sandbox = mkdtempSync(join(tmpdir(), "hunch-decision-collision-shared-overlay-"));
+  const overlay = join(sandbox, "shared-overlay", ".hunch");
+  mkdirSync(overlay, { recursive: true });
+  execFileSync("git", ["init", "-q", join(sandbox, "shared-overlay")]);
+
+  const makeRoot = (name: string, branch: string): string => {
+    const root = join(sandbox, name);
+    mkdirSync(root, { recursive: true });
+    git(root, "init", "-q");
+    git(root, "config", "user.name", "Decision Collision Test");
+    git(root, "config", "user.email", "decision-collision@example.invalid");
+    writeFileSync(join(root, "app.ts"), "export const value = 1;\n");
+    git(root, "add", ".");
+    git(root, "commit", "-qm", "fixture");
+    git(root, "checkout", "-q", "-b", branch);
+    mkdirSync(join(root, ".hunch"), { recursive: true });
+    writeFileSync(join(root, ".hunch", "local.json"), `${JSON.stringify({ privateDir: overlay, autoCommit: false })}\n`);
+    return root;
+  };
+  const rootA = makeRoot("repo-a", "feature-a");
+  const rootB = makeRoot("repo-b", "feature-b");
+
+  const connA = await connect(rootA);
+  const connB = await connect(rootB);
+  t.after(async () => {
+    await connA.client.close().catch(() => {});
+    await connA.server.close().catch(() => {});
+    await connB.client.close().catch(() => {});
+    await connB.server.close().catch(() => {});
+    try { rmSync(sandbox, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+  });
+
+  const title = "Retry uploads with a queue";
+  const onA = await record(connA.client, {
+    title, topic: "upload-retry-a", context: "captured from repo A", decision: "Backoff retry", private: true,
+  });
+  assert.equal(onA.isError, false, onA.text);
+  const onB = await record(connB.client, {
+    title, topic: "upload-retry-b", context: "captured from repo B — a genuinely different decision", decision: "Dead-letter queue instead", private: true,
+  });
+  assert.equal(onB.isError, false, onB.text);
+
+  const overlayDecisions = readdirSync(join(overlay, "decisions"));
+  assert.equal(overlayDecisions.length, 2, `expected two distinct decisions in the shared overlay, not one overwriting the other: ${overlayDecisions.join(", ")}`);
+});
