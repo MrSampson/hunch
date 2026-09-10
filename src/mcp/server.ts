@@ -173,12 +173,15 @@ const destinationNote = (destRoot: string): string => {
  *  to think of the session's "starting directory" as different from its own, so the
  *  hint is silently omitted and the write lands wherever `root` last was (often the
  *  primary checkout, on its default branch). This is a backstop, NOT a complete fix:
- *  it only catches a decision whose related_files are new/untracked at the resolved
- *  root but already exist in a sibling worktree — the common "edited an existing
- *  tracked file" case is invisible to a pure existence check (the file exists at every
- *  worktree, just with different content) and still reproduces (see #62, which tracks
- *  extending this beyond hunch_record_decision and this gap together). Every matching
- *  sibling is named as a candidate `cwd` and the write is refused rather than risked;
+ *  it only catches a related file that's new/untracked at the resolved root but
+ *  already exists in a sibling worktree — the common "edited an existing tracked
+ *  file" case is invisible to a pure existence check (the file exists at every
+ *  worktree, just with different content) and still reproduces (tracked in #62,
+ *  which also extended this guard from hunch_record_decision alone to every
+ *  auto-committing write tool that names files — hunch_record_correction's
+ *  scope_hint_file and hunch_record_finding's affected_files share it via
+ *  misrouteGuard below). Every matching sibling is named as a candidate `cwd` and
+ *  the write is refused rather than risked;
  *  it returns every match rather than the first, since confidently naming just one
  *  would let a caller that blindly retries as instructed land in the WRONG worktree —
  *  the same failure mode one level removed.
@@ -194,11 +197,12 @@ const destinationNote = (destRoot: string): string => {
  *    without invoking a worktree guess (issue #54 review, C1: without this, deleting a
  *    related file at the CORRECT root was refused and pointed at the wrong sibling).
  *
- *  Coverage boundary: only checks related_files as passed in THIS call, not values
- *  inherited from an existing record on re-record/supersede — a call that omits
- *  related_files to rely on inheritance won't trip this guard even if it's happening
- *  in the wrong worktree. That's a deliberate tradeoff against false positives on
- *  stale evidence, not full coverage of every misrouted write.
+ *  Coverage boundary: only checks the file evidence passed in THIS call (related_files
+ *  / scope_hint_file / affected_files), not values inherited from an existing record
+ *  on re-record/supersede — a call that omits its file field to rely on inheritance
+ *  won't trip this guard even if it's happening in the wrong worktree. That's a
+ *  deliberate tradeoff against false positives on stale evidence, not full coverage
+ *  of every misrouted write.
  *
  *  Exported for direct unit testing (issue #54 review, I2) — the candidate logic is
  *  otherwise reachable only through a full MCP client/server integration test. */
