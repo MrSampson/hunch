@@ -1,0 +1,106 @@
+{
+  "id": "dec_ae9a504e68",
+  "title": "Remove hardcoded statistics from documentation files",
+  "topic": null,
+  "status": "accepted",
+  "context": "Multiple documentation files (.cursor, .github, .windsurf, AGENTS.md, CLAUDE.md) contained hardcoded Hunch statistics that became stale and required manual regeneration to stay in sync with actual state. This had to be fixed multiple times across the session.",
+  "decision": "Stop including auto-generated statistics (decision counts, bug counts, constraint counts, etc.) in committed documentation. Direct users to consult the Hunch MCP tools instead for real-time state.",
+  "consequences": [
+    "Documentation no longer drifts from actual Hunch contents",
+    "Eliminates maintenance burden of regenerating these files when Hunch changes",
+    "Users get authoritative, real-time statistics from MCP tools instead of stale static docs",
+    "Documentation is simpler and focuses on *what* Hunch is rather than *current metrics*"
+  ],
+  "alternatives_rejected": [
+    "Keep stats and manually regenerate docs (high maintenance burden, prone to drift)",
+    "Automate stat regeneration in build pipeline (adds build complexity and CI coupling)",
+    "Keep hardcoded stats and update them manually (unsustainable, guarantees drift)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Keep stats and manually regenerate docs (high maintenance burden, prone to drift)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Automate stat regeneration in build pipeline (adds build complexity and CI coupling)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Keep hardcoded stats and update them manually (unsustainable, guarantees drift)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_4c40eab00f"
+  ],
+  "related_files": [
+    ".github/copilot-instructions.md",
+    ".windsurf/rules/hunch.md",
+    "AGENTS.md",
+    "CLAUDE.md"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "f49be1c",
+  "valid_from": "2026-09-11T14:24:12+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:f49be1c",
+      "synth:provider=claude-cli",
+      "branch:62-extend-misroute-guard",
+      ".github/copilot-instructions.md",
+      ".windsurf/rules/hunch.md",
+      "AGENTS.md",
+      "CLAUDE.md"
+    ],
+    "last_verified": "2026-09-11T12:24:33.522Z"
+  },
+  "date": "2026-09-11T14:24:12+02:00"
+}
