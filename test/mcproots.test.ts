@@ -404,6 +404,31 @@ test("misroutedWorktreeCandidates: direct unit coverage (issue #54 review, I2)",
       fixture.cleanup();
     }
   }
+  // The ABSOLUTE-spelled twin of the above: the SAME symlink-at-root shape,
+  // named by its absolute path instead of a relative one. `existsUnder`'s
+  // absolute branch attributed the entry SOLELY by canonicalRootPath (which
+  // follows the symlink to its target in the sibling), so this spelling —
+  // which the surrounding code's own comments call the NATURAL one agents
+  // send — still refused a correctly-homed write after round 8 fixed only the
+  // relative spelling (PR #76 review round 9 I1).
+  if (process.platform !== "win32") {
+    const fixture = repoWithWorktree();
+    const targetDir = join(fixture.worktree, "shared-target");
+    mkdirSync(targetDir, { recursive: true });
+    writeFileSync(join(targetDir, "shared.ts"), "export const shared = 1;\n");
+    const linkPath = join(fixture.root, "shared-link.ts");
+    symlinkSync(join(targetDir, "shared.ts"), linkPath, "file");
+    try {
+      assert.deepEqual(
+        misroutedWorktreeCandidates(fixture.root, [linkPath]),
+        [],
+        "an ABSOLUTE-spelled symlink AT root pointing into a sibling worktree must not be treated as a misroute",
+      );
+    } finally {
+      try { rmSync(linkPath, { force: true }); } catch { /* best effort */ }
+      fixture.cleanup();
+    }
+  }
   // pathKnownToHistory must reject an EMPTY string outright rather than let it
   // match the trailing "" element `-z`'s NUL-termination always produces --
   // defense in depth for the function's own documented contract, even though

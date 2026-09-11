@@ -178,9 +178,13 @@ const destinationNote = (destRoot: string): string => {
  *  file" case is invisible to a pure existence check (the file exists at every
  *  worktree, just with different content) and still reproduces (tracked in #75 —
  *  #62, which this guard now covers, was extending it from hunch_record_decision
- *  alone to every auto-committing write tool that names files:
- *  hunch_record_correction's scope_hint_file and hunch_record_finding's
- *  affected_files share it via misrouteGuard below). Every matching sibling is
+ *  alone to the other two write tools that accept the SAME structured file-list
+ *  evidence and cwd hint: hunch_record_correction's scope_hint_file and
+ *  hunch_record_finding's affected_files share it via misrouteGuard below.
+ *  nuryel_write is a FOURTH auto-committing tool with the identical exposure
+ *  (its facets carry related_files/affected_files too) and is NOT yet guarded —
+ *  tracked separately (issue #77, PR #76 review round 9 I2), not silently
+ *  left uncovered by an overclaimed "every"/"all". Every matching sibling is
  *  named as a candidate `cwd` and the write is refused rather than risked;
  *  it returns every match rather than the first, since confidently naming just one
  *  would let a caller that blindly retries as instructed land in the WRONG worktree —
@@ -314,23 +318,14 @@ function isWithin(parent: string, child: string): boolean {
 
 /** The worktree (from `worktrees`, which always includes root itself — see
  *  `worktreePaths`) whose OWN directory tree most SPECIFICALLY contains ABSOLUTE
- *  path `f` — the deepest/longest match, not merely any containing ancestor. Its
- *  sole caller (`existsUnder`) only ever passes an absolute `f`. Null when `f` is
- *  under none of the known worktrees. `canonicalRootPath` resolves the WHOLE path
- *  including `f`'s own final component, so a symlink reached from OUTSIDE a
- *  worktree that happens to point INSIDE one is still found (the common case);
- *  the inverse — a symlink INSIDE a worktree whose target lives outside every
- *  known worktree — resolves to null and contributes nothing FOR THIS FUNCTION
- *  specifically (fails open here, not a false positive; PR #76 review round 4
- *  M2, left as a documented boundary rather than fixed, since closing it needs
- *  testing containment against both the raw and the canonical form and the
- *  guard is a documented backstop, not a complete fix — see its own doc
- *  comment above `misroutedWorktreeCandidates`). A DIFFERENT symlink shape —
- *  one physically inside root itself, targeting a sibling worktree, reached
- *  through a RELATIVE (non-escaping) entry — used to fail the opposite way,
- *  in the caller's escape-classification step rather than here; fixed at that
- *  step, not this one (PR #76 review round 8 M2; see misroutedWorktreeCandidates'
- *  comment on why that check is deliberately lexical). */
+ *  path `f` — the deepest/longest match, not merely any containing ancestor. Null
+ *  when `f` is under none of the known worktrees. `canonicalRootPath` resolves the
+ *  WHOLE path including `f`'s own final component, so a symlink reached from
+ *  OUTSIDE a worktree that happens to point INSIDE one is still found (a symlink
+ *  ALIAS to a whole worktree, PR #76 review round 3 I1b). This is the CANONICAL
+ *  (symlink-resolved) ownership lens; `existsUnder` also checks a LEXICAL lens via
+ *  `lexicalDeepestContainer` below, for the opposite symlink shape this lens alone
+ *  cannot see (PR #76 review round 9 I1). */
 function deepestContainer(f: string, worktrees: readonly string[]): string | null {
   const canonF = canonicalRootPath(f);
   let best: string | null = null;
@@ -341,6 +336,38 @@ function deepestContainer(f: string, worktrees: readonly string[]): string | nul
     if (canonWt.length > bestLen) {
       best = wt;
       bestLen = canonWt.length;
+    }
+  }
+  return best;
+}
+
+/** The worktree whose own directory tree most specifically contains ABSOLUTE path
+ *  `f` AS SPELLED — never following a symlink, unlike `deepestContainer`. A symlink
+ *  physically sitting INSIDE a worktree, whose target lives elsewhere (e.g. a
+ *  shared cache file), is still legitimately "at" that worktree: `deepestContainer`
+ *  alone resolves such an `f` to whichever worktree the symlink's TARGET lives in,
+ *  misattributing a file that genuinely exists where it's spelled and refusing an
+ *  already-correctly-homed write (PR #76 review round 9 I1 — the absolute-path
+ *  twin of round 8 M2, which fixed only the relative spelling of this same shape).
+ *  Ranked by the SAME "deepest/longest match" rule as the canonical lens, so a
+ *  NESTED worktree still correctly out-ranks its own physically-containing parent
+ *  root here too — this lens does not, on its own, relax that boundary.
+ *
+ *  Null whenever `f` contains a ".." segment: once ANY symlink resolves partway
+ *  through a real path, a LATER ".." escapes relative to the RESOLVED location,
+ *  not the string — lexical (string-only) math has no way to know that, so it
+ *  cannot be trusted for a path containing one. That combination falls back to
+ *  the canonical lens alone (which fails open, per `deepestContainer`'s own
+ *  documented boundary), never toward a false positive. */
+function lexicalDeepestContainer(f: string, worktrees: readonly string[]): string | null {
+  if (f.split(sep).includes("..")) return null;
+  let best: string | null = null;
+  let bestLen = -1;
+  for (const wt of worktrees) {
+    if (!isWithin(wt, f)) continue;
+    if (wt.length > bestLen) {
+      best = wt;
+      bestLen = wt.length;
     }
   }
   return best;
@@ -366,15 +393,26 @@ function isFile(p: string): boolean {
 function existsUnder(dir: string, f: string, worktrees: readonly string[]): boolean {
   if (!f) return false; // "" / "./" normalize to "" — nothing to compare, never `dir` itself
   if (isAbsolute(f)) {
-    const container = deepestContainer(f, worktrees);
-    return !!container && canonicalRootPath(container) === canonicalRootPath(dir) && isFile(f);
+    if (!isFile(f)) return false;
+    // `dir` owns `f` if EITHER lens says so, checked independently -- not a single
+    // merged ranking across both, which would let a longer-named sibling
+    // out-rank root's own genuine lexical claim by string length alone (PR #76
+    // review round 9 I1). Each lens resolves nested-vs-parent ambiguity within
+    // itself (see each function's own doc comment), so this OR never lets root
+    // reclaim a file that legitimately belongs to a worktree nested inside it.
+    const canonicalOwner = deepestContainer(f, worktrees);
+    if (canonicalOwner && canonicalRootPath(canonicalOwner) === canonicalRootPath(dir)) return true;
+    const lexicalOwner = lexicalDeepestContainer(f, worktrees);
+    return !!lexicalOwner && canonicalRootPath(lexicalOwner) === canonicalRootPath(dir);
   }
   return isFile(join(dir, f));
 }
 
-/** Shared misroute-guard refusal for every auto-committing write tool that names
- *  files (issue #54, extended to hunch_record_correction/hunch_record_finding by
- *  #62) — one message so the three call sites stay in lockstep instead of drifting.
+/** Shared misroute-guard refusal for the three auto-committing write tools that
+ *  name files and are guarded today (issue #54, extended to
+ *  hunch_record_correction/hunch_record_finding by #62 — nuryel_write is a fourth
+ *  tool with the identical exposure, not yet guarded, tracked in #77) — one
+ *  message so the three call sites stay in lockstep instead of drifting.
  *  Returns the refusal ToolResult when misroutedWorktreeCandidates finds a better
  *  home, else null (proceed as normal). `subject` names what's being recorded,
  *  e.g. `"Foo"` or `finding "Foo"`, for the refusal text. Callers pass file evidence
