@@ -3,17 +3,16 @@
   "title": "pathKnownToHistory confirms an exact literal path match, with quotePath/merge-commit rendering pinned",
   "topic": "mcp.misroute-guard.history-check",
   "status": "accepted",
-  "context": "misroutedWorktreeCandidates' known-to-history escape hatch (issue #54 review C1: a file genuinely deleted/renamed at the CORRECT root must not be misread as evidence the write belongs in a sibling that predates the change) originally called git rev-list -n1 HEAD -- <file>, an ordinary git PATHSPEC: a directory name or glob matches anything under/matching it, so 'src' or a documented affected_files glob read as 'known to history' whenever ANYTHING under that directory was ever tracked anywhere in the repo -- silencing the guard for a directory-shaped entry this repo's own graph already carried (related_files: ['vscode-extension/']), reproduced end-to-end on two of three tools (PR #76 review round 5 C1). Fixed with :(literal) plus an exact --name-only line match. That fix itself then regressed on two git default behaviors, both producing FALSE POSITIVES (worse than a miss: obeying the refusal's own 'retry with cwd' advice then misroutes a LEGITIMATE write into the wrong worktree) -- reproduced end-to-end (PR #76 review round 6 C1/C2): core.quotePath defaults true, so a non-ASCII path renders backslash-octal-quoted and can never exact-match the raw input (every OTHER path enumerator in this file already pins core.quotePath=false for this exact reason, issue #50 -- this one didn't); and `--name-only` prints NOTHING for a merge commit by default (history simplification), so a file whose most recent touch is a merge (e.g. a conflict resolved by deleting it) reads as never-tracked.",
-  "decision": "pathKnownToHistory (src/extractors/git.ts) runs `git -c core.quotePath=false log -n1 --format= --name-only --diff-merges=first-parent HEAD -- :(literal)<file>` and checks the output for an EXACT line match to `file` -- :(literal) disables glob/pathspec-magic interpretation so a directory or glob can only ever match itself exactly (never something under/matching it); core.quotePath=false matches this file's own established convention for every other path enumerator; --diff-merges=first-parent makes a merge commit report its changes like an ordinary commit instead of being simplified away.",
+  "context": "dec_aa1e430ea5 (now corrected/extended here) described a round-6 implementation that ran `git -c core.quotePath=false log -n1 --format= --name-only --diff-merges=first-parent HEAD -- :(literal)<file>` and checked the output for an exact NEWLINE-split line match. An eighth review round (mr-complexity-reviewer, PR #76 round 7 I1) found this closed only the non-ASCII slice of the quoting problem: git ALWAYS C-quotes a `\"`, a backslash, or any control character regardless of core.quotePath, and the trimming `gitSafe` helper independently ate a real leading/trailing space in an unquoted name -- each reproduced as a false-positive refusal (a genuinely tracked, deleted-at-the-correct-root file misread as never-tracked) on a filename shaped like `q\"uote.ts`, one containing a literal tab, or one with leading/trailing whitespace. A later review round (round 8) then found this record itself had gone uncaptured: round 7 rewrote the implementation but the live decision for this topic (dec_aa1e430ea5) still described the round-6 code, in the one repo whose stated product is detecting exactly that kind of doc/graph drift.",
+  "decision": "pathKnownToHistory (src/extractors/git.ts) now runs `git log -n1 --format= --name-only -z --diff-merges=first-parent HEAD -- :(literal)<file>` via the UNTRIMMED gitRawSafe (not the trimming gitSafe), and checks the NUL-split output for an exact match. `-z` makes git emit the raw path bytes with NO escaping of any kind -- not just the >0x7F slice core.quotePath=false controls -- so core.quotePath is now irrelevant and dropped from the command entirely. Because `-z` NUL-TERMINATES (not separates) each entry, splitting on \"\\0\" always yields a trailing empty-string element; pathKnownToHistory now explicitly rejects an empty `file` up front so that trailing artifact can never itself read as a match (round 8 M1) -- defense in depth for the function's own contract, since the sole caller already filters falsy entries first.",
   "consequences": [
-    "A directory or glob entry can no longer satisfy the history escape hatch by matching something other than itself, closing the class of bug that let vscode-extension/ silence the guard",
-    "A non-ASCII filename deleted at the correct root is correctly recognized as known-to-history again (regression from round 5 fixed)",
-    "A file whose most recent touch is a merge commit is correctly recognized as known-to-history again (regression from round 5 fixed)",
-    "pathKnownToHistory's correctness now depends on the exact rendering of git's --name-only output for a single commit, not just on whether a pathspec matched anything -- a narrower, more precise question, but one more sensitive to git's own output-formatting defaults; the two regression tests (non-ASCII filename, merge-commit-as-latest-touch) exist specifically to pin that rendering, since 100% line/branch coverage on this function does not by itself prove the git command's OUTPUT is correct for a given git default"
+    "A filename containing a quote character, a control character (tab, literal newline), or genuine leading/trailing whitespace is now correctly recognized as known-to-history when deleted at the correct root -- closing the class round 6's narrower core.quotePath=false fix only partially closed",
+    "core.quotePath is no longer referenced by this function at all; this is a deliberate, narrow exception to dec_cb855e5d0f (\"pin core.quotePath=false per git command\") because -z makes the setting moot for this specific command rather than because the convention was rejected",
+    "pathKnownToHistory(root, \"\") now explicitly returns false rather than depending on the sole caller's own falsy-filter to avoid ever reaching it"
   ],
   "alternatives_rejected": [
-    "Keep the ordinary (non-literal) pathspec and add directory/glob heuristics on the CALLER side to filter out likely-directory entries before calling pathKnownToHistory -- rejected: the caller cannot reliably distinguish 'this deleted path was a directory' from 'this deleted path was a file' without asking git, which is exactly what pathKnownToHistory exists to do; pushing the problem to the caller just relocates it",
-    "Special-case only the specific reported strings ('.', './') the way round 4 did, rather than fixing the general exact-match semantics -- rejected: round 5 demonstrated that narrow special-casing just re-opens the same class in the next-encountered shape (directory names other than '.', globs); round 6 demonstrated the same lesson applies to the FIX itself (two more git-default-dependent shapes) -- the fix needed to be general (exact literal match, correct git flags) rather than shape-specific"
+    "Add core.quotePath=false AND handle quote/control-character escaping separately -- rejected: this is exactly the one-byte-class-at-a-time patching that produced rounds 4 through 6's repeated re-openings of this same class; -z removes the entire escaping mechanism at once instead of enumerating more byte ranges to except from it",
+    "Leave core.quotePath=false in the command for consistency with dec_cb855e5d0f even though -z makes it inert -- rejected as dead configuration that would misleadingly suggest quoting is still a live concern for a reader who doesn't already know -z supersedes it; the doc comment records the exception explicitly instead"
   ],
   "rejected_tripwires": [],
   "related_components": [],
@@ -21,7 +20,7 @@
     "src/extractors/git.ts",
     "test/mcproots.test.ts"
   ],
-  "supersedes": null,
+  "supersedes": "dec_aa1e430ea5",
   "superseded_by": null,
   "caused_by_bug": null,
   "commit": null,
@@ -40,5 +39,5 @@
       "test/mcproots.test.ts"
     ]
   },
-  "date": "2026-09-11T10:32:43.271Z"
+  "date": "2026-09-11T11:44:07.299Z"
 }
