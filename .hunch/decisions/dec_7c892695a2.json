@@ -1,8 +1,8 @@
 {
   "id": "dec_7c892695a2",
   "title": "Remove auto-generated inventory counts from Hunch documentation",
-  "topic": null,
-  "status": "accepted",
+  "topic": "grounding.doc-content-scope",
+  "status": "superseded",
   "context": "Hunch grounding statements across 5 documentation files contained dynamically-generated record counts (264 decisions, 2 bugs, 28 constraints, etc.). These counts required regeneration whenever the underlying Hunch graph changed, creating staleness and maintenance burden.",
   "decision": "Strip the record-count sentence from all Hunch documentation. Keep the description of what Hunch is and how to access it, but remove the inventory snapshot. Direct users to query the live Hunch system via MCP tools rather than reading stale counts from docs.",
   "consequences": [
@@ -75,15 +75,16 @@
   "related_files": [
     ".github/copilot-instructions.md",
     ".windsurf/rules/hunch.md",
+    ".cursor/rules/hunch.mdc",
     "AGENTS.md",
     "CLAUDE.md"
   ],
   "supersedes": null,
-  "superseded_by": null,
+  "superseded_by": "dec_c6385a2ac1",
   "caused_by_bug": null,
   "commit": "e8f643a",
   "valid_from": "2026-09-11T16:31:10+02:00",
-  "valid_to": null,
+  "valid_to": "2026-09-11T14:31:31.657Z",
   "retired": {
     "symbols": [],
     "deps": []
