@@ -1,0 +1,44 @@
+{
+  "id": "dec_26ed2854a5",
+  "title": "Absolute file evidence resolves to its DEEPEST containing worktree, canonicalized, by exact path segment",
+  "topic": "mcp.misroute-guard.absolute-paths",
+  "status": "accepted",
+  "context": "dec_03d798a64e (now corrected here) introduced walkPhysicalLocation, a per-component walk deciding kernel-vs-lexical resolution per '..'  based on whether the popped component is itself a symlink. Round 14 (mr-complexity-reviewer) attacked the walk's own correctness hard (consecutive '..'s crossing a kernel-resolved boundary, symlink-to-symlink targets, mid-walk nonexistent paths, root-seeding for every reachable f) and found it held up under every adversarial case -- the algorithm itself was correct. What round 14 found broken instead was the component TOKENIZATION alongside it: `f.slice(root.length).split(/[\\/]/).filter(Boolean)` treats a backslash as a path separator UNCONDITIONALLY, on every platform. On POSIX, '\\' is an ordinary, legal filename byte, not a separator -- so a real directory whose name happens to contain a literal backslash gets chopped into two synthetic path components, and if the first synthetic component's name happens to match a worktree directory name, a file that physically resolves OUTSIDE every worktree gets misattributed to that worktree. Reproduced against the real exported function and independently re-verified by me (the coordinator) before applying any fix; confirmed as a regression (green on main, green when reverted to split(sep), red at HEAD before the fix). Round 14 also found (I1) that no test discriminated the walk's core discriminator (kernel-only-when-the-POPPED-component-is-a-symlink) from a plausible future simplification (kernel-resolve at every '..' unconditionally, dropping the isSymbolicLink() check) for the specific shape of '..' popping a plain directory reached THROUGH an earlier symlink -- round 13's own test covered '..' BEFORE the symlink, not '..' INSIDE the symlinked tree.",
+  "decision": "walkPhysicalLocation's component split now uses `sep === \"\\\\\" ? /[\\\\/]/ : \"/\"` -- both slash characters are split only on win32 (where a path may legitimately use either), and only the real separator (`/`) is split on POSIX, where a backslash is left alone as an ordinary filename byte. Also removed the now-dead `basename` import (no longer used after round 13 replaced the dirname/basename split with the per-component walk) and added a regression test for '..' popping a plain directory reached through an earlier, unrelated symlink -- confirmed passing already at the pre-round-14 commit (the walk's core logic was already correct there), so it serves as a mutation-testing safety net rather than a RED-verified fix, same category as round 12's all-falsy-evidence coverage test.",
+  "consequences": [
+    "A real POSIX filename containing a literal backslash byte is no longer misread as containing an extra path separator -- closing the round-14 false positive without touching the per-component walk's own (verified-correct) discriminator logic",
+    "The walk's core algorithm -- kernel resolution triggered only when the POPPED component is itself a symlink -- survived round 14's adversarial attack (consecutive kernel-crossing '..'s, symlink-to-symlink targets, interspersed '.' and '//' segments, root-seeding) with no changes needed; only the tokenization step needed a platform-conditional fix",
+    "A follow-up issue (#79) was filed for the RELATIVE-path twin of this same kernel-vs-lexical '..'-after-symlink divergence, confirmed pre-existing on main in both directions (not introduced or worsened by this PR) and out of scope for this fix",
+    "A second follow-up issue (#78, filed in the prior round) covers splitting the large aggregated unit-coverage test into subtests, unrelated to this specific fix but still open"
+  ],
+  "alternatives_rejected": [
+    "Split on /[\\\\/]/  unconditionally on every platform (round 13's version, now superseded) -- disproved by round 14: '\\\\' is a legal, ordinary POSIX filename byte, and splitting on it there corrupts real directory names",
+    "Detect and special-case only backslash-containing filenames rather than gating the whole splitter on the platform separator -- rejected: more complex than necessary, and the platform-separator check is already the exact signal (a win32 path may legitimately use either slash; a POSIX one may not) that distinguishes the two cases correctly with no per-path heuristics"
+  ],
+  "rejected_tripwires": [],
+  "related_components": [],
+  "related_files": [
+    "src/mcp/server.ts",
+    "test/mcproots.test.ts"
+  ],
+  "supersedes": "dec_03d798a64e",
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "643ba7b",
+  "valid_from": "2026-09-11T15:00:59.710Z",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "premises": [],
+  "provenance": {
+    "source": "agent_recorded",
+    "confidence": 0.75,
+    "evidence": [
+      "src/mcp/server.ts",
+      "test/mcproots.test.ts"
+    ]
+  },
+  "date": "2026-09-11T15:00:59.710Z"
+}
