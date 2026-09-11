@@ -1,0 +1,104 @@
+{
+  "id": "dec_d467bdebf1",
+  "title": "Check symlink ownership via both canonical and lexical paths",
+  "topic": null,
+  "status": "accepted",
+  "context": "Symlinks sitting at root pointing into sibling worktrees were misattributed when spelled as absolute paths (the natural spelling agents send). The canonical lens alone followed the symlink to its target, incorrectly assigning it to the sibling, causing correctly-homed writes to be refused. Touches invariant(s): con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
+  "decision": "Introduced `lexicalDeepestContainer`, a string-only (no symlink resolution) worktree-matching function. Modified `existsUnder`'s absolute branch to check BOTH lenses independently via OR logic: either the canonical (symlink-resolved) owner OR the lexical (spelled) owner claims the file, and the write proceeds. Each lens independently resolves nested-vs-parent ambiguity, so OR never lets root incorrectly reclaim a file genuinely nested inside a child worktree. Paths containing \"..\" disable the lexical lens (cannot trust string math after symlink resolution) and fall back to canonical alone.",
+  "consequences": [
+    "Correctly-rooted symlinks are no longer refused by misattribution to their symlink target's sibling",
+    "Both absolute and relative spellings of the same symlink shape now behave identically",
+    "Nested worktrees continue to out-rank their containing root under both lenses",
+    "Paths with \"..\" segments safely degrade to canonical-only (fails open per design)",
+    "Discovered `nuryel_write` as a fourth auto-committing tool with the same exposure (issue #77 opened, not yet guarded)"
+  ],
+  "alternatives_rejected": [
+    "Single merged ranking across both lenses (would let longer-named siblings out-rank root's genuine string-level claim)",
+    "Only fixing the relative-path spelling and leaving absolute-path unfixed (incomplete; absolute is the natural agent spelling)",
+    "Changing write-tool routing to follow symlink targets instead of physical location (would lose attributive correctness)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Single merged ranking across both lenses (would let longer-named siblings out-rank root's genuine string-level claim)",
+      "scope": [
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Only fixing the relative-path spelling and leaving absolute-path unfixed (incomplete; absolute is the natural agent spelling)",
+      "scope": [
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Changing write-tool routing to follow symlink targets instead of physical location (would lose attributive correctness)",
+      "scope": [
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_a94a8fe5cc",
+    "cmp_dfa5b5acde"
+  ],
+  "related_files": [
+    "src/mcp/server.ts",
+    "test/mcproots.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "2a70fe9",
+  "valid_from": "2026-09-11T14:24:00+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:2a70fe9",
+      "synth:provider=claude-cli",
+      "branch:62-extend-misroute-guard",
+      "src/mcp/server.ts",
+      "test/mcproots.test.ts"
+    ],
+    "last_verified": "2026-09-11T12:24:20.580Z"
+  },
+  "date": "2026-09-11T14:24:00+02:00"
+}
