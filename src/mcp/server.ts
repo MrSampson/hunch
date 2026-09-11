@@ -80,7 +80,7 @@ import { applyImportedAdrReview, pendingImportedAdrReviews } from "../core/impor
 import { issueCaptureToken as issueToken, consumeCaptureToken as consumeToken } from "../core/capturetoken.js";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { isAbsolute, join, relative } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 
 type ToolResult = {
   content: Array<{ type: "text"; text: string }>;
@@ -210,38 +210,77 @@ const destinationNote = (destRoot: string): string => {
  *  compare against ANY directory and stay silent, the #54 failure reproduced through
  *  the "fix" meant to catch it. `existsUnder` checks an absolute entry AS ITSELF,
  *  scoped to whichever directory is under test (root, or each candidate worktree in
- *  turn) via `relative()`, not `join()` — so an absolute path naming a file that
- *  exists only under a SIBLING worktree's own tree is direct positive evidence for
- *  that worktree specifically, no existence heuristic required. Relativizing it
- *  against `root` alone (as an earlier version of this guard did) can't represent
- *  this at all: a sibling worktree's absolute path is never under root's tree, so it
- *  relativizes to "../…" and gets dropped — silently reintroducing the bypass one
- *  level removed. An absolute path outside every known worktree relativizes to "../…"
- *  everywhere and correctly contributes nothing: not "absent here, check the
- *  siblings", just nothing to compare.
+ *  turn) via `deepestContainer`, not `join()` — so an absolute path naming a file
+ *  that exists only under a worktree's own tree is direct positive evidence for that
+ *  worktree specifically, no existence heuristic required. Relativizing it against
+ *  `root` alone (as an earlier version of this guard did) can't represent a SIBLING
+ *  worktree's absolute path at all: it's never under root's tree, so it relativizes
+ *  to "../…" and gets dropped — silently reintroducing the bypass one level removed.
+ *  A NESTED worktree (`root/.worktrees/x`, what `hunch worktree` itself creates) is
+ *  the opposite trap: it IS lexically under root's own tree, so a plain "is this path
+ *  under root" check wrongly attributes it to root — `deepestContainer` picks the
+ *  MOST SPECIFIC (longest-path) containing worktree, not just any containing
+ *  ancestor, so root never swallows a worktree nested inside it (PR #76 review round
+ *  3 I1a). An absolute path outside every known worktree matches none and correctly
+ *  contributes nothing: not "absent here, check the siblings", just nothing to
+ *  compare. Canonicalized (`canonicalRootPath`, the same symlink/case resolution
+ *  `resolveActiveRoot` uses above) on both sides before comparing, so a worktree
+ *  reached through a symlink or a case-different spelling isn't silently missed (PR
+ *  #76 review round 3 I1b), and compared by exact path SEGMENT, not string prefix,
+ *  so a real sibling `foo-other` doesn't false-match `foo` and a file genuinely named
+ *  `..odd.ts` isn't mistaken for a `..` traversal (PR #76 review round 3 I1c).
  *
  *  Exported for direct unit testing (issue #54 review, I2) — the candidate logic is
  *  otherwise reachable only through a full MCP client/server integration test. */
-function existsUnder(dir: string, f: string): boolean {
-  if (isAbsolute(f)) {
-    const rel = relative(dir, f);
-    return !rel.startsWith("..") && !isAbsolute(rel) && existsSync(f);
-  }
-  return existsSync(join(dir, f));
-}
-
 export const misroutedWorktreeCandidates = (root: string, relatedFiles: readonly string[]): string[] => {
   if (!relatedFiles.length) return [];
-  if (relatedFiles.some((f) => existsUnder(root, f))) return [];
+  const worktrees = worktreePaths(root);
+  if (relatedFiles.some((f) => existsUnder(root, f, worktrees))) return [];
   if (relatedFiles.some((f) => !isAbsolute(f) && pathKnownToHistory(root, f))) return [];
   const here = canonicalRootPath(root);
   const candidates: string[] = [];
-  for (const candidate of worktreePaths(root)) {
+  for (const candidate of worktrees) {
     if (canonicalRootPath(candidate) === here) continue;
-    if (relatedFiles.some((f) => existsUnder(candidate, f))) candidates.push(candidate);
+    if (relatedFiles.some((f) => existsUnder(candidate, f, worktrees))) candidates.push(candidate);
   }
   return candidates;
 };
+
+/** True when path segment `child` (canonical) lies inside directory `parent`
+ *  (canonical) — an exact segment boundary, not a string prefix, so a sibling
+ *  `foo-other` never false-matches `foo` and `parent` itself counts as inside. */
+function isWithin(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
+/** The worktree (from `worktrees`, which always includes root itself — see
+ *  `worktreePaths`) whose OWN directory tree most SPECIFICALLY contains absolute
+ *  path `f` — the deepest/longest match, not merely any containing ancestor. Null
+ *  for a relative `f`, or an absolute one under none of the known worktrees. */
+function deepestContainer(f: string, worktrees: readonly string[]): string | null {
+  if (!isAbsolute(f)) return null;
+  const canonF = canonicalRootPath(f);
+  let best: string | null = null;
+  let bestLen = -1;
+  for (const wt of worktrees) {
+    const canonWt = canonicalRootPath(wt);
+    if (!isWithin(canonWt, canonF)) continue;
+    if (canonWt.length > bestLen) {
+      best = wt;
+      bestLen = canonWt.length;
+    }
+  }
+  return best;
+}
+
+function existsUnder(dir: string, f: string, worktrees: readonly string[]): boolean {
+  if (isAbsolute(f)) {
+    const container = deepestContainer(f, worktrees);
+    return !!container && canonicalRootPath(container) === canonicalRootPath(dir) && existsSync(f);
+  }
+  return existsSync(join(dir, f));
+}
 
 /** Shared misroute-guard refusal for every auto-committing write tool that names
  *  files (issue #54, extended to hunch_record_correction/hunch_record_finding by

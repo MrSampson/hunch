@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -167,6 +167,73 @@ test("misroutedWorktreeCandidates: direct unit coverage (issue #54 review, I2)",
       const outside = process.platform === "win32" ? "C:\\elsewhere\\other.ts" : "/elsewhere/other.ts";
       assert.deepEqual(misroutedWorktreeCandidates(fixture.root, [outside]), []);
     } finally {
+      fixture.cleanup();
+    }
+  }
+  // An absolute path lexically under a worktree's tree, but the file doesn't
+  // actually exist there: still not a misroute — the existence check must fire,
+  // not just the containment check (PR #76 review round 3 test-coverage gap).
+  {
+    const fixture = repoWithWorktree();
+    try {
+      assert.deepEqual(misroutedWorktreeCandidates(fixture.root, [join(fixture.worktree, "does-not-exist.ts")]), []);
+    } finally {
+      fixture.cleanup();
+    }
+  }
+  // A file genuinely named "..odd.ts" at a worktree's top level must not be
+  // mistaken for a ".." path-traversal segment and discarded as "outside the
+  // tree" (PR #76 review round 3 I1c — a prefix match, not a segment match, would
+  // get this wrong: "..odd.ts".startsWith("..") is true).
+  {
+    const fixture = repoWithWorktree();
+    writeFileSync(join(fixture.worktree, "..odd.ts"), "export const odd = 1;\n");
+    try {
+      assert.deepEqual(misroutedWorktreeCandidates(fixture.root, [join(fixture.worktree, "..odd.ts")]), [fixture.worktree]);
+    } finally {
+      fixture.cleanup();
+    }
+  }
+  // NESTED worktree — root/.worktrees/feature, the exact layout `hunch worktree`
+  // itself creates (src/cli/index.ts resolves a bare path argument against root).
+  // A shallow "is this absolute path under root's own directory tree" check would
+  // wrongly attribute a file that exists ONLY in the nested worktree to root,
+  // since root's tree lexically contains it — deepestContainer must pick the more
+  // specific (longer) match instead (PR #76 review round 3 I1a).
+  {
+    const root = repo("hunch-roots-nested-");
+    const nestedDir = join(root, ".worktrees");
+    mkdirSync(nestedDir, { recursive: true });
+    const nested = join(nestedDir, "feature");
+    git(root, "worktree", "add", "-q", "-b", "feature-nested", nested);
+    writeFileSync(join(nested, "nested-only.ts"), "export const x = 1;\n");
+    try {
+      assert.deepEqual(misroutedWorktreeCandidates(root, [join(nested, "nested-only.ts")]), [nested]);
+    } finally {
+      try { git(root, "worktree", "remove", "--force", nested); } catch { /* best effort */ }
+      try { rmSync(nested, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+      try { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+    }
+  }
+  // A worktree reached through a SYMLINKED alias: the raw literal string comparison
+  // in `relative()` wouldn't match, but canonicalRootPath resolves both sides first
+  // (the same resolution resolveActiveRoot already relies on for case/8.3-spelling
+  // equivalence) — so an absolute path through the alias still resolves to the real
+  // worktree (PR #76 review round 3 I1b). Symlink creation needs elevated
+  // permissions on Windows; skip there rather than fail on an environment quirk
+  // unrelated to what this test is proving.
+  if (process.platform !== "win32") {
+    const fixture = repoWithWorktree();
+    const alias = `${fixture.worktree}-alias`;
+    symlinkSync(fixture.worktree, alias, "dir");
+    try {
+      assert.deepEqual(
+        misroutedWorktreeCandidates(fixture.root, [join(alias, "app.ts")]),
+        [fixture.worktree],
+        "an absolute path reached through a symlinked alias must still resolve to the real worktree",
+      );
+    } finally {
+      try { rmSync(alias, { force: true }); } catch { /* best effort */ }
       fixture.cleanup();
     }
   }
@@ -796,9 +863,9 @@ test("hunch_record_correction with an absolute scope_hint_file OUTSIDE the repo 
 
   await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
 
-  // An absolute hint OUTSIDE the repo relativizes to "" and is dropped — the guard
-  // must treat that as "nothing to compare", not as "the file is absent here, go
-  // look in sibling worktrees" (which would refuse a legitimate write).
+  // An absolute hint OUTSIDE every known worktree matches no worktree's tree — the
+  // guard must treat that as "nothing to compare", not as "the file is absent here,
+  // go look in sibling worktrees" (which would refuse a legitimate write).
   const outside = process.platform === "win32" ? "C:\\elsewhere\\other.ts" : "/elsewhere/other.ts";
   const result = await client.callTool({
     name: "hunch_record_correction",
