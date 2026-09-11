@@ -1710,9 +1710,28 @@ export function worktreePaths(root: string): string[] {
  *  `:(literal)` disables glob/magic interpretation, and checking the commit's
  *  OWN changed-file list for an exact string match (not just "the pathspec
  *  matched something") confirms `file` was a tracked PATH, not merely a
- *  directory or pattern something under it happened to satisfy. */
+ *  directory or pattern something under it happened to satisfy.
+ *
+ *  Two git default behaviors break that exact-string comparison, and both
+ *  reproduced as FALSE POSITIVES for the guard — worse than a miss, since
+ *  obeying the refusal's own "retry with cwd" advice then misroutes a
+ *  LEGITIMATE write into the wrong worktree, reproducing #54 through this
+ *  function's own fix (PR #76 review round 6 C1/C2):
+ *   - `core.quotePath` defaults true, so a non-ASCII path comes back
+ *     backslash-octal-quoted (`"src/caf\303\251.ts"`) and can never `===` the
+ *     raw input — every OTHER path enumerator in this file already pins
+ *     `core.quotePath=false` for exactly this reason (issue #50); this one
+ *     didn't.
+ *   - `--name-only` prints NOTHING for a merge commit by default (diff
+ *     simplification), so a file whose most recent touch in history is a
+ *     merge (e.g. resolved by deleting it) reads as never-tracked.
+ *     `--diff-merges=first-parent` makes a merge commit report its own
+ *     changes like an ordinary commit instead of being skipped. */
 export function pathKnownToHistory(root: string, file: string): boolean {
-  const out = gitSafe(["log", "-n", "1", "--format=", "--name-only", "HEAD", "--", `:(literal)${file}`], root);
+  const out = gitSafe(
+    ["-c", "core.quotePath=false", "log", "-n", "1", "--format=", "--name-only", "--diff-merges=first-parent", "HEAD", "--", `:(literal)${file}`],
+    root,
+  );
   return out.split("\n").some((line) => line === file);
 }
 

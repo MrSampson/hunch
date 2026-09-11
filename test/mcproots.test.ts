@@ -138,6 +138,71 @@ test("misroutedWorktreeCandidates: direct unit coverage (issue #54 review, I2)",
       try { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
     }
   }
+  // related_files absent at root because THIS checkout deleted a NON-ASCII-named
+  // file: git's core.quotePath defaults true, so `git log --name-only` renders a
+  // byte > 0x7F as a backslash-octal-quoted string ("caf\303\251.ts") that can
+  // never exact-match the raw filename — every OTHER path enumerator in this file
+  // pins core.quotePath=false for exactly this reason (issue #50); an earlier
+  // version of this history check didn't, so this deleted-at-the-correct-root case
+  // read as "never tracked" — a FALSE POSITIVE worse than a miss, since obeying
+  // the guard's own "retry with cwd" advice would then misroute a LEGITIMATE
+  // delete into whichever sibling still predates it (PR #76 review round 6 C1).
+  {
+    const root = repo("hunch-roots-unicode-");
+    writeFileSync(join(root, "café.ts"), "export const x = 1;\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-qm", "add café.ts");
+    const worktree = `${root}-wt`;
+    git(root, "worktree", "add", "-q", "-b", "feature-unicode", worktree);
+    git(root, "rm", "-q", "café.ts");
+    git(root, "commit", "-qm", "drop café.ts");
+    try {
+      assert.deepEqual(
+        misroutedWorktreeCandidates(root, ["café.ts"]),
+        [],
+        "a non-ASCII filename deleted at the correct root must count as known-to-history, not a misroute",
+      );
+    } finally {
+      try { git(root, "worktree", "remove", "--force", worktree); } catch { /* best effort */ }
+      try { rmSync(worktree, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+      try { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+    }
+  }
+  // related_files absent at root because a MERGE commit resolved a conflict by
+  // deleting it: `git log --name-only` (default diff simplification) prints
+  // NOTHING for a merge commit unless told otherwise, so an earlier version of
+  // this history check silently read this as "never tracked" — the same
+  // false-positive shape as the non-ASCII case above, from a different git
+  // default (PR #76 review round 6 C2).
+  {
+    const root = repo("hunch-roots-mergedel-");
+    writeFileSync(join(root, "f.ts"), "content A\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-qm", "add f.ts");
+    const worktree = `${root}-wt`;
+    // Branch the sibling worktree BEFORE the conflicting edits, so it still has f.ts.
+    git(root, "worktree", "add", "-q", "-b", "feature-merge-side", worktree);
+    writeFileSync(join(worktree, "f.ts"), "content C from worktree\n");
+    git(worktree, "commit", "-qam", "worktree edits f.ts");
+    writeFileSync(join(root, "f.ts"), "content B from root\n");
+    git(root, "commit", "-qam", "root edits f.ts");
+    try {
+      execFileSync("git", ["merge", "--no-ff", "feature-merge-side", "-m", "merge side"], { cwd: root, encoding: "utf8" });
+    } catch { /* expected merge conflict */ }
+    git(root, "rm", "-q", "f.ts");
+    git(root, "commit", "-qm", "resolve: drop f.ts");
+    try {
+      assert.deepEqual(
+        misroutedWorktreeCandidates(root, ["f.ts"]),
+        [],
+        "a merge commit that resolved a conflict by deleting the file must count as known-to-history, not a misroute",
+      );
+    } finally {
+      try { git(root, "worktree", "remove", "--force", worktree); } catch { /* best effort */ }
+      try { rmSync(worktree, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+      try { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+    }
+  }
   // ABSOLUTE evidence (issue #76 C1): the worktree's OWN absolute path for a file
   // that exists ONLY there must resolve to that worktree directly — relativizing
   // it against root alone (an earlier version of this fix) produces "../…" and
