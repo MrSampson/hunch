@@ -1,8 +1,8 @@
 {
   "id": "dec_9ee774953e",
   "title": "Strip auto-generated record counts from Hunch documentation",
-  "topic": null,
-  "status": "accepted",
+  "topic": "grounding.doc-content-scope",
+  "status": "superseded",
   "context": "Record-count summaries (e.g., '266 decisions, 2 bugs, 28 constraints...') were being regenerated during decision-capture cycles, but became stale between cycles. These summaries appeared across multiple documentation files (Hunch instructions for Cursor, Copilot, Windsurf, CLAUDE.md, AGENTS.md) and required manual sync or automation to stay accurate.",
   "decision": "Removed the specific record-count inventory sentence from all documentation. Kept only the qualitative description of Hunch ('a curated graph of why the code is the way it is'). Users are directed to consult Hunch via MCP tools at decision-time rather than relying on stale documentation counts.",
   "consequences": [
@@ -57,15 +57,16 @@
   "related_files": [
     ".github/copilot-instructions.md",
     ".windsurf/rules/hunch.md",
+    ".cursor/rules/hunch.mdc",
     "AGENTS.md",
     "CLAUDE.md"
   ],
   "supersedes": null,
-  "superseded_by": null,
+  "superseded_by": "dec_c6385a2ac1",
   "caused_by_bug": null,
   "commit": "71626b6",
   "valid_from": "2026-09-11T17:06:13+02:00",
-  "valid_to": null,
+  "valid_to": "2026-09-11T15:06:31.021Z",
   "retired": {
     "symbols": [],
     "deps": []
