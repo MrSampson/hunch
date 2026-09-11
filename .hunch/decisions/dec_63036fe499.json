@@ -1,0 +1,103 @@
+{
+  "id": "dec_63036fe499",
+  "title": "Pin git output formatting for exact-match history checks",
+  "topic": "mcp.misroute-guard.history-check",
+  "status": "superseded",
+  "context": "pathKnownToHistory uses exact string matching against git log output as a safety guard against directory/glob pathname bypasses. Round 5 introduced this check, Round 6 review found it creates false positives when git's default output formatting diverges from raw input: core.quotePath defaults true (non-ASCII paths get backslash-octal-quoted), and --name-only with default diff simplification omits merge commits entirely. Both cause legitimate file deletions to appear never-tracked, triggering the guard's own \"retry with cwd\" advice and misrouting writes to wrong worktree—reproducing issue #54 through this function's fix.",
+  "decision": "Explicitly control git output formatting for string-equality comparisons by adding -c core.quotePath=false and --diff-merges=first-parent. This restores output format to match raw input, enabling reliable exact-string matching. Both flags follow existing convention elsewhere in the file (commitFiles uses core.quotePath=false for the same reason).",
+  "consequences": [
+    "False positives eliminated: non-ASCII filenames and merge-resolved deletions correctly recognized as known-to-history",
+    "Guard prevents legitimate deletes being misrouted to wrong worktrees, fully closing issue #54",
+    "Two regression tests added to catch this failure mode in future reviews",
+    "Pattern established: git output normalization must be explicitly controlled in safety-critical string comparisons"
+  ],
+  "alternatives_rejected": [
+    "Normalize the path string after retrieval (less reliable, adds complexity, fragile to future git default changes)",
+    "Apply only core.quotePath=false without --diff-merges=first-parent (incomplete, leaves merge-commit false positives unfixed)",
+    "Document the limitation as an acceptable tradeoff (false positives are severe; obeying the guard causes data misrouting)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Normalize the path string after retrieval (less reliable, adds complexity, fragile to future git default changes)",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Apply only core.quotePath=false without --diff-merges=first-parent (incomplete, leaves merge-commit false positives unfixed)",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Document the limitation as an acceptable tradeoff (false positives are severe; obeying the guard causes data misrouting)",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_a94a8fe5cc",
+    "cmp_e0ccfe26fe"
+  ],
+  "related_files": [
+    "src/extractors/git.ts",
+    "test/mcproots.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": "dec_aa1e430ea5",
+  "caused_by_bug": null,
+  "commit": "b3f20bf",
+  "valid_from": "2026-09-11T12:42:47+02:00",
+  "valid_to": "2026-09-11T11:10:15.966680Z",
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:b3f20bf",
+      "synth:provider=claude-cli",
+      "branch:62-extend-misroute-guard",
+      "src/extractors/git.ts",
+      "test/mcproots.test.ts"
+    ],
+    "last_verified": "2026-09-11T10:43:11.051Z"
+  },
+  "date": "2026-09-11T12:42:47+02:00"
+}

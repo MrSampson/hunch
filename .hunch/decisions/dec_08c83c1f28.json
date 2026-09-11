@@ -1,0 +1,78 @@
+{
+  "id": "dec_08c83c1f28",
+  "title": "Extend misroute guard to the other two file-naming write tools",
+  "topic": "mcp.misroute-guard.tool-coverage",
+  "status": "accepted",
+  "context": "Issue #62 identified that the worktree misrouting guard was only protecting hunch_record_decision, leaving hunch_record_correction and hunch_record_finding exposed to the same errors. A later review round (PR #76 round 9 I2) found the ORIGINAL title/decision text here overclaimed scope: it said 'all'/'every' auto-committing write tool, but nuryel_write is a FOURTH tool with the identical exposure (accepts the same cwd hint, auto-commits via flushCapture, and several facets carry related_files/affected_files) that was never covered by this work and is not guarded today -- tracked separately as issue #77 rather than left as a silent gap under an overclaimed 'every'. Touches invariant(s): con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
+  "decision": "Unified the misroute guard via a shared misrouteGuard mechanism that checks file evidence (related_files, scope_hint_file, affected_files) across the THREE auto-committing write tools this issue was scoped to (hunch_record_decision, hunch_record_correction, hunch_record_finding), eliminating the inconsistency between them. Extending the same guard to nuryel_write is out of scope for #62 and tracked as its own issue (#77).",
+  "consequences": [
+    "hunch_record_correction and hunch_record_finding now have the same new/untracked file detection protection as hunch_record_decision",
+    "Guard checks are now consistent across these three tools, reducing the attack surface for worktree misroutes among them",
+    "The modified-tracked-file detection gap remains unresolved (known open issue in #75, not #62 -- #62 covered the tool-coverage extension only and closes with this work)",
+    "nuryel_write remains unguarded against the identical #54 misroute shape -- tracked in #77, not silently left uncovered by this record's original overclaim of 'every'/'all' auto-committing write tool"
+  ],
+  "alternatives_rejected": [
+    "Fixing each tool individually without centralizing the guard logic",
+    "Solving the modified-tracked-file gap simultaneously in this commit",
+    "Silently expanding this work's scope to also guard nuryel_write once it was noticed, rather than tracking it as its own issue -- rejected to keep #62's already-large review history (nine rounds) scoped to what it was actually about"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Fixing each tool individually without centralizing the guard logic",
+      "scope": [
+        "src/mcp/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Solving the modified-tracked-file gap simultaneously in this commit",
+      "scope": [
+        "src/mcp/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_dfa5b5acde"
+  ],
+  "related_files": [
+    "src/mcp/server.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "68aa5c5",
+  "valid_from": "2026-09-10T18:07:33+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "premises": [],
+  "provenance": {
+    "source": "llm_draft+agent_recorded",
+    "confidence": 0.75,
+    "evidence": [
+      "src/mcp/server.ts"
+    ]
+  },
+  "date": "2026-09-11T12:16:37.014Z"
+}

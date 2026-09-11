@@ -1,0 +1,89 @@
+{
+  "id": "dec_87abee8e9c",
+  "title": "Centralize misroute guard into shared function to prevent drift",
+  "topic": "mcp.misroute-guard.extraction",
+  "status": "accepted",
+  "context": "Issue #54 identified a bug where agents forget cwd, silently committing work to the wrong checkout when files exist in linked worktrees. PR #63 added protection to hunch_record_decision, but hunch_record_correction and hunch_record_finding have identical shape, root cause, and blast radius yet remained unprotected. Touches invariant(s): con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
+  "decision": "Extract the misroute refusal logic into a single misrouteGuard() function called by all three auto-committing write tools (src/mcp/server.ts). How each tool's file evidence gets to that shared check evolved across review: an initial attempt exported repoRelativeHint so hunch_record_correction could relativize an absolute scope_hint_file against root before checking -- superseded by dec_d09ab8e9a0, which found that approach didn't actually work for the realistic case (an agent's own worktree-rooted absolute path) and replaced it with existsUnder/deepestContainer, understanding absolute paths directly rather than relativizing them. repoRelativeHint is private again; see dec_d09ab8e9a0 for the current design.",
+  "consequences": [
+    "One source of truth for misroute detection and refusal messaging; future changes propagate uniformly",
+    "All three tools now enforce the same guard and use identical language, eliminating inconsistency",
+    "Added tests verify the guard works for hunch_record_correction, hunch_record_finding, and hunch_record_decision, including absolute-path and no-false-positive cases"
+  ],
+  "alternatives_rejected": [
+    "Duplicate the guard logic in each tool (risks drift as behavior evolves)",
+    "Apply the guard inconsistently to only hunch_record_decision (leaves identical tools unprotected)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Duplicate the guard logic in each tool (risks drift as behavior evolves)",
+      "scope": [
+        "src/core/**",
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Apply the guard inconsistently to only hunch_record_decision (leaves identical tools unprotected)",
+      "scope": [
+        "src/core/**",
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_a94a8fe5cc",
+    "cmp_b256a6aed0",
+    "cmp_dfa5b5acde"
+  ],
+  "related_files": [
+    "src/core/correction.ts",
+    "src/mcp/server.ts",
+    "test/mcproots.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "5e0bdb1",
+  "valid_from": "2026-09-10T18:06:49+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "premises": [],
+  "provenance": {
+    "source": "llm_draft+agent_recorded",
+    "confidence": 0.75,
+    "evidence": [
+      "commit:5e0bdb1",
+      "synth:provider=claude-cli",
+      "branch:62-extend-misroute-guard",
+      "src/core/correction.ts",
+      "src/mcp/server.ts",
+      "test/mcproots.test.ts"
+    ]
+  },
+  "date": "2026-09-11T07:56:46.440Z"
+}

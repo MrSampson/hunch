@@ -1,0 +1,87 @@
+{
+  "id": "dec_3acff04fd6",
+  "title": "Omit dynamic statistics from auto-generated documentation",
+  "topic": "grounding.doc-content-scope",
+  "status": "superseded",
+  "context": "Documentation files included stale counts of Hunch records (249 decisions, 2 bugs, etc.) that diverged from reality when underlying data was corrected",
+  "decision": "Remove dynamic statistics from committed documentation; direct readers to live hunch_* MCP tools as authoritative source instead",
+  "consequences": [
+    "Committed docs no longer drift out of sync with actual Hunch state",
+    "Single source of truth for statistics is the live MCP tools, not static files",
+    "Reduced maintenance burden on documentation regeneration"
+  ],
+  "alternatives_rejected": [
+    "Keep counts with a 'may be stale' disclaimer (still creates confusion)",
+    "Manually update statistics each regeneration (high maintenance cost)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Keep counts with a 'may be stale' disclaimer (still creates confusion)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Manually update statistics each regeneration (high maintenance cost)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_4c40eab00f"
+  ],
+  "related_files": [
+    ".github/copilot-instructions.md",
+    ".windsurf/rules/hunch.md",
+    "AGENTS.md",
+    "CLAUDE.md"
+  ],
+  "supersedes": null,
+  "superseded_by": "dec_c6385a2ac1",
+  "caused_by_bug": null,
+  "commit": "f78fc87",
+  "valid_from": "2026-09-11T10:08:01+02:00",
+  "valid_to": "2026-09-11T09:53:52.716131Z",
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.4,
+    "evidence": [
+      "commit:f78fc87",
+      "synth:provider=claude-cli",
+      "branch:62-extend-misroute-guard",
+      ".github/copilot-instructions.md",
+      ".windsurf/rules/hunch.md",
+      "AGENTS.md",
+      "CLAUDE.md"
+    ],
+    "last_verified": "2026-09-11T08:08:20.085Z"
+  },
+  "date": "2026-09-11T10:08:01+02:00"
+}

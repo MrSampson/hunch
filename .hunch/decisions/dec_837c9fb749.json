@@ -1,0 +1,45 @@
+{
+  "id": "dec_837c9fb749",
+  "title": "Absolute file evidence resolves to its DEEPEST containing worktree, canonicalized, by exact path segment",
+  "topic": "mcp.misroute-guard.absolute-paths",
+  "status": "superseded",
+  "context": "dec_d6ef03224f (now corrected here) made lexicalDeepestContainer resolve dirname(f) through the kernel UNCONDITIONALLY -- on every absolute f, regardless of whether it contained a '..' segment -- to fix a false positive and false negative round 11 found in any f containing a '..' immediately after a symlink component. Round 12 (mr-complexity-reviewer) found and reproduced against the real exported function that this was stronger than the problem required: resolving dirname(f) through the kernel follows EVERY symlink in the directory chain, even when there is no '..' at all, which resolves straight through the plain symlinked-DIRECTORY shape this lens exists to serve (round 9's original case) and reintroduces round 9's exact false positive in a nested-worktree layout -- an agent legitimately working in a worktree nested under root, naming a file through a worktree-local symlink to root's own directory with no '..' anywhere in the path, had that file reattributed to root even though it physically exists at the worktree's own spelling. Verified independently by me (the coordinator) before applying any fix: reproduced the false positive on the project's own nested `.worktrees/<name>` layout, confirmed it as a genuine regression (RED at the round-11 commit's parent's sibling test run vs GREEN only after removing the unconditional resolution), and confirmed the fix does not reopen either of round 11's two fixed shapes.",
+  "decision": "lexicalDeepestContainer now gates the kernel resolution on whether `f` actually contains a '..' path segment (`f.split(sep).includes('..')`) -- the ONLY shape where lexical string math and the kernel can disagree (round 11's finding). When `f` has no '..' at all, the comparison stays purely lexical (plain `resolve(f)`, comparing against the raw, non-canonicalized worktree path) -- preserving the plain symlinked-directory shape round 9 needs. When `f` does contain a '..', `dirname(f)` is resolved through the kernel (`canonicalRootPath`, i.e. `realpathSync.native`) with the raw `basename(f)` reattached, and each candidate worktree path is canonicalized the same way for that comparison only -- this is round 11's fix, kept but now scoped to the case that actually needs it.",
+  "consequences": [
+    "A '..'-free absolute path through a symlinked directory inside a (possibly nested) worktree is attributed to the worktree it physically sits in, not wherever the symlink's target lives -- closing the round-12 regression without reopening either round-11 shape",
+    "The function now has two distinct comparison modes gated on a single cheap string check, rather than one kernel call per invocation regardless of need -- also a minor performance improvement for the common (no '..') case, though that was not the primary motivation",
+    "A new regression test (nested worktree + worktree-local symlink to root's own directory, no '..') was added and independently RED-verified against the round-11 commit before this fix, GREEN after",
+    "A previously-uncovered branch (misroutedWorktreeCandidates's `if (!evidence.length) return []`, reachable via an all-falsy relatedFiles array such as affected_files: ['']) was given direct test coverage as a minor drive-by fix, per round 12 M1"
+  ],
+  "alternatives_rejected": [
+    "Keep unconditional kernel resolution of dirname(f) and special-case the plain-symlinked-directory shape separately -- rejected: this is exactly the kind of ad-hoc special-casing that produced rounds 9 and 10's regressions; gating on the actual discriminating condition ('..' present or not) is simpler and provably correct for both shapes rather than accumulating exceptions",
+    "Resolve dirname(f) through the kernel only up to (but not through) the LAST symlink component, requiring symlink-by-symlink introspection -- rejected: far more complex than the '..'-presence check, and the simpler check already produces the correct kernel-matching answer in every case tested (including all of round 12's own chained-symlink adversarial cases against the round-11 fix)",
+    "Leave the round-11 fix as-is and treat the round-12 regression as an acceptable trade-off (narrower than the shape round 11 fixed) -- rejected: round 12 reproduced it as a false positive on the project's own `.hunch worktree`-style nested layout, which is a documented, intended usage pattern, not an exotic edge case"
+  ],
+  "rejected_tripwires": [],
+  "related_components": [],
+  "related_files": [
+    "src/mcp/server.ts",
+    "test/mcproots.test.ts"
+  ],
+  "supersedes": "dec_d6ef03224f",
+  "superseded_by": "dec_03d798a64e",
+  "caused_by_bug": null,
+  "commit": "b694769",
+  "valid_from": "2026-09-11T13:56:44.945Z",
+  "valid_to": "2026-09-11T14:27:02.737Z",
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "premises": [],
+  "provenance": {
+    "source": "agent_recorded",
+    "confidence": 0.75,
+    "evidence": [
+      "src/mcp/server.ts",
+      "test/mcproots.test.ts"
+    ]
+  },
+  "date": "2026-09-11T13:56:44.945Z"
+}

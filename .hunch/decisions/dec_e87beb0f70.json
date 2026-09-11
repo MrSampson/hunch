@@ -1,0 +1,105 @@
+{
+  "id": "dec_e87beb0f70",
+  "title": "In-tree CLI is authoritative for generated documentation",
+  "topic": "grounding.doc-generator-authority",
+  "status": "superseded",
+  "context": "Two decision-graph corrections were made via a globally-installed hunch MCP server, which regenerated documentation files. However, the global server reintroduced a record-counts sentence (#68) that had previously been intentionally removed, creating divergence between what the global tool generates and what the in-tree CLI produces.",
+  "decision": "Documentation regeneration must use the in-tree CLI, not external/globally-installed tools. Committed docs are grounded in the checkout's own generator, not external systems.",
+  "consequences": [
+    "Auto-generated docs stay consistent with in-tree tooling output",
+    "Prevents divergence between global and local generators from propagating into committed artifacts",
+    "Requires workflow discipline: regenerate with in-tree CLI after any record updates"
+  ],
+  "alternatives_rejected": [
+    "Keep using globally-installed server (perpetuates inconsistency)",
+    "Manually maintain generated docs (defeats purpose of automation)",
+    "Sync global server to match in-tree output (doesn't prevent future divergence)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Keep using globally-installed server (perpetuates inconsistency)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Manually maintain generated docs (defeats purpose of automation)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Sync global server to match in-tree output (doesn't prevent future divergence)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_4c40eab00f"
+  ],
+  "related_files": [
+    ".github/copilot-instructions.md",
+    ".windsurf/rules/hunch.md",
+    "AGENTS.md",
+    "CLAUDE.md"
+  ],
+  "supersedes": null,
+  "superseded_by": "dec_8b1b016d68",
+  "caused_by_bug": null,
+  "commit": "1771fef",
+  "valid_from": "2026-09-11T09:12:51+02:00",
+  "valid_to": "2026-09-11T09:53:52.716131Z",
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:1771fef",
+      "synth:provider=claude-cli",
+      "branch:62-extend-misroute-guard",
+      ".github/copilot-instructions.md",
+      ".windsurf/rules/hunch.md",
+      "AGENTS.md",
+      "CLAUDE.md"
+    ],
+    "last_verified": "2026-09-11T07:13:07.401Z"
+  },
+  "date": "2026-09-11T09:12:51+02:00"
+}

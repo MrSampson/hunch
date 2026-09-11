@@ -1,0 +1,102 @@
+{
+  "id": "dec_8f8b7b22d1",
+  "title": "Resolve path components through kernel, not lexically, except final component",
+  "topic": "mcp.misroute-guard.absolute-paths",
+  "status": "superseded",
+  "context": "lexicalDeepestContainer compared absolute paths using plain path.resolve()/relative(), trusting the false theory that POSIX cancels \"..\" against the lexically preceding component. The kernel actually cancels \"..\" against the parent of the current lookup directory—which after a symlink traversal is the target's parent, not its lexical parent. This created false positives (symlinked dirs wrongly attributed) and false negatives (symlink+\"..\" paths wrongly unattributed) whenever \"..\" followed a symlink. Touches invariant(s): con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
+  "decision": "Always resolve every path component except the final one through the kernel (canonicalRootPath on dirname) before comparison; reattach the raw basename afterward. This preserves the function's original purpose (final component never followed through symlinks) while aligning \"..\" handling with actual kernel behavior.",
+  "consequences": [
+    "Fixes both false-positive and false-negative mispaths for symlink+\"..\" sequences",
+    "Adds a system call (canonicalRootPath/realpathSync.native) per path check—performance cost accepted for correctness",
+    "Tests now have non-vacuous adversarial cases that actually exercise kernel symlink behavior, replacing vacuous tests that silently passed before the fix"
+  ],
+  "alternatives_rejected": [
+    "Pure lexical comparison via path.resolve/relative (original approach; false theory about POSIX cancellation)",
+    "Blanket disqualification of any path containing \"..\" (round 9; refused harmless input on all tools)",
+    "Trusting path module output to model kernel behavior without calling through to realpath/native calls"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Pure lexical comparison via path.resolve/relative (original approach; false theory about POSIX cancellation)",
+      "scope": [
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Blanket disqualification of any path containing \"..\" (round 9; refused harmless input on all tools)",
+      "scope": [
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Trusting path module output to model kernel behavior without calling through to realpath/native calls",
+      "scope": [
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_a94a8fe5cc",
+    "cmp_dfa5b5acde"
+  ],
+  "related_files": [
+    "src/mcp/server.ts",
+    "test/mcproots.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": "dec_d6ef03224f",
+  "caused_by_bug": null,
+  "commit": "67698a0",
+  "valid_from": "2026-09-11T15:23:49+02:00",
+  "valid_to": "2026-09-11T13:24:07.960Z",
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:67698a0",
+      "synth:provider=claude-cli",
+      "branch:62-extend-misroute-guard",
+      "src/mcp/server.ts",
+      "test/mcproots.test.ts"
+    ],
+    "last_verified": "2026-09-11T13:24:07.960Z"
+  },
+  "date": "2026-09-11T15:23:49+02:00"
+}

@@ -1,0 +1,48 @@
+{
+  "id": "dec_9ed4caea05",
+  "title": "Absolute file evidence resolves to its DEEPEST containing worktree, canonicalized, by exact path segment",
+  "topic": "mcp.misroute-guard.absolute-paths",
+  "status": "superseded",
+  "context": "dec_d09ab8e9a0 (now corrected/extended here) introduced deepestContainer/isWithin for absolute file evidence. Two further review rounds found and closed two more gaps in the same area: round 4 (mr-complexity-reviewer) found the existence check used bare existsSync, which is true for DIRECTORIES -- so a single directory-shaped evidence entry (or the natural '.'/\"\" an agent might send meaning 'the repo itself') silenced the guard for every OTHER entry in the same call, verified end-to-end through the real MCP server against a directory-shaped related_files entry this repo's own graph already carried (vscode-extension/). Round 5 found the containment hardening (deepestContainer/isWithin, rounds 3-4) had only ever applied to ABSOLUTE entries -- a RELATIVE entry containing a '..' segment that escapes root's own tree (e.g. '../<worktree>/only-in-worktree.ts', the IDENTICAL #54 misroute merely spelled relatively) bypassed containment entirely. Rounds 8-10 then found a THIRD shape: a symlink physically AT root (or another worktree), targeting a sibling worktree's file, was misattributed by deepestContainer's symlink-following (canonical) semantics alone -- round 8 fixed the relative spelling via lexical (non-canonicalizing) escape-classification in the caller; round 9 found the ABSOLUTE spelling of the identical shape (the spelling this codebase's own comments call the natural one agents send) was STILL broken, reachable through all three tools, since existsUnder's absolute branch used deepestContainer (canonical/symlink-following) exclusively; round 10 found the round-9 fix's OWN new '..'-disqualification safety check was itself wrong -- verified false by a direct kernel-level test (real stat()/open(), not resolve()/realpath() alone) that POSIX pathname resolution cancels '..' against the LEXICALLY preceding component, never re-entering a symlink's target (documented in path_resolution(7)) -- so the 'safety' check was refusing a harmless case on all three tools.",
+  "decision": "existsUnder now checks isFile(f), never mere existsSync(f) -- a directory can never satisfy either the 'exists at root' escape hatch or a candidate match, closing the directory/empty-string bypass on the existence side (the git-history side of this same class is a separate decision, mcp.misroute-guard.history-check). misroutedWorktreeCandidates now pre-processes relatedFiles before any check: a relative entry is resolved against ROOT specifically (the only base the server actually has -- never re-resolved per candidate, which would answer a different, meaningless question) and promoted to an absolute entry ONLY if that resolution escapes root's own tree; a non-escaping relative entry keeps the original, intentional multi-location check (the same suffix tried at every candidate directory in turn) unchanged. A promoted (escaped) relative entry then runs through the identical deepestContainer/isFile logic an absolute entry gets. For an ABSOLUTE entry specifically, existsUnder now checks TWO INDEPENDENT lenses, either sufficient: deepestContainer (canonical, symlink-following -- for a symlink ALIAS pointing at a whole worktree) and lexicalDeepestContainer (string-only, never follows a symlink -- for a symlink physically SITTING INSIDE a worktree whose target lives elsewhere). Each lens independently resolves nested-vs-parent worktree ambiguity via its own 'deepest/longest match' ranking, so the OR of the two never lets a parent root reclaim a file that legitimately belongs to a worktree nested inside it. lexicalDeepestContainer trusts plain path.resolve()/relative() for '..' collapsing unconditionally -- no symlink-crossing special case -- since that lexical computation already matches real POSIX kernel pathname resolution for '..', verified empirically.",
+  "consequences": [
+    "A directory or empty-string entry (relative or absolute) now contributes nothing to either the existence check or the candidate search, closing the class of bug that let this repo's own vscode-extension/ related_files entry silence the guard",
+    "A relative \"../<worktree>/x\" spelling of the #54 misroute is now caught the same way the absolute spelling already was",
+    "A residual, DOCUMENTED gap remains: a non-escaping relative entry that happens to reach a worktree NESTED under root (e.g. '.worktrees/feature/x.ts', no '..' segment) still resolves as 'exists at root' via the plain join() check, since root's own directory tree DOES physically contain it -- this fails OPEN (silently uncaught), never toward a false positive, and full parity with the absolute case would need its own design pass",
+    "A round-7 review found the relative-entry pre-pass introduced its own regression: it resolved a non-escaping relative entry against the RAW root string, then tried to canonicalize the (usually nonexistent) result -- when root itself is reached through a symlink (reachable via `hunch mcp --root <path through a symlink>`, which pins the root and skips client-root canonicalization), the nonexistent-path fallback stayed spelled like the raw root while the comparison target was canonical, so an ORDINARY relative filename read as 'escaping' and silenced the guard entirely for the exact #54 shape it exists to catch. Fixed by resolving against the already-canonical root instead of the raw root string.",
+    "A symlink physically at root (or another worktree), targeting a sibling worktree's file, is now correctly recognized as belonging to the worktree it physically sits in -- both when the file evidence is spelled relative (round 8) and absolute (round 9) -- rather than being misattributed to wherever the symlink's target lives",
+    "The OR of two independent lenses can credit the SAME absolute entry to TWO DIFFERENT worktrees at once (a symlink inside worktree A pointing into worktree B is claimable by A lexically and by B canonically) -- this is not silently wrong: misroutedWorktreeCandidates' existing 'name every plausible candidate rather than guess one' design (issue #54's original fix) already handles a multi-candidate result correctly, refusing and naming all of them rather than picking one"
+  ],
+  "alternatives_rejected": [
+    "Resolve EVERY relative entry to an absolute path up front (uniformly, not just escaping ones) and route all of them through deepestContainer alone -- rejected: this collapses the original, intentional 'try this relative suffix at every candidate directory' semantics into a single-location check, since a relative entry resolved once against root is lexically a DIFFERENT absolute path than the same relative entry resolved against a sibling worktree -- verified by execution that this breaks the plain sibling-worktree-by-relative-filename case #63 established",
+    "Fix only the reported case (a single '..' segment) rather than the general escape-detection -- rejected in favor of a general isWithin-based check that already handles multi-level escapes, redundant './.. ' segments, and escape-then-re-enter-root correctly with no special-casing",
+    "Merge the canonical and lexical lenses into ONE ranking across both (rather than checking each lens independently per candidate directory) -- rejected: a merged global ranking would let a longer-NAMED sibling worktree out-rank root's own genuine lexical claim purely by string length, which is exactly backwards for the 'does THIS SPECIFIC dir own f' question each existsUnder call is actually asking",
+    "Keep a ''..'-bearing path is unsafe to trust lexically' disqualification in lexicalDeepestContainer, treating it as defense-in-depth even after verifying it wasn't needed -- rejected: it wasn't merely unnecessary, it was ACTIVELY WRONG (refused a harmless case on all three tools), and dead 'safety' code that fires on real input is worse than no code at all"
+  ],
+  "rejected_tripwires": [],
+  "related_components": [],
+  "related_files": [
+    "src/mcp/server.ts",
+    "test/mcproots.test.ts"
+  ],
+  "supersedes": "dec_d467bdebf1",
+  "superseded_by": "dec_d6ef03224f",
+  "caused_by_bug": null,
+  "commit": null,
+  "valid_from": "2026-09-11T07:57:16.415Z",
+  "valid_to": "2026-09-11T13:19:17.901Z",
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "premises": [],
+  "provenance": {
+    "source": "agent_recorded",
+    "confidence": 0.75,
+    "evidence": [
+      "src/mcp/server.ts",
+      "test/mcproots.test.ts"
+    ]
+  },
+  "date": "2026-09-11T12:44:32.872Z"
+}

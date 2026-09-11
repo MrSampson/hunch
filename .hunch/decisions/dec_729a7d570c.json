@@ -1,0 +1,106 @@
+{
+  "id": "dec_729a7d570c",
+  "title": "Remove dynamic counts from committed Hunch documentation",
+  "topic": "grounding.doc-content-scope",
+  "status": "superseded",
+  "context": "Hunch documentation (decision/bug/constraint/policy counts) was auto-generated via MCP server, but multiple tool installations created drift. In-tree CLI and globally-installed versions produced different outputs, causing stale counts in committed docs.",
+  "decision": "Strip specific counts (\"257 decisions, 2 bugs, 28 constraints, 21 components, 3 policies, 1 open findings\") from Hunch headers in AGENTS.md, CLAUDE.md, and IDE rule files. Keep only the high-level description. Direct users to query hunch_* MCP tools for current state instead of reading committed snapshots.",
+  "consequences": [
+    "Committed documentation remains stable across tool version changes",
+    "Eliminates coordination burden of keeping counts in sync with in-tree generator",
+    "Users must consult MCP tools directly for current Hunch statistics rather than reading docs"
+  ],
+  "alternatives_rejected": [
+    "Maintain counts manually in committed docs (unsustainable, error-prone drift)",
+    "Pin global tool version to match in-tree (inflexible, shifts burden to environment setup)",
+    "Regenerate docs in CI on every commit (tight coupling, makes docs a derived artifact)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Maintain counts manually in committed docs (unsustainable, error-prone drift)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Pin global tool version to match in-tree (inflexible, shifts burden to environment setup)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Regenerate docs in CI on every commit (tight coupling, makes docs a derived artifact)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_4c40eab00f"
+  ],
+  "related_files": [
+    ".github/copilot-instructions.md",
+    ".windsurf/rules/hunch.md",
+    ".cursor/rules/hunch.mdc",
+    "AGENTS.md",
+    "CLAUDE.md"
+  ],
+  "supersedes": null,
+  "superseded_by": "dec_c6385a2ac1",
+  "caused_by_bug": null,
+  "commit": "2950159",
+  "valid_from": "2026-09-11T14:52:21+02:00",
+  "valid_to": "2026-09-11T12:52:36.939Z",
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:2950159",
+      "synth:provider=claude-cli",
+      "branch:62-extend-misroute-guard",
+      ".github/copilot-instructions.md",
+      ".windsurf/rules/hunch.md",
+      "AGENTS.md",
+      "CLAUDE.md"
+    ],
+    "last_verified": "2026-09-11T12:52:36.939Z"
+  },
+  "date": "2026-09-11T14:52:21+02:00"
+}

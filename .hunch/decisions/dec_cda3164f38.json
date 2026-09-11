@@ -1,0 +1,121 @@
+{
+  "id": "dec_cda3164f38",
+  "title": "Model containment via deepest-container semantics, not string-prefix matching",
+  "topic": "mcp.misroute-guard.absolute-paths",
+  "status": "superseded",
+  "context": "Four rounds of code review identified three independent failure modes in absolute-path containment checks: nested worktrees were wrongly attributed to their parent, symlinked aliases weren't recognized, and files literally named '..odd.ts' were mistaken for '..' traversals. All stemmed from string-prefix checks and unresolved path comparison. Touches invariant(s): con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
+  "decision": "Replace naive relative()-startsWith('..') logic with deepestContainer(), which canonicalizes all paths, compares by path-segment boundaries (not string prefixes), finds every worktree containing the absolute file, and selects the most specific (longest-path) match. existsUnder verifies both that containment AND that the file actually exists, preventing any ancestor from swallowing its nested children.",
+  "consequences": [
+    "Nested worktrees (e.g. root/.worktrees/feature) correctly attribute to themselves, not their parent",
+    "Worktrees accessed through symlink aliases resolve correctly via canonical path resolution",
+    "Files genuinely named '..odd.ts' are no longer mistaken for '..' path traversals",
+    "Containment model is now explicit and unit-testable, not implicit in relative-path heuristics"
+  ],
+  "alternatives_rejected": [
+    "Patching only the string-prefix check (would miss nested/symlink/filename issues and remain fragile)",
+    "Checking lexical containment without canonicalizing (would still fail on symlinks and case differences)",
+    "Picking any containing worktree instead of deepest (reintroduces nested worktree swallowing)",
+    "Avoiding explicit worktree tracking in favor of heuristics (requires re-deriving the container set)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Patching only the string-prefix check (would miss nested/symlink/filename issues and remain fragile)",
+      "scope": [
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Checking lexical containment without canonicalizing (would still fail on symlinks and case differences)",
+      "scope": [
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Picking any containing worktree instead of deepest (reintroduces nested worktree swallowing)",
+      "scope": [
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Avoiding explicit worktree tracking in favor of heuristics (requires re-deriving the container set)",
+      "scope": [
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_a94a8fe5cc",
+    "cmp_dfa5b5acde"
+  ],
+  "related_files": [
+    "src/mcp/server.ts",
+    "test/mcproots.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": "dec_9ed4caea05",
+  "caused_by_bug": null,
+  "commit": "902d791",
+  "valid_from": "2026-09-11T10:07:50+02:00",
+  "valid_to": "2026-09-11T09:04:50.972819Z",
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:902d791",
+      "synth:provider=claude-cli",
+      "branch:62-extend-misroute-guard",
+      "src/mcp/server.ts",
+      "test/mcproots.test.ts"
+    ],
+    "last_verified": "2026-09-11T08:08:13.249Z"
+  },
+  "date": "2026-09-11T10:07:50+02:00"
+}

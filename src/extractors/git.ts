@@ -1692,15 +1692,66 @@ export function worktreePaths(root: string): string[] {
   return paths;
 }
 
-/** True when `root`'s OWN history has ever tracked `file` at HEAD. Distinguishes an
- *  ordinary delete/rename recorded correctly at the resolved root (the file is gone
- *  here because THIS checkout removed it, and a sibling worktree that branched earlier
- *  simply predates the change) from a genuine misroute (issue #54 review, C1: without
+/** True when `root`'s OWN history has ever tracked `file` — EXACTLY `file`, not
+ *  merely something under it — at HEAD. Distinguishes an ordinary delete/rename
+ *  recorded correctly at the resolved root (the file is gone here because THIS
+ *  checkout removed it, and a sibling worktree that branched earlier simply
+ *  predates the change) from a genuine misroute (issue #54 review, C1: without
  *  this check, deleting or renaming a related_files entry at the correct root was
- *  itself read as evidence the write belonged in whichever sibling still had the old
- *  path — refusing a correct write and pointing the caller at the wrong worktree). */
+ *  itself read as evidence the write belonged in whichever sibling still had the
+ *  old path — refusing a correct write and pointing the caller at the wrong
+ *  worktree). `git rev-list -- <file>` alone (an earlier version of this
+ *  function) treats `file` as an ordinary PATHSPEC: a directory name or a glob
+ *  matches anything under/matching it, so "src" or "*.ts" reads as "known to
+ *  history" whenever ANYTHING under that directory or matching that glob was
+ *  EVER tracked, anywhere in the repo — defeating the one caller's whole point
+ *  (PR #76 review round 5 C1: this silenced the misroute guard for the exact
+ *  directory-shaped related_files entry this repo's own graph already carries).
+ *  `:(literal)` disables glob/magic interpretation, and checking the commit's
+ *  OWN changed-file list for an exact string match (not just "the pathspec
+ *  matched something") confirms `file` was a tracked PATH, not merely a
+ *  directory or pattern something under it happened to satisfy.
+ *
+ *  Two git default behaviors break a NEWLINE-separated exact-string comparison,
+ *  and both reproduced as FALSE POSITIVES for the guard — worse than a miss,
+ *  since obeying the refusal's own "retry with cwd" advice then misroutes a
+ *  LEGITIMATE write into the wrong worktree, reproducing #54 through this
+ *  function's own fix:
+ *   - `--name-only` prints NOTHING for a merge commit by default (diff
+ *     simplification), so a file whose most recent touch in history is a
+ *     merge (e.g. resolved by deleting it) reads as never-tracked (PR #76
+ *     review round 6 C2). `--diff-merges=first-parent` makes a merge commit
+ *     report its own changes like an ordinary commit instead of being skipped.
+ *   - Quoting: git C-quotes a path containing a byte outside plain ASCII
+ *     printable — `core.quotePath` controls only the >0x7F slice of that (a
+ *     non-ASCII byte; PR #76 review round 6 C1), but `"`, `\`, and every
+ *     control character (a literal newline, tab, ...) are ALWAYS quoted
+ *     regardless of `core.quotePath`, and `.trim()` (an earlier version of
+ *     this function used the trimming `gitSafe`) additionally eats a real
+ *     leading/trailing space in an unquoted name (PR #76 review round 7 I1) —
+ *     patching one byte class at a time re-opens this every round. `-z`
+ *     (NUL-terminated, used with the untrimmed `gitRawSafe`) sidesteps
+ *     quoting entirely: git emits the RAW path bytes with no escaping of any
+ *     kind when `-z` is given, so `core.quotePath` becomes irrelevant.
+ *
+ *  `file` must be a genuine, non-empty path: `-z` NUL-TERMINATES every entry
+ *  (rather than separating them), so splitting on "\0" always yields a
+ *  trailing "" element — harmless for any real filename, but `git log …
+ *  :(literal)` (unlike the old `rev-list` pathspec, which rejected an empty
+ *  string outright) treats an empty pathspec as matching everything, so an
+ *  empty `file` would otherwise find that trailing "" and read as "known to
+ *  history" for ANY repo with history at all (PR #76 review round 8 M1) --
+ *  the same class of bug this function exists to prevent, on its own
+ *  boundary condition. The sole caller already filters falsy entries before
+ *  calling this, so this guard is defense in depth for the function's own
+ *  documented contract, not a currently reachable bypass. */
 export function pathKnownToHistory(root: string, file: string): boolean {
-  return !!gitSafe(["rev-list", "-n", "1", "HEAD", "--", file], root);
+  if (!file) return false;
+  const out = gitRawSafe(
+    ["log", "-n", "1", "--format=", "--name-only", "-z", "--diff-merges=first-parent", "HEAD", "--", `:(literal)${file}`],
+    root,
+  );
+  return !!out && out.split("\0").some((entry) => entry === file);
 }
 
 /** Current branch name (e.g. "main", "feat/x"), or "" in detached HEAD / non-repo.

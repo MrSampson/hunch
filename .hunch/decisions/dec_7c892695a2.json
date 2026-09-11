@@ -1,0 +1,107 @@
+{
+  "id": "dec_7c892695a2",
+  "title": "Remove auto-generated inventory counts from Hunch documentation",
+  "topic": "grounding.doc-content-scope",
+  "status": "superseded",
+  "context": "Hunch grounding statements across 5 documentation files contained dynamically-generated record counts (264 decisions, 2 bugs, 28 constraints, etc.). These counts required regeneration whenever the underlying Hunch graph changed, creating staleness and maintenance burden.",
+  "decision": "Strip the record-count sentence from all Hunch documentation. Keep the description of what Hunch is and how to access it, but remove the inventory snapshot. Direct users to query the live Hunch system via MCP tools rather than reading stale counts from docs.",
+  "consequences": [
+    "Documentation remains accurate without regeneration cycles",
+    "Eliminates toil from maintaining counts across 5 separate files",
+    "Single source of truth shifts from docs to the actual Hunch system",
+    "Slight loss of at-a-glance Hunch scale visibility, mitigated by MCP tool availability"
+  ],
+  "alternatives_rejected": [
+    "Keep static counts and update manually (creates staleness and toil)",
+    "Automate count regeneration in build pipeline (adds unnecessary tooling for ephemeral metadata)",
+    "Use a central config file that docs include (does not solve staleness, only dedupes effort)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Keep static counts and update manually (creates staleness and toil)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Automate count regeneration in build pipeline (adds unnecessary tooling for ephemeral metadata)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Use a central config file that docs include (does not solve staleness, only dedupes effort)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_4c40eab00f"
+  ],
+  "related_files": [
+    ".github/copilot-instructions.md",
+    ".windsurf/rules/hunch.md",
+    ".cursor/rules/hunch.mdc",
+    "AGENTS.md",
+    "CLAUDE.md"
+  ],
+  "supersedes": null,
+  "superseded_by": "dec_c6385a2ac1",
+  "caused_by_bug": null,
+  "commit": "e8f643a",
+  "valid_from": "2026-09-11T16:31:10+02:00",
+  "valid_to": "2026-09-11T14:31:31.657Z",
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:e8f643a",
+      "synth:provider=claude-cli",
+      "branch:62-extend-misroute-guard",
+      ".github/copilot-instructions.md",
+      ".windsurf/rules/hunch.md",
+      "AGENTS.md",
+      "CLAUDE.md"
+    ],
+    "last_verified": "2026-09-11T14:31:31.657Z"
+  },
+  "date": "2026-09-11T16:31:10+02:00"
+}

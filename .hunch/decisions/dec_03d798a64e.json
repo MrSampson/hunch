@@ -1,0 +1,45 @@
+{
+  "id": "dec_03d798a64e",
+  "title": "Absolute file evidence resolves to its DEEPEST containing worktree, canonicalized, by exact path segment",
+  "topic": "mcp.misroute-guard.absolute-paths",
+  "status": "superseded",
+  "context": "dec_837c9fb749 (now corrected here) gated lexicalDeepestContainer's kernel resolution on whether the absolute path f contained ANY '..' segment at all -- resolving dirname(f) wholesale through the kernel once triggered. Round 13 (mr-complexity-reviewer) found and reproduced against the real exported function that this gate is too coarse: '..' presence is a correct NECESSARY condition for lexical/kernel disagreement (round 11's finding stands), but it is not a licence to kernel-resolve the ENTIRE directory chain once triggered. A harmless '..' anywhere in the path, popping a plain real directory with no symlink anywhere near it (e.g. '<worktree>/subdir/../shared-src/helper.ts', where subdir is a plain directory and shared-src is the symlink round 12's fix exists to serve), still routed the WHOLE path through canonicalRootPath, following the unrelated shared-src symlink and reintroducing round 12's exact false positive -- reproduced on both a nested-worktree layout and a sibling-worktree layout. I (the coordinator) independently reproduced this myself before applying any fix. This also falsifies the alternatives_rejected rationale dec_837c9fb749 recorded for the component-wise/per-symlink approach ('far more complex... and the simpler check already produces the correct kernel-matching answer in every case tested') -- that alternative is the one that is actually correct; the rejection was itself untested against this shape.",
+  "decision": "lexicalDeepestContainer now decides PER COMPONENT via a new walkPhysicalLocation() helper: walking f left to right, a plain component is appended lexically (never resolved); a '..' only consults the kernel (canonicalRootPath, fully resolving whatever symlink chain led there) when the component it's popping is ITSELF a symlink (checked via lstatSync) -- the one case where the kernel's '..'-cancellation point (the symlink's target's parent) differs from the lexical parent. A '..' popping a plain directory stays a lexical dirname(), since lexical and kernel resolution already agree there. The helper returns whether any kernel call actually happened (usedKernel), which the caller uses to decide whether to canonicalize each candidate worktree path before comparing (only when the spelled path itself is canonical). Also fixed while making this change: splits on either slash character (not just the platform sep) so a backslash-spelled absolute path is walked correctly rather than silently read as one unsplittable component (round 13 I1).",
+  "consequences": [
+    "A harmless '..' anywhere in an absolute path no longer forces kernel resolution of symlinks unrelated to that '..' -- closing the round-13 false positive without reopening any of rounds 9/10/11/12's fixed shapes",
+    "The discriminator is now the narrowest one that is still correct: exactly the components where lexical and kernel resolution can disagree (a '..' immediately following a symlink) get kernel treatment; every other component, including symlinks not immediately followed by '..', stays purely lexical",
+    "A new regression test (nested worktree symlink + a harmless '..' popping an unrelated real directory) was added and independently RED-verified against the round-12 commit before this fix, GREEN after; four additional adversarial shapes (chained symlinks, a symlink whose OWN target text contains '..' with none in f itself, a literal '..odd.ts' filename, a dangling symlink+'..') were manually verified correct but not all promoted to the permanent suite",
+    "A follow-up issue (#78) was filed, not fixed inline, for splitting the large aggregated unit-coverage test into independent subtests -- a test-quality improvement flagged by round 13 (M2) but out of scope for a targeted bug-fix commit"
+  ],
+  "alternatives_rejected": [
+    "Gate kernel resolution on whether f contains ANY '..' segment (round 12's fix, now superseded) -- disproved by round 13: a harmless '..' unrelated to any symlink still triggers kernel resolution of the WHOLE directory chain, reintroducing round 12's false positive",
+    "Accept a match from EITHER the pure-lexical spelling OR the fully-kernel-resolved spelling (a union of both answers, rather than a component-wise walk) -- rejected: round 13 verified this is wrong for round 11's false-negative shape ('<root>/alias/../only-in-wt.ts', expecting [worktree]) -- the lexical spelling alone lands at root, which short-circuits misroutedWorktreeCandidates to [] before the kernel-resolved spelling is ever consulted",
+    "Resolve every component through the kernel unconditionally regardless of any '..' (round 11's fix) -- already rejected in dec_837c9fb749 for reintroducing round 9's false positive on a plain symlinked directory with no '..' at all; still rejected here for the same reason"
+  ],
+  "rejected_tripwires": [],
+  "related_components": [],
+  "related_files": [
+    "src/mcp/server.ts",
+    "test/mcproots.test.ts"
+  ],
+  "supersedes": "dec_837c9fb749",
+  "superseded_by": "dec_26ed2854a5",
+  "caused_by_bug": null,
+  "commit": "c9973de",
+  "valid_from": "2026-09-11T14:27:02.737Z",
+  "valid_to": "2026-09-11T15:00:59.710Z",
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "premises": [],
+  "provenance": {
+    "source": "agent_recorded",
+    "confidence": 0.75,
+    "evidence": [
+      "src/mcp/server.ts",
+      "test/mcproots.test.ts"
+    ]
+  },
+  "date": "2026-09-11T14:27:02.737Z"
+}
