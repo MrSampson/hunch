@@ -1,0 +1,105 @@
+{
+  "id": "dec_cbc7668fdd",
+  "title": "Remove dynamic record-count statistics from instruction files",
+  "topic": null,
+  "status": "accepted",
+  "context": "Hunch (engineering memory) holds counts of decisions, bugs, constraints, and components that change as the graph evolves. These statistics were embedded in instruction files (Cursor, Copilot, Windsurf rules, CLAUDE.md, AGENTS.md), causing these files to appear stale or changed every time Hunch updated, even when semantic content was identical.",
+  "decision": "Strip the quantitative record-count sentence (\"It currently holds **259 decisions, 2 bugs, 28 constraints, 21 components, 3 policies, 1 open findings**.\") from all instruction and documentation files. Keep only the descriptive definition of what Hunch is.",
+  "consequences": [
+    "Instruction files remain semantically stable across Hunch graph updates, reducing noise in version control history",
+    "AI assistants load these files without stale-count distractions at session start",
+    "Trade-off: readers no longer see live metrics about Hunch health in instructions (must consult Hunch tools directly instead)"
+  ],
+  "alternatives_rejected": [
+    "Keep counts and update manually with each Hunch change (maintenance burden, error-prone)",
+    "Auto-regenerate counts on commit (constant churn, obscures real semantic changes)",
+    "Use a placeholder or generic phrase (less informative)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Keep counts and update manually with each Hunch change (maintenance burden, error-prone)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Auto-regenerate counts on commit (constant churn, obscures real semantic changes)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Use a placeholder or generic phrase (less informative)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_4c40eab00f"
+  ],
+  "related_files": [
+    ".github/copilot-instructions.md",
+    ".windsurf/rules/hunch.md",
+    "AGENTS.md",
+    "CLAUDE.md"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "33b7efa",
+  "valid_from": "2026-09-11T15:23:54+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:33b7efa",
+      "synth:provider=claude-cli",
+      "branch:62-extend-misroute-guard",
+      ".github/copilot-instructions.md",
+      ".windsurf/rules/hunch.md",
+      "AGENTS.md",
+      "CLAUDE.md"
+    ],
+    "last_verified": "2026-09-11T13:24:12.212Z"
+  },
+  "date": "2026-09-11T15:23:54+02:00"
+}
