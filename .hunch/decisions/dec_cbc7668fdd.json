@@ -1,8 +1,8 @@
 {
   "id": "dec_cbc7668fdd",
   "title": "Remove dynamic record-count statistics from instruction files",
-  "topic": null,
-  "status": "accepted",
+  "topic": "grounding.doc-content-scope",
+  "status": "superseded",
   "context": "Hunch (engineering memory) holds counts of decisions, bugs, constraints, and components that change as the graph evolves. These statistics were embedded in instruction files (Cursor, Copilot, Windsurf rules, CLAUDE.md, AGENTS.md), causing these files to appear stale or changed every time Hunch updated, even when semantic content was identical.",
   "decision": "Strip the quantitative record-count sentence (\"It currently holds **259 decisions, 2 bugs, 28 constraints, 21 components, 3 policies, 1 open findings**.\") from all instruction and documentation files. Keep only the descriptive definition of what Hunch is.",
   "consequences": [
@@ -74,15 +74,16 @@
   "related_files": [
     ".github/copilot-instructions.md",
     ".windsurf/rules/hunch.md",
+    ".cursor/rules/hunch.mdc",
     "AGENTS.md",
     "CLAUDE.md"
   ],
   "supersedes": null,
-  "superseded_by": null,
+  "superseded_by": "dec_c6385a2ac1",
   "caused_by_bug": null,
   "commit": "33b7efa",
   "valid_from": "2026-09-11T15:23:54+02:00",
-  "valid_to": null,
+  "valid_to": "2026-09-11T13:24:12.212Z",
   "retired": {
     "symbols": [],
     "deps": []
