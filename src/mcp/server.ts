@@ -80,7 +80,7 @@ import { applyImportedAdrReview, pendingImportedAdrReviews } from "../core/impor
 import { issueCaptureToken as issueToken, consumeCaptureToken as consumeToken } from "../core/capturetoken.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 type ToolResult = {
   content: Array<{ type: "text"; text: string }>;
@@ -342,38 +342,54 @@ function deepestContainer(f: string, worktrees: readonly string[]): string | nul
 }
 
 /** The worktree whose own directory tree most specifically contains ABSOLUTE path
- *  `f` AS SPELLED — never following a symlink, unlike `deepestContainer`. A symlink
- *  physically sitting INSIDE a worktree, whose target lives elsewhere (e.g. a
- *  shared cache file), is still legitimately "at" that worktree: `deepestContainer`
- *  alone resolves such an `f` to whichever worktree the symlink's TARGET lives in,
- *  misattributing a file that genuinely exists where it's spelled and refusing an
+ *  `f` AS PHYSICALLY PLACED — its own final path component is never resolved
+ *  through a symlink, unlike `deepestContainer`. A symlink physically sitting
+ *  INSIDE a worktree, whose target lives elsewhere (e.g. a shared cache file), is
+ *  still legitimately "at" that worktree: `deepestContainer` alone resolves such
+ *  an `f` to whichever worktree the symlink's TARGET lives in, misattributing a
+ *  file that genuinely exists where it's spelled and refusing an
  *  already-correctly-homed write (PR #76 review round 9 I1 — the absolute-path
  *  twin of round 8 M2, which fixed only the relative spelling of this same shape).
  *  Ranked by the SAME "deepest/longest match" rule as the canonical lens, so a
  *  NESTED worktree still correctly out-ranks its own physically-containing parent
  *  root here too — this lens does not, on its own, relax that boundary.
  *
- *  A ".." segment does NOT need special-casing here, even one immediately
- *  following a symlink component: an earlier version of this function
- *  disqualified any `f` containing one, reasoning that ".." resolves relative
- *  to a symlink's TARGET rather than its lexical parent — verified false by
- *  direct kernel-level testing (a real `stat()`/`open()`, not `resolve()` or
- *  `realpath()` alone): POSIX pathname resolution cancels ".." against the
- *  pathname component immediately preceding it LEXICALLY, never re-entering a
- *  symlink's target to resolve it — exactly what `path_resolution(7)` documents
- *  and what plain string-based `resolve()`/`relative()` already compute. That
- *  blanket disqualification was itself a false-positive source (PR #76 review
- *  round 10 C1: a symlink at root reached via a harmless `sub/../` prefix was
- *  wrongly refused, on all three tools, by a "safety" check that was actively
- *  wrong rather than merely conservative). */
+ *  Every path component EXCEPT the final one IS resolved through the kernel
+ *  (`canonicalRootPath` on `dirname(f)`) before comparison, with the raw
+ *  `basename(f)` reattached afterward. A round-10 version of this function
+ *  compared `f` purely lexically (plain `resolve()`/`relative()`, no realpath
+ *  anywhere), on the theory that POSIX cancels ".." against the pathname
+ *  component immediately preceding it lexically, never re-entering a symlink's
+ *  target — that theory is FALSE. Direct kernel-level testing (a real
+ *  `open()`/`readFile()` on a constructed symlink+".." path, comparing file
+ *  identity, not just `resolve()`/`realpath()` string output) shows the kernel
+ *  cancels ".." against the parent of the CURRENT LOOKUP DIRECTORY, which after
+ *  traversing a symlink component is the symlink's TARGET's parent — exactly what
+ *  `path_resolution(7)` documents, and the opposite of round 10's claim (PR #76
+ *  review round 11 C1). A purely lexical comparison therefore disagreed with the
+ *  kernel on any `f` containing symlink-then-".." — both as a false positive (a
+ *  symlinked dir physically inside a sibling worktree, entry
+ *  `<worktree>/cache/../stray.ts` really resolving OUTSIDE every worktree, wrongly
+ *  attributed to `<worktree>`) and a false negative (an alias symlink at root
+ *  pointing into a sibling worktree, entry `<root>/alias/../only-in-wt.ts` really
+ *  resolving INSIDE the sibling, wrongly attributed to nothing). Resolving every
+ *  component except the last through the kernel fixes both directions while still
+ *  preserving this function's whole reason to exist: the final component — the
+ *  thing that might itself BE the symlink whose physical location we're asking
+ *  about — is still never resolved through. A round-9 version disqualified any
+ *  ".."-bearing `f` outright as a defensive measure; that was ALSO wrong (PR #76
+ *  review round 10 C1), refusing harmless input on all three tools — this version
+ *  computes the correct answer instead of refusing to answer. */
 function lexicalDeepestContainer(f: string, worktrees: readonly string[]): string | null {
+  const spelled = join(canonicalRootPath(dirname(f)), basename(f));
   let best: string | null = null;
   let bestLen = -1;
   for (const wt of worktrees) {
-    if (!isWithin(wt, f)) continue;
-    if (wt.length > bestLen) {
+    const canonWt = canonicalRootPath(wt);
+    if (!isWithin(canonWt, spelled)) continue;
+    if (canonWt.length > bestLen) {
       best = wt;
-      bestLen = wt.length;
+      bestLen = canonWt.length;
     }
   }
   return best;

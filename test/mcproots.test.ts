@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -430,16 +430,18 @@ test("misroutedWorktreeCandidates: direct unit coverage (issue #54 review, I2)",
     }
   }
   // A THIRD spelling of the identical symlink-at-root shape: the absolute path
-  // to the symlink prefixed with a harmless "sub/../" that lexically cancels
-  // to nothing. An earlier version of the lexical lens disqualified ANY ".."-
-  // bearing absolute path outright, reasoning ".." might resolve relative to
-  // a symlink's TARGET rather than its lexical parent -- verified false by a
-  // direct kernel-level test (a real stat()/open(), not resolve()/realpath()
-  // alone): POSIX pathname resolution cancels ".." against the LEXICALLY
-  // preceding component, never re-entering a symlink's target, exactly what
-  // path.resolve()/relative() already compute. That "safety" check was itself
-  // the false-positive source, refusing all three tools (PR #76 review round
-  // 10 C1).
+  // to the symlink prefixed with a harmless "sub/../" where "sub" is a REAL
+  // directory (not a symlink) -- lexical string-collapse and real kernel
+  // resolution agree here, since ".." after a genuine directory component
+  // cancels the same way both ways (PR #76 review round 11 table row: ".."
+  // after a real dir). `path.join` would silently collapse the ".." at
+  // CONSTRUCTION time, producing a string with no ".." segment left to
+  // exercise the code under test at all -- exactly the vacuous-test bug round
+  // 11 found in an earlier version of this test (it used `join()` and never
+  // created "sub" on disk, so it passed unchanged against the PRE-FIX code
+  // too). Built as a raw template string instead, with "sub" actually created
+  // on disk so the kernel real-resolves it rather than ENOENT'ing, and
+  // asserted to still literally contain "..".
   if (process.platform !== "win32") {
     const fixture = repoWithWorktree();
     const targetDir = join(fixture.worktree, "shared-target");
@@ -447,12 +449,91 @@ test("misroutedWorktreeCandidates: direct unit coverage (issue #54 review, I2)",
     writeFileSync(join(targetDir, "shared.ts"), "export const shared = 1;\n");
     const linkPath = join(fixture.root, "shared-link.ts");
     symlinkSync(join(targetDir, "shared.ts"), linkPath, "file");
-    const dottedPath = join(fixture.root, "sub", "..", "shared-link.ts");
+    mkdirSync(join(fixture.root, "sub"), { recursive: true });
+    const dottedPath = `${fixture.root}/sub/../shared-link.ts`;
     try {
+      assert.ok(dottedPath.split("/").includes(".."), "test input must actually retain a '..' segment");
+      assert.ok(statSync(dottedPath).isFile(), "the kernel must resolve this dotted path to the real symlinked file");
       assert.deepEqual(
         misroutedWorktreeCandidates(fixture.root, [dottedPath]),
         [],
-        "a '..'-prefixed absolute spelling of a symlink AT root pointing into a sibling worktree must not be treated as a misroute",
+        "a '..'-prefixed absolute spelling (after a REAL directory) of a symlink AT root pointing into a sibling worktree must not be treated as a misroute",
+      );
+    } finally {
+      try { rmSync(linkPath, { force: true }); } catch { /* best effort */ }
+      fixture.cleanup();
+    }
+  }
+  // The genuinely adversarial shape round 11 found: ".." immediately after a
+  // SYMLINK component (not a real directory) does NOT cancel lexically at the
+  // kernel level -- it cancels against the symlink's resolved TARGET's parent
+  // (`path_resolution(7)`; a round-10 doc comment claimed the opposite and was
+  // independently re-verified false via `open()`/`readFile()` identity checks,
+  // not merely `resolve()`/`realpath()` output). False-positive direction: a
+  // symlinked directory physically inside a worktree (the "shared cache" shape
+  // `lexicalDeepestContainer` exists to serve) whose OWN target's parent holds
+  // an unrelated file. The raw string LEXICALLY collapses to a path inside the
+  // worktree; the kernel resolves it to a file entirely outside every
+  // worktree. Expected `[]` -- the guard must not invent a misroute for
+  // content that doesn't live in any known worktree (PR #76 review round 11
+  // C1).
+  if (process.platform !== "win32") {
+    const fixture = repoWithWorktree();
+    const outsideContainer = mkdtempSync(join(realpathSync(tmpdir()), "hunch-roots-outside-"));
+    mkdirSync(join(outsideContainer, "outside"));
+    writeFileSync(join(outsideContainer, "stray.ts"), "export const stray = 1;\n");
+    mkdirSync(join(fixture.worktree, "cache"));
+    const linkPath = join(fixture.worktree, "cache", "link");
+    symlinkSync(join(outsideContainer, "outside"), linkPath, "dir");
+    const dottedPath = `${fixture.worktree}/cache/link/../stray.ts`;
+    try {
+      assert.ok(dottedPath.split("/").includes(".."), "test input must actually retain a '..' segment");
+      assert.ok(statSync(dottedPath).isFile(), "the kernel must resolve this dotted path to a real file");
+      // realpathSync.native (a true libuv/kernel call), not plain realpathSync
+      // (a pure-JS reimplementation) -- the JS version disagrees with the
+      // kernel on exactly this "..' after a symlink" shape (confirmed by
+      // direct experiment), which is why canonicalRootPath (src/mcp/roots.ts)
+      // uses .native too.
+      assert.equal(
+        realpathSync.native(dottedPath),
+        realpathSync.native(join(outsideContainer, "stray.ts")),
+        "sanity: the kernel must resolve this path through the symlink's target's parent, not lexically",
+      );
+      assert.deepEqual(
+        misroutedWorktreeCandidates(fixture.root, [dottedPath]),
+        [],
+        "'..' after a symlink component resolving OUTSIDE every worktree must not be misattributed to the worktree the symlink physically sits in",
+      );
+    } finally {
+      try { rmSync(linkPath, { force: true }); } catch { /* best effort */ }
+      rmSync(outsideContainer, { recursive: true, force: true });
+      fixture.cleanup();
+    }
+  }
+  // The false-negative twin: a symlink physically AT root pointing into a
+  // SUBDIRECTORY of a sibling worktree, spelled with a trailing ".." that the
+  // kernel cancels back up to the worktree itself (not root, and not the
+  // subdirectory) -- the shape #54 exists to catch, reachable through this
+  // specific "..'"-after-symlink spelling. Expected the worktree, not "[]".
+  if (process.platform !== "win32") {
+    const fixture = repoWithWorktree();
+    mkdirSync(join(fixture.worktree, "sub"));
+    writeFileSync(join(fixture.worktree, "only-in-wt.ts"), "export const onlyInWt = 1;\n");
+    const linkPath = join(fixture.root, "alias");
+    symlinkSync(join(fixture.worktree, "sub"), linkPath, "dir");
+    const dottedPath = `${fixture.root}/alias/../only-in-wt.ts`;
+    try {
+      assert.ok(dottedPath.split("/").includes(".."), "test input must actually retain a '..' segment");
+      // realpathSync.native, not plain realpathSync -- see the sibling test above.
+      assert.equal(
+        realpathSync.native(dottedPath),
+        realpathSync.native(join(fixture.worktree, "only-in-wt.ts")),
+        "sanity: the kernel must resolve this path back into the worktree via the symlink's target's parent",
+      );
+      assert.deepEqual(
+        misroutedWorktreeCandidates(fixture.root, [dottedPath]),
+        [fixture.worktree],
+        "'..' after a symlink component resolving INSIDE a sibling worktree must still be recognized as belonging to it",
       );
     } finally {
       try { rmSync(linkPath, { force: true }); } catch { /* best effort */ }
