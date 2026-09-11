@@ -1,8 +1,8 @@
 {
   "id": "dec_729a7d570c",
   "title": "Remove dynamic counts from committed Hunch documentation",
-  "topic": null,
-  "status": "accepted",
+  "topic": "grounding.doc-content-scope",
+  "status": "superseded",
   "context": "Hunch documentation (decision/bug/constraint/policy counts) was auto-generated via MCP server, but multiple tool installations created drift. In-tree CLI and globally-installed versions produced different outputs, causing stale counts in committed docs.",
   "decision": "Strip specific counts (\"257 decisions, 2 bugs, 28 constraints, 21 components, 3 policies, 1 open findings\") from Hunch headers in AGENTS.md, CLAUDE.md, and IDE rule files. Keep only the high-level description. Direct users to query hunch_* MCP tools for current state instead of reading committed snapshots.",
   "consequences": [
@@ -74,15 +74,16 @@
   "related_files": [
     ".github/copilot-instructions.md",
     ".windsurf/rules/hunch.md",
+    ".cursor/rules/hunch.mdc",
     "AGENTS.md",
     "CLAUDE.md"
   ],
   "supersedes": null,
-  "superseded_by": null,
+  "superseded_by": "dec_c6385a2ac1",
   "caused_by_bug": null,
   "commit": "2950159",
   "valid_from": "2026-09-11T14:52:21+02:00",
-  "valid_to": null,
+  "valid_to": "2026-09-11T12:52:36.939Z",
   "retired": {
     "symbols": [],
     "deps": []

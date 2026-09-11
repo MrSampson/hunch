@@ -1,0 +1,45 @@
+{
+  "id": "dec_d6ef03224f",
+  "title": "Absolute file evidence resolves to its DEEPEST containing worktree, canonicalized, by exact path segment",
+  "topic": "mcp.misroute-guard.absolute-paths",
+  "status": "accepted",
+  "context": "dec_9ed4caea05 (now corrected here) added lexicalDeepestContainer as a second, purely-lexical ownership lens for absolute file evidence, and its round-10 fix removed an earlier blanket '..'-disqualification on the theory -- stated as verified fact, including in a doc comment citing path_resolution(7) -- that POSIX cancels '..' against the LEXICALLY preceding pathname component, never re-entering a symlink's target. Round 11 (mr-complexity-reviewer) proved that theory FALSE and reproduced two live bugs from it against the real exported function at commit fb4f5ed: (1) a false positive -- a symlinked directory physically inside a worktree (the 'shared cache' shape this lens exists to serve) whose real content, spelled with a '..' after the symlink component, kernel-resolves OUTSIDE every worktree, was still misattributed to the worktree by the purely-lexical string comparison; (2) a false negative -- a symlink physically at root pointing into a SUBDIRECTORY of a sibling worktree, spelled with a trailing '..' that the kernel cancels back UP INTO the worktree itself, was attributed to nothing because the lexical string comparison computed a different (wrong) target. I independently re-verified the correct kernel semantics myself with a direct experiment (fs.realpathSync.native plus a real readFile on a constructed symlink+'..' path, comparing file identity, not just resolve()/realpath() string output -- and separately discovered plain (non-native) Node realpathSync itself disagrees with the kernel on this exact shape, which is why canonicalRootPath in src/mcp/roots.ts has always used realpathSync.native): the kernel cancels '..' against the parent of the CURRENT LOOKUP DIRECTORY, which after traversing a symlink component is the symlink's TARGET's parent, not the symlink's own lexical location. This is exactly what path_resolution(7) documents, and is the OPPOSITE of round 10's claim.",
+  "decision": "lexicalDeepestContainer no longer compares `f` purely lexically. Every path component EXCEPT the final one is now resolved through the real kernel (`canonicalRootPath(dirname(f))`, i.e. realpathSync.native), and the raw, never-resolved `basename(f)` is reattached to it before the worktree-containment comparison; each candidate worktree path is canonicalized the same way for the comparison, mirroring deepestContainer's own canonicalize-and-rank pattern. This fixes '..'-after-symlink in both directions (false positive and false negative) while still preserving the function's whole reason to exist: the FINAL path component -- the thing that might itself BE the symlink whose physical location the lens is asking about -- is still never resolved through, so a symlink physically sitting inside a worktree but pointing elsewhere is still correctly attributed to the worktree it physically sits in, not its target.",
+  "consequences": [
+    "A '..' segment immediately following a symlink path component is now resolved per real kernel semantics (via realpathSync.native on everything but the final component), not string-collapsed -- closing both the false-positive and false-negative reproduced against the real function",
+    "The lens is no longer 'purely lexical' in the literal sense -- its doc comment and this decision now describe it as a PHYSICAL-LOCATION lens (never resolves its own final component through a symlink) rather than a lexical one, which is a more accurate name for what round 9 actually needed",
+    "Node's plain (non-native) realpathSync must never be used anywhere in this guard's codepaths or its tests for this exact reason -- it disagrees with the kernel on '..'-after-symlink the same way naive lexical string math does; only realpathSync.native (or an equivalent real stat()/open() syscall) may be trusted for this class of question",
+    "The round-10 regression test for this shape was found to be VACUOUS (built its dotted path via path.join(), which collapses '..' at construction time before the code under test ever sees it, and never created the intermediate directory on disk) -- replaced with a non-vacuous version (raw template-string path, RED-verified against the pre-fix commit) plus two new adversarial cases reproducing the false positive and false negative directly against the exported function"
+  ],
+  "alternatives_rejected": [
+    "Keep the round-10 purely-lexical comparison and instead special-case '..'-after-symlink with an ad-hoc string rule -- rejected: the kernel's actual rule (cancel against the CURRENT LOOKUP DIRECTORY's parent, which changes after every symlink traversal, not just the immediately preceding one) is exactly what a real recursive path-resolution call computes; reimplementing it by hand risks yet another subtly-wrong special case, the same failure mode that produced rounds 9 and 10",
+    "Resolve the WHOLE absolute path f (including its final component) through canonicalRootPath, collapsing lexicalDeepestContainer into deepestContainer -- rejected: this reintroduces the round-9 bug it exists to fix (a symlink physically inside a worktree but pointing elsewhere would resolve to wherever it points, not where it physically sits)",
+    "Disqualify any '..'-bearing f outright as a defensive measure (round 9's original approach) -- already rejected in dec_9ed4caea05 for refusing harmless input; still rejected here for the same reason plus the fact that it doesn't even correctly identify which inputs are actually unsafe to compare lexically"
+  ],
+  "rejected_tripwires": [],
+  "related_components": [],
+  "related_files": [
+    "src/mcp/server.ts",
+    "test/mcproots.test.ts"
+  ],
+  "supersedes": "dec_9ed4caea05",
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "fb4f5ed",
+  "valid_from": "2026-09-11T13:19:17.901Z",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "premises": [],
+  "provenance": {
+    "source": "agent_recorded",
+    "confidence": 0.75,
+    "evidence": [
+      "src/mcp/server.ts",
+      "test/mcproots.test.ts"
+    ]
+  },
+  "date": "2026-09-11T13:19:17.901Z"
+}

@@ -2,7 +2,7 @@
   "id": "dec_9ed4caea05",
   "title": "Absolute file evidence resolves to its DEEPEST containing worktree, canonicalized, by exact path segment",
   "topic": "mcp.misroute-guard.absolute-paths",
-  "status": "accepted",
+  "status": "superseded",
   "context": "dec_d09ab8e9a0 (now corrected/extended here) introduced deepestContainer/isWithin for absolute file evidence. Two further review rounds found and closed two more gaps in the same area: round 4 (mr-complexity-reviewer) found the existence check used bare existsSync, which is true for DIRECTORIES -- so a single directory-shaped evidence entry (or the natural '.'/\"\" an agent might send meaning 'the repo itself') silenced the guard for every OTHER entry in the same call, verified end-to-end through the real MCP server against a directory-shaped related_files entry this repo's own graph already carried (vscode-extension/). Round 5 found the containment hardening (deepestContainer/isWithin, rounds 3-4) had only ever applied to ABSOLUTE entries -- a RELATIVE entry containing a '..' segment that escapes root's own tree (e.g. '../<worktree>/only-in-worktree.ts', the IDENTICAL #54 misroute merely spelled relatively) bypassed containment entirely. Rounds 8-10 then found a THIRD shape: a symlink physically AT root (or another worktree), targeting a sibling worktree's file, was misattributed by deepestContainer's symlink-following (canonical) semantics alone -- round 8 fixed the relative spelling via lexical (non-canonicalizing) escape-classification in the caller; round 9 found the ABSOLUTE spelling of the identical shape (the spelling this codebase's own comments call the natural one agents send) was STILL broken, reachable through all three tools, since existsUnder's absolute branch used deepestContainer (canonical/symlink-following) exclusively; round 10 found the round-9 fix's OWN new '..'-disqualification safety check was itself wrong -- verified false by a direct kernel-level test (real stat()/open(), not resolve()/realpath() alone) that POSIX pathname resolution cancels '..' against the LEXICALLY preceding component, never re-entering a symlink's target (documented in path_resolution(7)) -- so the 'safety' check was refusing a harmless case on all three tools.",
   "decision": "existsUnder now checks isFile(f), never mere existsSync(f) -- a directory can never satisfy either the 'exists at root' escape hatch or a candidate match, closing the directory/empty-string bypass on the existence side (the git-history side of this same class is a separate decision, mcp.misroute-guard.history-check). misroutedWorktreeCandidates now pre-processes relatedFiles before any check: a relative entry is resolved against ROOT specifically (the only base the server actually has -- never re-resolved per candidate, which would answer a different, meaningless question) and promoted to an absolute entry ONLY if that resolution escapes root's own tree; a non-escaping relative entry keeps the original, intentional multi-location check (the same suffix tried at every candidate directory in turn) unchanged. A promoted (escaped) relative entry then runs through the identical deepestContainer/isFile logic an absolute entry gets. For an ABSOLUTE entry specifically, existsUnder now checks TWO INDEPENDENT lenses, either sufficient: deepestContainer (canonical, symlink-following -- for a symlink ALIAS pointing at a whole worktree) and lexicalDeepestContainer (string-only, never follows a symlink -- for a symlink physically SITTING INSIDE a worktree whose target lives elsewhere). Each lens independently resolves nested-vs-parent worktree ambiguity via its own 'deepest/longest match' ranking, so the OR of the two never lets a parent root reclaim a file that legitimately belongs to a worktree nested inside it. lexicalDeepestContainer trusts plain path.resolve()/relative() for '..' collapsing unconditionally -- no symlink-crossing special case -- since that lexical computation already matches real POSIX kernel pathname resolution for '..', verified empirically.",
   "consequences": [
@@ -26,11 +26,11 @@
     "test/mcproots.test.ts"
   ],
   "supersedes": "dec_d467bdebf1",
-  "superseded_by": null,
+  "superseded_by": "dec_d6ef03224f",
   "caused_by_bug": null,
   "commit": null,
   "valid_from": "2026-09-11T07:57:16.415Z",
-  "valid_to": null,
+  "valid_to": "2026-09-11T13:19:17.901Z",
   "retired": {
     "symbols": [],
     "deps": []
