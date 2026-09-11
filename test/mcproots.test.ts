@@ -606,6 +606,74 @@ test("misroutedWorktreeCandidates: direct unit coverage (issue #54 review, I2)",
       try { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
     }
   }
+  // The other half of round 13's own shape: a ".." popping a plain REAL
+  // directory that is reached THROUGH a symlink EARLIER in the same path (not
+  // a harmless ".." unrelated to any symlink, and not ".." popping the symlink
+  // itself -- ".." popping a plain directory reached BY WAY OF an earlier
+  // symlink). The popped component ("sub") is not itself a symlink, so the
+  // kernel must NOT be consulted; consulting it anyway (e.g. "just
+  // canonicalize the whole accumulated prefix at every '..', drop the
+  // isSymbolicLink() check" -- a plausible future simplification of
+  // walkPhysicalLocation) follows the EARLIER symlink and reproduces round
+  // 12's exact false positive again. Round 13's own test covers ".." BEFORE
+  // the symlink; only this shape covers ".." INSIDE the symlinked tree (PR
+  // #76 review round 14 I1).
+  if (process.platform !== "win32") {
+    const root = repo("hunch-roots-dotdot-inside-symlink-");
+    mkdirSync(join(root, ".worktrees"), { recursive: true });
+    const nested = join(root, ".worktrees", "feature");
+    git(root, "worktree", "add", "-q", "-b", "feature-dotdot-inside", nested);
+    mkdirSync(join(root, "src", "sub"), { recursive: true });
+    writeFileSync(join(root, "src", "helper.ts"), "export const helper = 1;\n");
+    const linkPath = join(nested, "shared-src");
+    symlinkSync(join(root, "src"), linkPath, "dir");
+    const evidence = `${nested}/shared-src/sub/../helper.ts`;
+    try {
+      assert.ok(evidence.split("/").includes(".."), "test input must retain a '..' segment");
+      assert.ok(statSync(evidence).isFile(), "the kernel must resolve this path to the real file");
+      assert.deepEqual(
+        misroutedWorktreeCandidates(nested, [evidence]),
+        [],
+        "a '..' popping a plain directory must stay lexical even when an EARLIER component in the same path is a symlink",
+      );
+    } finally {
+      try { rmSync(linkPath, { force: true }); } catch { /* best effort */ }
+      try { git(root, "worktree", "remove", "--force", nested); } catch { /* best effort */ }
+      try { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+    }
+  }
+  // A directory NAME that literally contains a backslash byte -- ordinary and
+  // legal on POSIX, where "\" is not a path separator. Splitting on "\" as
+  // well as "/" unconditionally (an earlier version of walkPhysicalLocation)
+  // chops that single real directory entry into two synthetic components,
+  // misattributing a file that physically resolves OUTSIDE every worktree to
+  // whichever worktree the FIRST synthetic component's name happens to match
+  // (PR #76 review round 14 C1).
+  if (process.platform !== "win32") {
+    const root = repo("hunch-roots-backslash-name-");
+    mkdirSync(join(root, ".worktrees"), { recursive: true });
+    const nested = join(root, ".worktrees", "feature");
+    git(root, "worktree", "add", "-q", "-b", "feature-backslash-name", nested);
+    const outsideContainer = mkdtempSync(join(realpathSync(tmpdir()), "hunch-roots-backslash-outside-"));
+    mkdirSync(join(outsideContainer, "dir"));
+    writeFileSync(join(outsideContainer, "dir", "helper.ts"), "export const helper = 1;\n");
+    const weirdName = "feature\\tmp";
+    const linkPath = join(root, ".worktrees", weirdName);
+    symlinkSync(join(outsideContainer, "dir"), linkPath, "dir");
+    const evidence = join(root, ".worktrees", weirdName, "helper.ts");
+    try {
+      assert.deepEqual(
+        misroutedWorktreeCandidates(root, [evidence]),
+        [],
+        "a literal backslash byte in a directory name must not be read as a path separator on POSIX",
+      );
+    } finally {
+      try { rmSync(linkPath, { force: true }); } catch { /* best effort */ }
+      rmSync(outsideContainer, { recursive: true, force: true });
+      try { git(root, "worktree", "remove", "--force", nested); } catch { /* best effort */ }
+      try { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+    }
+  }
   // pathKnownToHistory must reject an EMPTY string outright rather than let it
   // match the trailing "" element `-z`'s NUL-termination always produces --
   // defense in depth for the function's own documented contract, even though

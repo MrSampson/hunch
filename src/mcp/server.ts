@@ -80,7 +80,7 @@ import { applyImportedAdrReview, pendingImportedAdrReviews } from "../core/impor
 import { issueCaptureToken as issueToken, consumeCaptureToken as consumeToken } from "../core/capturetoken.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, statSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 
 type ToolResult = {
   content: Array<{ type: "text"; text: string }>;
@@ -357,13 +357,19 @@ function deepestContainer(f: string, worktrees: readonly string[]): string | nul
  *  positive (PR #76 review round 13 C1). `usedKernel` tells the caller
  *  whether any kernel call actually happened, so it knows whether `path` is
  *  canonical (and therefore whether a worktree path must be canonicalized
- *  too before comparing) or still purely lexical. Splits on either slash
- *  character, not just the platform `sep`, so a backslash-spelled path isn't
- *  silently read as one unsplittable component with no ".." ever detected
- *  (PR #76 review round 13 I1). */
+ *  too before comparing) or still purely lexical. Splits on `\` as well as
+ *  `/` ONLY when the platform separator is itself `\` (win32) -- on POSIX,
+ *  `\` is an ordinary, legal filename byte, not a separator; unconditionally
+ *  treating it as one (an earlier version of this function) chops a single
+ *  real directory entry into two synthetic components, which can misattribute
+ *  a file whose name happens to contain a literal backslash to whichever
+ *  worktree the FIRST synthetic component's name matches (PR #76 review round
+ *  14 C1). A win32 path may legitimately use either separator, so both are
+ *  split there. */
 function walkPhysicalLocation(f: string): { path: string; usedKernel: boolean } {
   const root = parse(f).root;
-  const segments = f.slice(root.length).split(/[\\/]/).filter(Boolean);
+  const splitter = sep === "\\" ? /[\\/]/ : "/";
+  const segments = f.slice(root.length).split(splitter).filter(Boolean);
   let phys = root || sep;
   let usedKernel = false;
   for (const seg of segments) {
@@ -399,9 +405,10 @@ function walkPhysicalLocation(f: string): { path: string; usedKernel: boolean } 
  *  NESTED worktree still correctly out-ranks its own physically-containing parent
  *  root here too — this lens does not, on its own, relax that boundary.
  *
- *  ONLY when `f` contains a ".." segment does this function resolve anything
- *  through the kernel at all — and even then, only `dirname(f)`
- *  (`canonicalRootPath`), with the raw `basename(f)` reattached afterward. A
+ *  Delegates to `walkPhysicalLocation` (above), which decides PER PATH
+ *  COMPONENT whether the kernel needs consulting at all: a ".." only
+ *  triggers a kernel call when the specific component it pops is itself a
+ *  symlink, never merely because `f` happens to contain a ".." somewhere. A
  *  round-10 version compared `f` purely lexically always (plain
  *  `resolve()`/`relative()`, no realpath anywhere), on the theory that POSIX
  *  cancels ".." against the pathname component immediately preceding it
@@ -467,7 +474,11 @@ function lexicalDeepestContainer(f: string, worktrees: readonly string[]): strin
     // -- comparing a canonical spelled path against a raw wt string would
     // spuriously fail to match even a worktree with no symlinks in its own
     // path, on any platform where the canonical form differs cosmetically
-    // (e.g. a case-preserving vs case-folding mount).
+    // (e.g. a case-preserving vs case-folding mount). `git worktree list`
+    // already returns realpaths in every fixture this suite has produced, so
+    // this branch is defence-in-depth against a `worktrees` source that one
+    // day doesn't -- not something a current test can force to discriminate
+    // (PR #76 review round 14 minor).
     const compareWt = usedKernel ? canonicalRootPath(wt) : wt;
     if (!isWithin(compareWt, spelled)) continue;
     if (compareWt.length > bestLen) {
