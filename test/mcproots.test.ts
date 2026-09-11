@@ -429,6 +429,36 @@ test("misroutedWorktreeCandidates: direct unit coverage (issue #54 review, I2)",
       fixture.cleanup();
     }
   }
+  // A THIRD spelling of the identical symlink-at-root shape: the absolute path
+  // to the symlink prefixed with a harmless "sub/../" that lexically cancels
+  // to nothing. An earlier version of the lexical lens disqualified ANY ".."-
+  // bearing absolute path outright, reasoning ".." might resolve relative to
+  // a symlink's TARGET rather than its lexical parent -- verified false by a
+  // direct kernel-level test (a real stat()/open(), not resolve()/realpath()
+  // alone): POSIX pathname resolution cancels ".." against the LEXICALLY
+  // preceding component, never re-entering a symlink's target, exactly what
+  // path.resolve()/relative() already compute. That "safety" check was itself
+  // the false-positive source, refusing all three tools (PR #76 review round
+  // 10 C1).
+  if (process.platform !== "win32") {
+    const fixture = repoWithWorktree();
+    const targetDir = join(fixture.worktree, "shared-target");
+    mkdirSync(targetDir, { recursive: true });
+    writeFileSync(join(targetDir, "shared.ts"), "export const shared = 1;\n");
+    const linkPath = join(fixture.root, "shared-link.ts");
+    symlinkSync(join(targetDir, "shared.ts"), linkPath, "file");
+    const dottedPath = join(fixture.root, "sub", "..", "shared-link.ts");
+    try {
+      assert.deepEqual(
+        misroutedWorktreeCandidates(fixture.root, [dottedPath]),
+        [],
+        "a '..'-prefixed absolute spelling of a symlink AT root pointing into a sibling worktree must not be treated as a misroute",
+      );
+    } finally {
+      try { rmSync(linkPath, { force: true }); } catch { /* best effort */ }
+      fixture.cleanup();
+    }
+  }
   // pathKnownToHistory must reject an EMPTY string outright rather than let it
   // match the trailing "" element `-z`'s NUL-termination always produces --
   // defense in depth for the function's own documented contract, even though

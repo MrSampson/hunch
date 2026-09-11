@@ -1,8 +1,8 @@
 {
   "id": "dec_ae9a504e68",
   "title": "Remove hardcoded statistics from documentation files",
-  "topic": null,
-  "status": "accepted",
+  "topic": "grounding.doc-content-scope",
+  "status": "superseded",
   "context": "Multiple documentation files (.cursor, .github, .windsurf, AGENTS.md, CLAUDE.md) contained hardcoded Hunch statistics that became stale and required manual regeneration to stay in sync with actual state. This had to be fixed multiple times across the session.",
   "decision": "Stop including auto-generated statistics (decision counts, bug counts, constraint counts, etc.) in committed documentation. Direct users to consult the Hunch MCP tools instead for real-time state.",
   "consequences": [
@@ -79,11 +79,11 @@
     "CLAUDE.md"
   ],
   "supersedes": null,
-  "superseded_by": null,
+  "superseded_by": "dec_c6385a2ac1",
   "caused_by_bug": null,
   "commit": "f49be1c",
   "valid_from": "2026-09-11T14:24:12+02:00",
-  "valid_to": null,
+  "valid_to": "2026-09-11T12:44:41.821318Z",
   "retired": {
     "symbols": [],
     "deps": []

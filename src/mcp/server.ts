@@ -353,14 +353,20 @@ function deepestContainer(f: string, worktrees: readonly string[]): string | nul
  *  NESTED worktree still correctly out-ranks its own physically-containing parent
  *  root here too — this lens does not, on its own, relax that boundary.
  *
- *  Null whenever `f` contains a ".." segment: once ANY symlink resolves partway
- *  through a real path, a LATER ".." escapes relative to the RESOLVED location,
- *  not the string — lexical (string-only) math has no way to know that, so it
- *  cannot be trusted for a path containing one. That combination falls back to
- *  the canonical lens alone (which fails open, per `deepestContainer`'s own
- *  documented boundary), never toward a false positive. */
+ *  A ".." segment does NOT need special-casing here, even one immediately
+ *  following a symlink component: an earlier version of this function
+ *  disqualified any `f` containing one, reasoning that ".." resolves relative
+ *  to a symlink's TARGET rather than its lexical parent — verified false by
+ *  direct kernel-level testing (a real `stat()`/`open()`, not `resolve()` or
+ *  `realpath()` alone): POSIX pathname resolution cancels ".." against the
+ *  pathname component immediately preceding it LEXICALLY, never re-entering a
+ *  symlink's target to resolve it — exactly what `path_resolution(7)` documents
+ *  and what plain string-based `resolve()`/`relative()` already compute. That
+ *  blanket disqualification was itself a false-positive source (PR #76 review
+ *  round 10 C1: a symlink at root reached via a harmless `sub/../` prefix was
+ *  wrongly refused, on all three tools, by a "safety" check that was actively
+ *  wrong rather than merely conservative). */
 function lexicalDeepestContainer(f: string, worktrees: readonly string[]): string | null {
-  if (f.split(sep).includes("..")) return null;
   let best: string | null = null;
   let bestLen = -1;
   for (const wt of worktrees) {
