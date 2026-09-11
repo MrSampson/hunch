@@ -2,7 +2,7 @@
   "id": "dec_d467bdebf1",
   "title": "Check symlink ownership via both canonical and lexical paths",
   "topic": null,
-  "status": "accepted",
+  "status": "superseded",
   "context": "Symlinks sitting at root pointing into sibling worktrees were misattributed when spelled as absolute paths (the natural spelling agents send). The canonical lens alone followed the symlink to its target, incorrectly assigning it to the sibling, causing correctly-homed writes to be refused. Touches invariant(s): con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
   "decision": "Introduced `lexicalDeepestContainer`, a string-only (no symlink resolution) worktree-matching function. Modified `existsUnder`'s absolute branch to check BOTH lenses independently via OR logic: either the canonical (symlink-resolved) owner OR the lexical (spelled) owner claims the file, and the write proceeds. Each lens independently resolves nested-vs-parent ambiguity, so OR never lets root incorrectly reclaim a file genuinely nested inside a child worktree. Paths containing \"..\" disable the lexical lens (cannot trust string math after symlink resolution) and fall back to canonical alone.",
   "consequences": [
@@ -79,11 +79,11 @@
     "test/mcproots.test.ts"
   ],
   "supersedes": null,
-  "superseded_by": null,
+  "superseded_by": "dec_9ed4caea05",
   "caused_by_bug": null,
   "commit": "2a70fe9",
   "valid_from": "2026-09-11T14:24:00+02:00",
-  "valid_to": null,
+  "valid_to": "2026-09-11T07:57:16.415Z",
   "retired": {
     "symbols": [],
     "deps": []
