@@ -237,6 +237,37 @@ test("misroutedWorktreeCandidates: direct unit coverage (issue #54 review, I2)",
       fixture.cleanup();
     }
   }
+  // A DIRECTORY entry among the file evidence must not silence the guard for
+  // every OTHER entry in the same call: existsSync is true for directories, so
+  // pairing a real (existing-at-root) directory with a genuinely misrouted file
+  // used to disable the check entirely — including the natural "." / "" an agent
+  // might send meaning "the repo itself" (PR #76 review round 4 I1). "src" exists
+  // at root (repoWithWorktree's fixture has an app.ts at the top level, so its
+  // directory root always exists); "only-in-worktree.ts" exists only in the
+  // worktree.
+  {
+    const fixture = repoWithWorktree();
+    writeFileSync(join(fixture.worktree, "only-in-worktree.ts"), "export const x = 1;\n");
+    try {
+      assert.deepEqual(
+        misroutedWorktreeCandidates(fixture.root, [".", "only-in-worktree.ts"]),
+        [fixture.worktree],
+        `a directory entry ('.') paired with a genuinely misrouted file must not silence the guard`,
+      );
+      assert.deepEqual(
+        misroutedWorktreeCandidates(fixture.root, ["", "only-in-worktree.ts"]),
+        [fixture.worktree],
+        `an empty-string entry must not silence the guard either`,
+      );
+      assert.deepEqual(
+        misroutedWorktreeCandidates(fixture.root, [fixture.root, "only-in-worktree.ts"]),
+        [fixture.worktree],
+        `an ABSOLUTE directory entry (root itself) must not silence the guard either`,
+      );
+    } finally {
+      fixture.cleanup();
+    }
+  }
 });
 
 async function until(predicate: () => boolean, timeoutMs = 3_000): Promise<void> {

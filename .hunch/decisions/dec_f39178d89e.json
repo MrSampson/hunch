@@ -1,8 +1,8 @@
 {
   "id": "dec_f39178d89e",
   "title": "Check absolute paths directly using relative(), not by pre-normalization",
-  "topic": null,
-  "status": "accepted",
+  "topic": "mcp.misroute-guard.absolute-paths",
+  "status": "superseded",
   "context": "The misroute guard was meant to catch when agents record findings/decisions in the wrong checkout (worktree vs. root). A prior fix attempted to handle absolute paths by relativizing them against root before existence checks, but this failed: agents working in a sibling worktree naturally send paths rooted at their own cwd, which relativize to \"../…\" against root and get silently dropped — reintroducing the exact #54 bypass the guard exists to prevent. Touches invariant(s): con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
   "decision": "Replace pre-normalization (guardFiles, correctionScopeHint) with a path-aware existence check (existsUnder) that handles both relative and absolute entries directly: relative paths join onto the directory as before; absolute paths are checked AS THEMSELVES, confirmed via relative() to actually fall under that directory's own tree. An absolute path existing under a sibling worktree's tree is now direct positive evidence for that worktree, not a heuristic requiring normalization against root.",
   "consequences": [
@@ -83,11 +83,11 @@
     "test/mcproots.test.ts"
   ],
   "supersedes": null,
-  "superseded_by": null,
+  "superseded_by": "dec_9ed4caea05",
   "caused_by_bug": null,
   "commit": "5f687f2",
   "valid_from": "2026-09-11T09:12:40+02:00",
-  "valid_to": null,
+  "valid_to": "2026-09-11T09:04:50.972819Z",
   "retired": {
     "symbols": [
       "correctionScopeHint"

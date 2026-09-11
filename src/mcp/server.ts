@@ -79,7 +79,7 @@ import { premiseEscalations } from "../core/premises.js";
 import { applyImportedAdrReview, pendingImportedAdrReviews } from "../core/importReview.js";
 import { issueCaptureToken as issueToken, consumeCaptureToken as consumeToken } from "../core/capturetoken.js";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 
 type ToolResult = {
@@ -232,11 +232,23 @@ const destinationNote = (destRoot: string): string => {
  *
  *  Exported for direct unit testing (issue #54 review, I2) — the candidate logic is
  *  otherwise reachable only through a full MCP client/server integration test. */
+/** A relative entry that names the WHOLE tree as a git pathspec rather than one
+ *  file — "." (and its equivalents) — not just falsy. `existsUnder`'s `isFile`
+ *  check already rejects these (a directory is never a file), but
+ *  `pathKnownToHistory` passes the raw string straight to `git rev-list -- <f>`,
+ *  where "." matches virtually every commit — silently satisfying the
+ *  known-to-history escape hatch for ANY repo with history at all (PR #76 review
+ *  round 4 I1, the same class of bug the directory-entry fix above closes, found
+ *  by this fix's OWN regression test). */
+function isWholeTreePathspec(f: string): boolean {
+  return f === "." || f === "./" || f === ".\\";
+}
+
 export const misroutedWorktreeCandidates = (root: string, relatedFiles: readonly string[]): string[] => {
   if (!relatedFiles.length) return [];
   const worktrees = worktreePaths(root);
   if (relatedFiles.some((f) => existsUnder(root, f, worktrees))) return [];
-  if (relatedFiles.some((f) => !isAbsolute(f) && pathKnownToHistory(root, f))) return [];
+  if (relatedFiles.some((f) => f && !isWholeTreePathspec(f) && !isAbsolute(f) && pathKnownToHistory(root, f))) return [];
   const here = canonicalRootPath(root);
   const candidates: string[] = [];
   for (const candidate of worktrees) {
@@ -255,11 +267,19 @@ function isWithin(parent: string, child: string): boolean {
 }
 
 /** The worktree (from `worktrees`, which always includes root itself — see
- *  `worktreePaths`) whose OWN directory tree most SPECIFICALLY contains absolute
- *  path `f` — the deepest/longest match, not merely any containing ancestor. Null
- *  for a relative `f`, or an absolute one under none of the known worktrees. */
+ *  `worktreePaths`) whose OWN directory tree most SPECIFICALLY contains ABSOLUTE
+ *  path `f` — the deepest/longest match, not merely any containing ancestor. Its
+ *  sole caller (`existsUnder`) only ever passes an absolute `f`. Null when `f` is
+ *  under none of the known worktrees. `canonicalRootPath` resolves the WHOLE path
+ *  including `f`'s own final component, so a symlink reached from OUTSIDE a
+ *  worktree that happens to point INSIDE one is still found (the common case);
+ *  the inverse — a symlink INSIDE a worktree whose target lives outside every
+ *  known worktree — resolves to null and contributes nothing (fails open, not a
+ *  false positive; PR #76 review round 4 M2, left as a documented boundary rather
+ *  than fixed, since closing it needs testing containment against both the raw
+ *  and the canonical form and the guard is a documented backstop, not a complete
+ *  fix — see its own doc comment above `misroutedWorktreeCandidates`). */
 function deepestContainer(f: string, worktrees: readonly string[]): string | null {
-  if (!isAbsolute(f)) return null;
   const canonF = canonicalRootPath(f);
   let best: string | null = null;
   let bestLen = -1;
@@ -274,12 +294,30 @@ function deepestContainer(f: string, worktrees: readonly string[]): string | nul
   return best;
 }
 
+/** True when `p` names an existing FILE — never a directory. `existsSync` alone
+ *  would be true for a directory too; since a match here short-circuits the whole
+ *  misroute check (`misroutedWorktreeCandidates`'s early `.some()`), a single
+ *  DIRECTORY entry among a call's file evidence would silently disable the guard
+ *  for every other entry in the same call (PR #76 review round 4 I1) — including
+ *  the natural "." / "" an agent might send meaning "the repo" (`existsSync(join(
+ *  dir, ""))` is `existsSync(dir)`, always true), and a real committed example:
+ *  this repo's own graph already has a directory-shaped related_files entry
+ *  (`vscode-extension/`) that would have silenced the guard for that capture. */
+function isFile(p: string): boolean {
+  try {
+    return statSync(p).isFile();
+  } catch {
+    return false;
+  }
+}
+
 function existsUnder(dir: string, f: string, worktrees: readonly string[]): boolean {
+  if (!f) return false; // "" / "./" normalize to "" — nothing to compare, never `dir` itself
   if (isAbsolute(f)) {
     const container = deepestContainer(f, worktrees);
-    return !!container && canonicalRootPath(container) === canonicalRootPath(dir) && existsSync(f);
+    return !!container && canonicalRootPath(container) === canonicalRootPath(dir) && isFile(f);
   }
-  return existsSync(join(dir, f));
+  return isFile(join(dir, f));
 }
 
 /** Shared misroute-guard refusal for every auto-committing write tool that names
