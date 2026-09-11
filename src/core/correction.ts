@@ -87,7 +87,7 @@ export interface CorrectionInput {
  *  repo). The caller then falls back to "**", where the existing severity guard
  *  down-ranks a non-explicit blocking rule to a warning — fail-safe and honest, rather
  *  than a blocking rule enforced nowhere. */
-export function repoRelativeHint(rawHint: string, root?: string): string {
+function repoRelativeHint(rawHint: string, root?: string): string {
   if (!rawHint) return "";
   const looksAbsolute = isAbsolute(rawHint) || /^[a-zA-Z]:/.test(rawHint);
   if (!looksAbsolute) return rawHint;
@@ -95,16 +95,6 @@ export function repoRelativeHint(rawHint: string, root?: string): string {
   const rel = toPosixTarget(relative(root, rawHint));
   if (!rel || rel === ".." || rel.startsWith("../") || isAbsolute(rel) || /^[a-zA-Z]:/.test(rel)) return "";
   return rel;
-}
-
-/** The EXACT scope_hint_file normalization hunch_record_correction's write path
- *  uses (posix-ify, then repoRelativeHint), exported so the MCP handler's
- *  pre-write misroute-guard check compares against the SAME path the constraint
- *  will actually be scoped to — re-deriving this expression at a second call
- *  site would let the two silently diverge if this normalization ever changes
- *  (PR #76 review R2). */
-export function correctionScopeHint(rawScopeHintFile: string | undefined, root?: string): string {
-  return repoRelativeHint(rawScopeHintFile ? toPosixTarget(rawScopeHintFile) : "", root);
 }
 
 /**
@@ -121,7 +111,7 @@ export function buildCorrectionConstraint(input: CorrectionInput, now: string): 
   // A blank/"." scope hint would mint a meaningless or repo-wide constraint by
   // accident, so fall back to "**" (which the severity guard below then keeps
   // non-blocking unless applies_to_all was explicitly set).
-  const hinted = correctionScopeHint(input.scope_hint_file, input.root);
+  const hinted = repoRelativeHint(input.scope_hint_file ? toPosixTarget(input.scope_hint_file) : "", input.root);
   const scope = input.applies_to_all || !hinted || hinted === "." ? ["**"] : [hinted];
   const repoWide = scope.length === 1 && scope[0] === "**";
 

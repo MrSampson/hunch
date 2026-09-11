@@ -138,6 +138,38 @@ test("misroutedWorktreeCandidates: direct unit coverage (issue #54 review, I2)",
       try { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
     }
   }
+  // ABSOLUTE evidence (issue #76 C1): the worktree's OWN absolute path for a file
+  // that exists ONLY there must resolve to that worktree directly — relativizing
+  // it against root alone (an earlier version of this fix) produces "../…" and
+  // silently drops it, reproducing the #54 bypass one level removed.
+  {
+    const fixture = repoWithWorktree();
+    writeFileSync(join(fixture.worktree, "abs-only-there.ts"), "export const x = 1;\n");
+    try {
+      assert.deepEqual(misroutedWorktreeCandidates(fixture.root, [join(fixture.worktree, "abs-only-there.ts")]), [fixture.worktree]);
+    } finally {
+      fixture.cleanup();
+    }
+  }
+  // An absolute path that exists at root itself: not a misroute.
+  {
+    const fixture = repoWithWorktree();
+    try {
+      assert.deepEqual(misroutedWorktreeCandidates(fixture.root, [join(fixture.root, "app.ts")]), []);
+    } finally {
+      fixture.cleanup();
+    }
+  }
+  // An absolute path outside every known worktree: nothing to compare, not a misroute.
+  {
+    const fixture = repoWithWorktree();
+    try {
+      const outside = process.platform === "win32" ? "C:\\elsewhere\\other.ts" : "/elsewhere/other.ts";
+      assert.deepEqual(misroutedWorktreeCandidates(fixture.root, [outside]), []);
+    } finally {
+      fixture.cleanup();
+    }
+  }
 });
 
 async function until(predicate: () => boolean, timeoutMs = 3_000): Promise<void> {
@@ -585,7 +617,7 @@ test("a capture whose related_files only exist in a linked worktree is refused w
   assert.equal(existsSync(join(fixture.worktree, ".hunch", "decisions", filename)), false, "must not silently guess the worktree either — the caller must retry with cwd");
 });
 
-test("a capture whose related_files entry is an ABSOLUTE path only present in a linked worktree is still refused (issue #76 R1)", async (t) => {
+test("a capture whose related_files entry is the WORKTREE'S OWN absolute path is still refused (issue #76 C1)", async (t) => {
   const fixture = repoWithWorktree();
   writeFileSync(join(fixture.worktree, "worktree-only.ts"), "export const onlyHere = 1;\n");
   const control = buildServerWithRootControl(fixture.root);
@@ -599,9 +631,11 @@ test("a capture whose related_files entry is an ABSOLUTE path only present in a 
 
   await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
 
-  // Agents naturally send absolute paths (edit-tool payloads are absolute).
-  // join(root, "/abs/path") checks a nonsense joined path that exists nowhere, so
-  // an un-relativized guard would find nothing to compare and stay silent.
+  // THE realistic shape: an agent working in the worktree constructs the absolute
+  // path from ITS OWN cwd (the worktree), not from `root` (which it has no reason
+  // to know or care about). Relativizing this against root alone produces "../…"
+  // and gets dropped — the guard must instead recognize it as a path that exists
+  // directly under a SIBLING worktree's own tree.
   const result = await client.callTool({
     name: "hunch_record_decision",
     arguments: {
@@ -609,12 +643,12 @@ test("a capture whose related_files entry is an ABSOLUTE path only present in a 
         title: "misrouted absolute-path capture",
         context: "work done entirely in the linked worktree",
         decision: "Change worktree-only.ts",
-        related_files: [join(fixture.root, "worktree-only.ts")],
+        related_files: [join(fixture.worktree, "worktree-only.ts")],
       },
     },
   }) as { content: Array<{ text: string }>; isError?: boolean };
 
-  assert.equal(result.isError, true, "an absolute related_files entry must still trip the guard, not be silently ignored");
+  assert.equal(result.isError, true, "an absolute related_files entry naming the worktree's own file must still trip the guard");
   const text = result.content.map((c) => c.text ?? "").join("\n");
   assert.ok(text.includes(fixture.worktree), `refusal should name the likely-correct worktree: ${text}`);
 });
@@ -719,7 +753,7 @@ test("hunch_record_correction is refused when scope_hint_file only exists in a l
   assert.equal(git(fixture.root, "log", "-1", "--format=%s"), "fixture", "primary checkout must have no new commit");
 });
 
-test("hunch_record_correction relativizes an ABSOLUTE scope_hint_file before checking for a misroute (issue #62)", async (t) => {
+test("hunch_record_correction is refused when scope_hint_file is the WORKTREE'S OWN absolute path (issue #76 C1)", async (t) => {
   const fixture = repoWithWorktree();
   writeFileSync(join(fixture.worktree, "worktree-only.ts"), "export const onlyHere = 1;\n");
   const control = buildServerWithRootControl(fixture.root);
@@ -733,17 +767,18 @@ test("hunch_record_correction relativizes an ABSOLUTE scope_hint_file before che
 
   await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
 
-  // Agents naturally send absolute paths (edit-tool payloads are absolute) — the
-  // guard must relativize against `root` the same way buildCorrectionConstraint
-  // does, not compare an absolute path against a repo-relative existence check.
+  // THE realistic shape (issue #76 C1): an agent working in the worktree
+  // constructs the absolute path from ITS OWN cwd, not from `root`. Relativizing
+  // it against root alone produces "../…" and gets dropped, which is the exact
+  // bypass the guard exists to catch.
   const result = await client.callTool({
     name: "hunch_record_correction",
     arguments: {
       rule: "never touch worktree-only.ts without a review",
-      scope_hint_file: join(fixture.root, "worktree-only.ts"),
+      scope_hint_file: join(fixture.worktree, "worktree-only.ts"),
     },
   }) as { content: Array<{ text: string }>; isError?: boolean };
-  assert.equal(result.isError, true, "an absolute scope_hint_file must still trip the guard, not be silently ignored");
+  assert.equal(result.isError, true, "an absolute scope_hint_file naming the worktree's own file must still trip the guard");
   const text = result.content.map((c) => c.text ?? "").join("\n");
   assert.ok(text.includes(fixture.worktree), `refusal should name the likely-correct worktree: ${text}`);
 });
@@ -841,7 +876,7 @@ test("hunch_record_finding is refused when affected_files only exist in a linked
   assert.equal(git(fixture.root, "log", "-1", "--format=%s"), "fixture", "primary checkout must have no new commit");
 });
 
-test("hunch_record_finding is refused when an ABSOLUTE affected_files entry only exists in a linked worktree (issue #76 R1)", async (t) => {
+test("hunch_record_finding is refused when affected_files is the WORKTREE'S OWN absolute path (issue #76 C1)", async (t) => {
   const fixture = repoWithWorktree();
   writeFileSync(join(fixture.worktree, "worktree-only.ts"), "export const onlyHere = 1;\n");
   const control = buildServerWithRootControl(fixture.root);
@@ -855,18 +890,20 @@ test("hunch_record_finding is refused when an ABSOLUTE affected_files entry only
 
   await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
 
+  // THE realistic shape (issue #76 C1): an agent working in the worktree
+  // constructs the absolute path from ITS OWN cwd, not from `root`.
   const result = await client.callTool({
     name: "hunch_record_finding",
     arguments: {
       finding: {
         title: "worktree-only.ts absolute-path audit",
         observation: "audited during work entirely in the linked worktree",
-        affected_files: [join(fixture.root, "worktree-only.ts")],
+        affected_files: [join(fixture.worktree, "worktree-only.ts")],
       },
     },
   }) as { content: Array<{ text: string }>; isError?: boolean };
 
-  assert.equal(result.isError, true, "an absolute affected_files entry must still trip the guard, not be silently ignored");
+  assert.equal(result.isError, true, "an absolute affected_files entry naming the worktree's own file must still trip the guard");
   const text = result.content.map((c) => c.text ?? "").join("\n");
   assert.ok(text.includes(fixture.worktree), `refusal should name the likely-correct worktree: ${text}`);
 });

@@ -17,7 +17,7 @@ import { StateRefusal, SubscribeResponseSchema, capabilities, partitionOf, readS
 import { ReadRequestSchema, ReadResponseSchema, WriteRequestSchema, WriteResultSchema, SubscribeRequestSchema, RecordsRequestSchema, RecordsResponseSchema, STATE_READ_VERSION, STATE_WRITE_VERSION, STATE_SUBSCRIBE_VERSION, STATE_RECORDS_VERSION, stateHash } from "../core/stateContract.js";
 import { selectEmbedder } from "../store/embedder.js";
 import { decisionId, findingId, manualDecisionId } from "../core/ids.js";
-import { buildCorrectionConstraint, correctionScopeHint, repoRelativeHint } from "../core/correction.js";
+import { buildCorrectionConstraint } from "../core/correction.js";
 import { knownRepoDeps } from "../synthesis/tripwires.js";
 import { refreshExistingGrounding } from "../integrations/providers.js";
 import { revParse, asOfDate, revExists, lastChangeDate, rangeFiles, rangeDiff, commitFiles, commitDiff, stagedFiles, stagedDiff, workingFiles, workingDiff, pullHunchStatus, sameRemoteUrl, currentBranch, worktreePaths, pathKnownToHistory, type HunchPullStatus } from "../extractors/git.js";
@@ -80,7 +80,7 @@ import { applyImportedAdrReview, pendingImportedAdrReviews } from "../core/impor
 import { issueCaptureToken as issueToken, consumeCaptureToken as consumeToken } from "../core/capturetoken.js";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 
 type ToolResult = {
   content: Array<{ type: "text"; text: string }>;
@@ -204,17 +204,41 @@ const destinationNote = (destRoot: string): string => {
  *  deliberate tradeoff against false positives on stale evidence, not full coverage
  *  of every misrouted write.
  *
+ *  Absolute paths (PR #76 review C1): agents naturally send them (edit-tool payloads
+ *  and MCP roots are absolute), and a NAIVE `join(dir, "/abs/path")` produces a
+ *  nonsense concatenated path that exists nowhere — the guard would find nothing to
+ *  compare against ANY directory and stay silent, the #54 failure reproduced through
+ *  the "fix" meant to catch it. `existsUnder` checks an absolute entry AS ITSELF,
+ *  scoped to whichever directory is under test (root, or each candidate worktree in
+ *  turn) via `relative()`, not `join()` — so an absolute path naming a file that
+ *  exists only under a SIBLING worktree's own tree is direct positive evidence for
+ *  that worktree specifically, no existence heuristic required. Relativizing it
+ *  against `root` alone (as an earlier version of this guard did) can't represent
+ *  this at all: a sibling worktree's absolute path is never under root's tree, so it
+ *  relativizes to "../…" and gets dropped — silently reintroducing the bypass one
+ *  level removed. An absolute path outside every known worktree relativizes to "../…"
+ *  everywhere and correctly contributes nothing: not "absent here, check the
+ *  siblings", just nothing to compare.
+ *
  *  Exported for direct unit testing (issue #54 review, I2) — the candidate logic is
  *  otherwise reachable only through a full MCP client/server integration test. */
+function existsUnder(dir: string, f: string): boolean {
+  if (isAbsolute(f)) {
+    const rel = relative(dir, f);
+    return !rel.startsWith("..") && !isAbsolute(rel) && existsSync(f);
+  }
+  return existsSync(join(dir, f));
+}
+
 export const misroutedWorktreeCandidates = (root: string, relatedFiles: readonly string[]): string[] => {
   if (!relatedFiles.length) return [];
-  if (relatedFiles.some((f) => existsSync(join(root, f)))) return [];
-  if (relatedFiles.some((f) => pathKnownToHistory(root, f))) return [];
+  if (relatedFiles.some((f) => existsUnder(root, f))) return [];
+  if (relatedFiles.some((f) => !isAbsolute(f) && pathKnownToHistory(root, f))) return [];
   const here = canonicalRootPath(root);
   const candidates: string[] = [];
   for (const candidate of worktreePaths(root)) {
     if (canonicalRootPath(candidate) === here) continue;
-    if (relatedFiles.some((f) => existsSync(join(candidate, f)))) candidates.push(candidate);
+    if (relatedFiles.some((f) => existsUnder(candidate, f))) candidates.push(candidate);
   }
   return candidates;
 };
@@ -224,7 +248,11 @@ export const misroutedWorktreeCandidates = (root: string, relatedFiles: readonly
  *  #62) — one message so the three call sites stay in lockstep instead of drifting.
  *  Returns the refusal ToolResult when misroutedWorktreeCandidates finds a better
  *  home, else null (proceed as normal). `subject` names what's being recorded,
- *  e.g. `"Foo"` or `finding "Foo"`, for the refusal text. */
+ *  e.g. `"Foo"` or `finding "Foo"`, for the refusal text. Callers pass file evidence
+ *  RAW (posix-normalized only) — misroutedWorktreeCandidates itself understands both
+ *  relative and absolute entries, so no pre-relativization step is needed or correct
+ *  here (see its doc comment on why relativizing against `root` alone would drop the
+ *  exact sibling-worktree case this guard exists to catch). */
 function misrouteGuard(root: string, subject: string, relatedFiles: readonly string[]): ToolResult | null {
   const misroutes = misroutedWorktreeCandidates(root, relatedFiles);
   if (!misroutes.length) return null;
@@ -242,18 +270,6 @@ function misrouteGuard(root: string, subject: string, relatedFiles: readonly str
     `argument (issue #54) — ${retry}, or wherever this work actually happened.`,
   );
 }
-
-/** Normalize file evidence for the misroute-guard CHECK ONLY — never for what a
- *  record actually stores. An absolute path (agents naturally send them; edit-tool
- *  payloads and MCP roots are absolute) silently bypassed the guard before this:
- *  `existsSync(join(root, "/abs/path"))` checks a nonsense joined path that exists
- *  nowhere, so the guard found nothing to compare and stayed silent (PR #76 review
- *  R1) — the exact absolute-path bypass hunch_record_correction's scope_hint_file
- *  already had to be relativized against, generalized here to a whole file list.
- *  A hint outside the repo (or empty) relativizes to "" and is dropped, same as
- *  today: nothing to compare, not "absent here, check the siblings". */
-const guardFiles = (files: readonly string[], root: string): string[] =>
-  files.map((f) => repoRelativeHint(toPosixTarget(f), root)).filter(Boolean);
 
 /** Where a capture keyed to `home` actually lands: the private overlay directory when
  *  one is configured, else the public repo root. Centralizes the branch used at every
@@ -1698,7 +1714,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     },
     async ({ decision, capture_token }): Promise<ToolResult> => {
       try {
-        const misroute = misrouteGuard(root, `"${decision.title.slice(0, 60)}"`, guardFiles(decision.related_files ?? [], root));
+        const misroute = misrouteGuard(root, `"${decision.title.slice(0, 60)}"`, (decision.related_files ?? []).map(toPosixTarget));
         if (misroute) return misroute;
         // Commit-keyed on the CANONICAL full sha (resolved via git rev-parse), so a
         // human passing the short sha they see in `commit` produces the SAME id as
@@ -1924,11 +1940,17 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         // Same misroute guard as hunch_record_decision (issue #54, extended here by #62):
         // a scope_hint_file that exists in a sibling linked worktree but not here is very
         // likely a subagent that forgot cwd, about to silently scope-and-commit a
-        // constraint against the wrong checkout. correctionScopeHint is the SAME
-        // normalization buildCorrectionConstraint uses below, so the guard checks
-        // exactly the path the constraint will actually be scoped to.
-        const scopeHintRepoRelative = correctionScopeHint(input.scope_hint_file, root);
-        const correctionMisroute = misrouteGuard(root, `correction "${input.rule.slice(0, 60)}"`, scopeHintRepoRelative ? [scopeHintRepoRelative] : []);
+        // constraint against the wrong checkout. Passed RAW (posix-normalized only) —
+        // misroutedWorktreeCandidates understands absolute paths itself (see its doc
+        // comment). The constraint's own scope glob below is a DIFFERENT job, still
+        // relativized against root by buildCorrectionConstraint internally — a sibling
+        // worktree's absolute path could never become a usable scope glob against root
+        // either way, only this guard's job of naming WHICH worktree it belongs to.
+        const correctionMisroute = misrouteGuard(
+          root,
+          `correction "${input.rule.slice(0, 60)}"`,
+          input.scope_hint_file ? [toPosixTarget(input.scope_hint_file)] : [],
+        );
         if (correctionMisroute) return correctionMisroute;
         // Same authorship tier as hunch_record_decision: a consumed token mints the
         // signature, an un-token'd write is testimony. Here the stakes are HIGHER — a
@@ -2016,7 +2038,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         if (!finding.title.trim()) return err("title is required.");
         if (!finding.observation.trim()) return err("observation is required — state what you saw.");
         // Same misroute guard as hunch_record_decision (issue #54, extended here by #62).
-        const findingMisroute = misrouteGuard(root, `finding "${finding.title.slice(0, 60)}"`, guardFiles(finding.affected_files ?? [], root));
+        const findingMisroute = misrouteGuard(root, `finding "${finding.title.slice(0, 60)}"`, (finding.affected_files ?? []).map(toPosixTarget));
         if (findingMisroute) return findingMisroute;
         const id = findingId(finding.title);
         const home = store.captureHome(!!finding.private);
