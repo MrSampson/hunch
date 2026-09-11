@@ -1,24 +1,24 @@
 {
   "id": "dec_7c892695a2",
-  "title": "Remove hardcoded record counts from Hunch documentation",
+  "title": "Remove auto-generated inventory counts from Hunch documentation",
   "topic": null,
   "status": "accepted",
-  "context": "Hunch record counts (decisions, bugs, constraints, etc.) were regenerated frequently and maintained across multiple documentation files (.cursor, .github, .windsurf, CLAUDE.md). Keeping hardcoded counts in sync across four files created maintenance burden and documentation drift.",
-  "decision": "Strip the specific record-count sentence entirely from all Hunch documentation. Retain the conceptual description of what Hunch holds (decisions, bug history, invariants) but remove the quantified metrics (\"264 decisions, 2 bugs, 28 constraints, 21 components, 3 policies, 1 open findings\").",
+  "context": "Hunch grounding statements across 5 documentation files contained dynamically-generated record counts (264 decisions, 2 bugs, 28 constraints, etc.). These counts required regeneration whenever the underlying Hunch graph changed, creating staleness and maintenance burden.",
+  "decision": "Strip the record-count sentence from all Hunch documentation. Keep the description of what Hunch is and how to access it, but remove the inventory snapshot. Direct users to query the live Hunch system via MCP tools rather than reading stale counts from docs.",
   "consequences": [
-    "Documentation is now simpler and requires no updates when Hunch grows",
-    "Readers lose quick visibility into current scope/size of engineering memory",
-    "No more risk of hardcoded counts drifting from actual state",
-    "Fewer files to edit when Hunch is updated"
+    "Documentation remains accurate without regeneration cycles",
+    "Eliminates toil from maintaining counts across 5 separate files",
+    "Single source of truth shifts from docs to the actual Hunch system",
+    "Slight loss of at-a-glance Hunch scale visibility, mitigated by MCP tool availability"
   ],
   "alternatives_rejected": [
-    "Keep counts and maintain them manually across files (unsustainable drift)",
-    "Maintain counts in a single canonical location with references (indirection complexity)",
-    "Auto-generate counts programmatically in documentation (infrastructure cost)"
+    "Keep static counts and update manually (creates staleness and toil)",
+    "Automate count regeneration in build pipeline (adds unnecessary tooling for ephemeral metadata)",
+    "Use a central config file that docs include (does not solve staleness, only dedupes effort)"
   ],
   "rejected_tripwires": [
     {
-      "alternative": "Keep counts and maintain them manually across files (unsustainable drift)",
+      "alternative": "Keep static counts and update manually (creates staleness and toil)",
       "scope": [
         ".github/**",
         ".windsurf/rules/**"
@@ -35,7 +35,7 @@
       }
     },
     {
-      "alternative": "Maintain counts in a single canonical location with references (indirection complexity)",
+      "alternative": "Automate count regeneration in build pipeline (adds unnecessary tooling for ephemeral metadata)",
       "scope": [
         ".github/**",
         ".windsurf/rules/**"
@@ -52,7 +52,7 @@
       }
     },
     {
-      "alternative": "Auto-generate counts programmatically in documentation (infrastructure cost)",
+      "alternative": "Use a central config file that docs include (does not solve staleness, only dedupes effort)",
       "scope": [
         ".github/**",
         ".windsurf/rules/**"
@@ -100,7 +100,7 @@
       "AGENTS.md",
       "CLAUDE.md"
     ],
-    "last_verified": "2026-09-11T14:31:27.469Z"
+    "last_verified": "2026-09-11T14:31:31.657Z"
   },
   "date": "2026-09-11T16:31:10+02:00"
 }
