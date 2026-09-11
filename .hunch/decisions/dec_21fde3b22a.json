@@ -2,7 +2,7 @@
   "id": "dec_21fde3b22a",
   "title": "Share path normalization via exported functions to prevent silent divergence",
   "topic": null,
-  "status": "accepted",
+  "status": "superseded",
   "context": "Code review found that absolute file paths (naturally sent by agents in edit-tool payloads and MCP calls) were silently bypassing the misroute guard because join(root, \"/abs/path\") creates a nonsense path that never matches. The guard and the actual write path were independently deriving normalization, allowing them to disagree. Touches invariant(s): con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
   "decision": "Extract normalization into shared functions: export correctionScopeHint() from correction.ts so both buildCorrectionConstraint (the write path) and the MCP handler's misroute guard use the SAME normalization, and create guardFiles() to normalize file lists for the guard check only. This establishes a single source of truth for path transformations across related code paths.",
   "consequences": [
@@ -82,11 +82,11 @@
     "test/mcproots.test.ts"
   ],
   "supersedes": null,
-  "superseded_by": null,
+  "superseded_by": "dec_d09ab8e9a0",
   "caused_by_bug": null,
   "commit": "2c2a8db",
   "valid_from": "2026-09-10T18:34:47+02:00",
-  "valid_to": null,
+  "valid_to": "2026-09-11T07:12:07.565Z",
   "retired": {
     "symbols": [],
     "deps": []
