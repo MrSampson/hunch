@@ -540,6 +540,39 @@ test("misroutedWorktreeCandidates: direct unit coverage (issue #54 review, I2)",
       fixture.cleanup();
     }
   }
+  // A round-11 fix regression: a symlink physically INSIDE a worktree, with NO
+  // ".." anywhere, pointing at a directory OUTSIDE that worktree (root's own
+  // tree, in a NESTED-worktree layout) -- the plain round-9 shape this lens
+  // exists to serve, reachable from the worktree itself with no ".." segment
+  // at all. Resolving dirname(f) through the kernel UNCONDITIONALLY (not just
+  // when ".." is present) follows the symlink and reattributes a file that
+  // physically exists at the worktree's own spelling to root instead (PR #76
+  // review round 12 C1).
+  if (process.platform !== "win32") {
+    const root = repo("hunch-roots-nested-symlink-");
+    const nestedDir = join(root, ".worktrees");
+    mkdirSync(nestedDir, { recursive: true });
+    const nested = join(nestedDir, "feature");
+    git(root, "worktree", "add", "-q", "-b", "feature-nested-symlink", nested);
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "src", "helper.ts"), "export const helper = 1;\n");
+    const linkPath = join(nested, "shared-src");
+    symlinkSync(join(root, "src"), linkPath, "dir");
+    const evidence = join(nested, "shared-src", "helper.ts");
+    try {
+      assert.ok(!evidence.split("/").includes(".."), "test input must NOT contain a '..' segment (that's a different, already-covered shape)");
+      assert.deepEqual(
+        misroutedWorktreeCandidates(nested, [evidence]),
+        [],
+        "a no-'..' symlink physically inside a NESTED worktree, pointing at root's own tree, must not be reattributed to root when the write already originates from the worktree",
+      );
+    } finally {
+      try { rmSync(linkPath, { force: true }); } catch { /* best effort */ }
+      try { git(root, "worktree", "remove", "--force", nested); } catch { /* best effort */ }
+      try { rmSync(nested, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+      try { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+    }
+  }
   // pathKnownToHistory must reject an EMPTY string outright rather than let it
   // match the trailing "" element `-z`'s NUL-termination always produces --
   // defense in depth for the function's own documented contract, even though
@@ -549,6 +582,24 @@ test("misroutedWorktreeCandidates: direct unit coverage (issue #54 review, I2)",
     const fixture = repoWithWorktree();
     try {
       assert.equal(pathKnownToHistory(fixture.root, ""), false, "an empty string must never read as known-to-history");
+    } finally {
+      fixture.cleanup();
+    }
+  }
+  // When EVERY entry in relatedFiles is falsy (e.g. affected_files: [""]), the
+  // whole evidence array filters down to empty and the function must return
+  // no candidates rather than throw or misbehave on an empty array -- direct
+  // coverage of the `!evidence.length` short circuit, reachable in production
+  // through any of the three tools' file-evidence arrays (PR #76 review round
+  // 12 M1).
+  {
+    const fixture = repoWithWorktree();
+    try {
+      assert.deepEqual(
+        misroutedWorktreeCandidates(fixture.root, [""]),
+        [],
+        "an evidence array that's entirely falsy must produce no candidates",
+      );
     } finally {
       fixture.cleanup();
     }

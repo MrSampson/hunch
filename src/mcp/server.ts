@@ -354,42 +354,81 @@ function deepestContainer(f: string, worktrees: readonly string[]): string | nul
  *  NESTED worktree still correctly out-ranks its own physically-containing parent
  *  root here too — this lens does not, on its own, relax that boundary.
  *
- *  Every path component EXCEPT the final one IS resolved through the kernel
- *  (`canonicalRootPath` on `dirname(f)`) before comparison, with the raw
- *  `basename(f)` reattached afterward. A round-10 version of this function
- *  compared `f` purely lexically (plain `resolve()`/`relative()`, no realpath
- *  anywhere), on the theory that POSIX cancels ".." against the pathname
- *  component immediately preceding it lexically, never re-entering a symlink's
- *  target — that theory is FALSE. Direct kernel-level testing (a real
- *  `open()`/`readFile()` on a constructed symlink+".." path, comparing file
- *  identity, not just `resolve()`/`realpath()` string output) shows the kernel
- *  cancels ".." against the parent of the CURRENT LOOKUP DIRECTORY, which after
- *  traversing a symlink component is the symlink's TARGET's parent — exactly what
- *  `path_resolution(7)` documents, and the opposite of round 10's claim (PR #76
- *  review round 11 C1). A purely lexical comparison therefore disagreed with the
- *  kernel on any `f` containing symlink-then-".." — both as a false positive (a
- *  symlinked dir physically inside a sibling worktree, entry
- *  `<worktree>/cache/../stray.ts` really resolving OUTSIDE every worktree, wrongly
- *  attributed to `<worktree>`) and a false negative (an alias symlink at root
- *  pointing into a sibling worktree, entry `<root>/alias/../only-in-wt.ts` really
- *  resolving INSIDE the sibling, wrongly attributed to nothing). Resolving every
- *  component except the last through the kernel fixes both directions while still
- *  preserving this function's whole reason to exist: the final component — the
- *  thing that might itself BE the symlink whose physical location we're asking
- *  about — is still never resolved through. A round-9 version disqualified any
- *  ".."-bearing `f` outright as a defensive measure; that was ALSO wrong (PR #76
- *  review round 10 C1), refusing harmless input on all three tools — this version
- *  computes the correct answer instead of refusing to answer. */
+ *  ONLY when `f` contains a ".." segment does this function resolve anything
+ *  through the kernel at all — and even then, only `dirname(f)`
+ *  (`canonicalRootPath`), with the raw `basename(f)` reattached afterward. A
+ *  round-10 version compared `f` purely lexically always (plain
+ *  `resolve()`/`relative()`, no realpath anywhere), on the theory that POSIX
+ *  cancels ".." against the pathname component immediately preceding it
+ *  lexically, never re-entering a symlink's target — that theory is FALSE.
+ *  Direct kernel-level testing (a real `open()`/`readFile()` on a constructed
+ *  symlink+".." path, comparing file identity, not just `resolve()`/
+ *  `realpath()` string output) shows the kernel cancels ".." against the
+ *  parent of the CURRENT LOOKUP DIRECTORY, which after traversing a symlink
+ *  component is the symlink's TARGET's parent — exactly what
+ *  `path_resolution(7)` documents, and the opposite of round 10's claim (PR
+ *  #76 review round 11 C1). A purely lexical comparison therefore disagreed
+ *  with the kernel on any `f` containing symlink-then-".." — both as a false
+ *  positive (a symlinked dir physically inside a sibling worktree, entry
+ *  `<worktree>/cache/../stray.ts` really resolving OUTSIDE every worktree,
+ *  wrongly attributed to `<worktree>`) and a false negative (an alias symlink
+ *  at root pointing into a sibling worktree, entry
+ *  `<root>/alias/../only-in-wt.ts` really resolving INSIDE the sibling,
+ *  wrongly attributed to nothing).
+ *
+ *  A round-11 version resolved `dirname(f)` through the kernel
+ *  UNCONDITIONALLY, on every `f` regardless of whether it contained "..". That
+ *  fixed both shapes above but is stronger than the problem requires: it
+ *  follows every symlink in the directory chain even with no ".." present at
+ *  all, resolving straight through the plain symlinked-DIRECTORY shape this
+ *  function exists to serve and reintroducing the round-9 false positive in a
+ *  nested-worktree layout — an agent legitimately working in a worktree
+ *  nested under root, naming a file through a worktree-local symlink to
+ *  root's own directory with no ".." anywhere, had that file reattributed to
+ *  root even though it physically exists at the worktree's own spelling (PR
+ *  #76 review round 12 C1). Gating the kernel resolution on `f` actually
+ *  containing ".." fixes this while keeping both round-11 fixes: a ".."-free
+ *  `f` (the common case, and this function's whole reason to exist) stays
+ *  purely lexical, and a ".."-bearing `f` — whether the ".." follows a real
+ *  directory (round-10/11, lexical and kernel already agree there) or a
+ *  symlink (round 11, they don't) — gets the kernel's actual answer. A
+ *  round-9 version disqualified any ".."-bearing `f` outright as a defensive
+ *  measure; that was ALSO wrong (PR #76 review round 10 C1), refusing
+ *  harmless input on all three tools — this version computes the correct
+ *  answer instead of refusing to answer. */
 function lexicalDeepestContainer(f: string, worktrees: readonly string[]): string | null {
-  const spelled = join(canonicalRootPath(dirname(f)), basename(f));
+  // Only take the kernel-resolving path when `f` actually contains a ".."
+  // segment -- that's the ONLY shape where lexical string math and the kernel
+  // can disagree (PR #76 review round 11 C1). Resolving dirname(f) through the
+  // kernel UNCONDITIONALLY (an earlier version of this function) is stronger
+  // than the problem requires: it follows every symlink in the directory
+  // chain even when there's no ".." to make that ambiguous, which resolves
+  // straight through the exact symlinked-DIRECTORY shape this function exists
+  // to serve (a symlink physically inside a worktree pointing elsewhere,
+  // spelled with no ".." at all) and reintroduces the round-9 false positive
+  // in a nested-worktree layout: an agent legitimately working in a worktree
+  // nested under root, naming a file through a worktree-local symlink to
+  // root's own directory, had that file reattributed to root even though it
+  // physically exists at the worktree's own spelling (PR #76 review round 12
+  // C1). Plain resolve() (no realpath anywhere) is correct and sufficient for
+  // every ".."-free `f`, and remains correct for a NON-symlink ".." (the
+  // round-10/11 "sub/../shared-link.ts" case, where ".." follows a real
+  // directory) too -- lexical and kernel resolution agree there regardless.
+  const hasDotDot = f.split(sep).includes("..");
+  const spelled = hasDotDot ? join(canonicalRootPath(dirname(f)), basename(f)) : resolve(f);
   let best: string | null = null;
   let bestLen = -1;
   for (const wt of worktrees) {
-    const canonWt = canonicalRootPath(wt);
-    if (!isWithin(canonWt, spelled)) continue;
-    if (canonWt.length > bestLen) {
+    // `wt` must be canonicalized too, but ONLY to match a canonical `spelled`
+    // -- comparing a canonical spelled path against a raw wt string would
+    // spuriously fail to match even a worktree with no symlinks in its own
+    // path, on any platform where the canonical form differs cosmetically
+    // (e.g. a case-preserving vs case-folding mount).
+    const compareWt = hasDotDot ? canonicalRootPath(wt) : wt;
+    if (!isWithin(compareWt, spelled)) continue;
+    if (compareWt.length > bestLen) {
       best = wt;
-      bestLen = canonWt.length;
+      bestLen = compareWt.length;
     }
   }
   return best;
