@@ -11,6 +11,7 @@ import { ListRootsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { HunchStore } from "../src/store/hunchStore.js";
 import { constraintId, findingId, manualDecisionId } from "../src/core/ids.js";
 import { resolveActiveRoot } from "../src/mcp/roots.js";
+import { pathKnownToHistory } from "../src/extractors/git.js";
 import { buildServerWithRootControl, wireClientRoots, misroutedWorktreeCandidates } from "../src/mcp/server.js";
 
 function git(root: string, ...args: string[]): string {
@@ -354,6 +355,65 @@ test("misroutedWorktreeCandidates: direct unit coverage (issue #54 review, I2)",
       );
     } finally {
       try { rmSync(rootAlias, { force: true }); } catch { /* best effort */ }
+      fixture.cleanup();
+    }
+  }
+  // The DUAL of the above: a symlink-spelled root whose relative entry DOES
+  // exist there must still read as "not a misroute" — pins the direction the
+  // round-7 regression actually lived in, so a future simplification back to
+  // resolve(root, f) would fail THIS test even though it would still pass the
+  // "must still be caught" test above (PR #76 review round 8 M4).
+  if (process.platform !== "win32") {
+    const fixture = repoWithWorktree();
+    const rootAlias = `${fixture.root}-alias`;
+    symlinkSync(fixture.root, rootAlias, "dir");
+    try {
+      assert.deepEqual(
+        misroutedWorktreeCandidates(rootAlias, ["app.ts"]),
+        [],
+        "a relative filename that genuinely exists at a symlink-spelled root must not be flagged as a misroute",
+      );
+    } finally {
+      try { rmSync(rootAlias, { force: true }); } catch { /* best effort */ }
+      fixture.cleanup();
+    }
+  }
+  // A SYMLINK physically AT root, whose TARGET lives in a sibling worktree
+  // (e.g. a shared cache file), must not be misread as "this relative entry
+  // escapes root's own tree". Escape-classification is a LEXICAL question
+  // (does the string contain a ".." segment that leaves root) — canonicalizing
+  // (following symlinks) at that step conflates it with a different question
+  // ("what does this path's content resolve to"), reclassifying a file that
+  // genuinely exists at root as escaping and refusing a write that was already
+  // correctly homed — a false positive (PR #76 review round 8 M2).
+  if (process.platform !== "win32") {
+    const fixture = repoWithWorktree();
+    const targetDir = join(fixture.worktree, "shared-target");
+    mkdirSync(targetDir, { recursive: true });
+    writeFileSync(join(targetDir, "shared.ts"), "export const shared = 1;\n");
+    const linkPath = join(fixture.root, "shared-link.ts");
+    symlinkSync(join(targetDir, "shared.ts"), linkPath, "file");
+    try {
+      assert.deepEqual(
+        misroutedWorktreeCandidates(fixture.root, ["shared-link.ts"]),
+        [],
+        "a symlink AT root pointing into a sibling worktree must not be treated as an escaping entry",
+      );
+    } finally {
+      try { rmSync(linkPath, { force: true }); } catch { /* best effort */ }
+      fixture.cleanup();
+    }
+  }
+  // pathKnownToHistory must reject an EMPTY string outright rather than let it
+  // match the trailing "" element `-z`'s NUL-termination always produces --
+  // defense in depth for the function's own documented contract, even though
+  // the sole caller already filters falsy entries before calling it (PR #76
+  // review round 8 M1).
+  {
+    const fixture = repoWithWorktree();
+    try {
+      assert.equal(pathKnownToHistory(fixture.root, ""), false, "an empty string must never read as known-to-history");
+    } finally {
       fixture.cleanup();
     }
   }

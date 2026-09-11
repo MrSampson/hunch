@@ -1732,8 +1732,21 @@ export function worktreePaths(root: string): string[] {
  *     patching one byte class at a time re-opens this every round. `-z`
  *     (NUL-terminated, used with the untrimmed `gitRawSafe`) sidesteps
  *     quoting entirely: git emits the RAW path bytes with no escaping of any
- *     kind when `-z` is given, so `core.quotePath` becomes irrelevant. */
+ *     kind when `-z` is given, so `core.quotePath` becomes irrelevant.
+ *
+ *  `file` must be a genuine, non-empty path: `-z` NUL-TERMINATES every entry
+ *  (rather than separating them), so splitting on "\0" always yields a
+ *  trailing "" element — harmless for any real filename, but `git log …
+ *  :(literal)` (unlike the old `rev-list` pathspec, which rejected an empty
+ *  string outright) treats an empty pathspec as matching everything, so an
+ *  empty `file` would otherwise find that trailing "" and read as "known to
+ *  history" for ANY repo with history at all (PR #76 review round 8 M1) --
+ *  the same class of bug this function exists to prevent, on its own
+ *  boundary condition. The sole caller already filters falsy entries before
+ *  calling this, so this guard is defense in depth for the function's own
+ *  documented contract, not a currently reachable bypass. */
 export function pathKnownToHistory(root: string, file: string): boolean {
+  if (!file) return false;
   const out = gitRawSafe(
     ["log", "-n", "1", "--format=", "--name-only", "-z", "--diff-merges=first-parent", "HEAD", "--", `:(literal)${file}`],
     root,

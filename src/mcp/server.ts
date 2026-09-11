@@ -272,10 +272,25 @@ export const misroutedWorktreeCandidates = (root: string, relatedFiles: readonly
   // first means the common non-existent-file case is correctly rooted even
   // when realpath's later canonicalization attempt on the (still nonexistent)
   // resolved path has nothing to resolve and simply returns it unchanged.
+  //
+  // The escape check below is deliberately LEXICAL (plain resolve(), never
+  // canonicalRootPath) on the resolved path: whether a relative entry escapes
+  // root is a question about ".." SEGMENTS, answered by pure string math, not
+  // about where a SYMLINK at that location happens to point. Canonicalizing
+  // (following symlinks) here was round 7's own regression: a symlink that
+  // physically lives inside root but targets a sibling worktree (e.g. a shared
+  // cache file) resolved to a target outside canonRoot, misclassified an
+  // entry that legitimately exists at root as "escaping", and promoted it to
+  // an absolute path that deepestContainer then wrongly attributed to the
+  // sibling -- a false positive, refusing a write that was already correctly
+  // homed (PR #76 review round 8 M2). Symlink-following still happens, and is
+  // still needed, one step later in deepestContainer/existsUnder, whose job
+  // (does this path's CONTENT belong to this specific worktree) is a genuinely
+  // different question from whether a relative STRING escapes root.
   const evidence = relatedFiles.filter(Boolean).map((f) => {
     if (isAbsolute(f)) return f;
     const resolved = resolve(canonRoot, f);
-    return isWithin(canonRoot, canonicalRootPath(resolved)) ? f : resolved;
+    return isWithin(canonRoot, resolved) ? f : resolved;
   });
   if (!evidence.length) return [];
   if (evidence.some((f) => existsUnder(root, f, worktrees))) return [];
@@ -305,11 +320,17 @@ function isWithin(parent: string, child: string): boolean {
  *  including `f`'s own final component, so a symlink reached from OUTSIDE a
  *  worktree that happens to point INSIDE one is still found (the common case);
  *  the inverse — a symlink INSIDE a worktree whose target lives outside every
- *  known worktree — resolves to null and contributes nothing (fails open, not a
- *  false positive; PR #76 review round 4 M2, left as a documented boundary rather
- *  than fixed, since closing it needs testing containment against both the raw
- *  and the canonical form and the guard is a documented backstop, not a complete
- *  fix — see its own doc comment above `misroutedWorktreeCandidates`). */
+ *  known worktree — resolves to null and contributes nothing FOR THIS FUNCTION
+ *  specifically (fails open here, not a false positive; PR #76 review round 4
+ *  M2, left as a documented boundary rather than fixed, since closing it needs
+ *  testing containment against both the raw and the canonical form and the
+ *  guard is a documented backstop, not a complete fix — see its own doc
+ *  comment above `misroutedWorktreeCandidates`). A DIFFERENT symlink shape —
+ *  one physically inside root itself, targeting a sibling worktree, reached
+ *  through a RELATIVE (non-escaping) entry — used to fail the opposite way,
+ *  in the caller's escape-classification step rather than here; fixed at that
+ *  step, not this one (PR #76 review round 8 M2; see misroutedWorktreeCandidates'
+ *  comment on why that check is deliberately lexical). */
 function deepestContainer(f: string, worktrees: readonly string[]): string | null {
   const canonF = canonicalRootPath(f);
   let best: string | null = null;

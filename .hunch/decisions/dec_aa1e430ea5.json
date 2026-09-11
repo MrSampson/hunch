@@ -20,7 +20,7 @@
     "src/extractors/git.ts",
     "test/mcproots.test.ts"
   ],
-  "supersedes": "dec_aa1e430ea5",
+  "supersedes": null,
   "superseded_by": null,
   "caused_by_bug": null,
   "commit": null,
