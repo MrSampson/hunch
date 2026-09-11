@@ -80,7 +80,7 @@ import { applyImportedAdrReview, pendingImportedAdrReviews } from "../core/impor
 import { issueCaptureToken as issueToken, consumeCaptureToken as consumeToken } from "../core/capturetoken.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 type ToolResult = {
   content: Array<{ type: "text"; text: string }>;
@@ -228,32 +228,48 @@ const destinationNote = (destRoot: string): string => {
  *  reached through a symlink or a case-different spelling isn't silently missed (PR
  *  #76 review round 3 I1b), and compared by exact path SEGMENT, not string prefix,
  *  so a real sibling `foo-other` doesn't false-match `foo` and a file genuinely named
- *  `..odd.ts` isn't mistaken for a `..` traversal (PR #76 review round 3 I1c).
+ *  `..odd.ts` isn't mistaken for a `..` traversal (PR #76 review round 3 I1c). A
+ *  DIRECTORY entry (or the empty-string/"." an agent might send meaning "the repo
+ *  itself") contributes nothing either: `existsUnder` checks `isFile`, never mere
+ *  existence, since a directory match would silently disable the guard for every
+ *  OTHER entry in the same call (PR #76 review round 4 I1) — and `pathKnownToHistory`
+ *  (below) confirms a git pathspec matched the EXACT entry, not merely something
+ *  under/matching it, for the identical reason (PR #76 review round 5 C1).
+ *
+ *  A RELATIVE entry containing a ".." segment that escapes root's own tree when
+ *  resolved against root is the SAME #54 misroute as a worktree-rooted absolute
+ *  path, merely spelled relatively — resolved against ROOT specifically (the only
+ *  base the server actually has; never re-resolved per candidate in the loop
+ *  below, which would answer a different, meaningless question) and then run
+ *  through the identical absolute-path containment logic (PR #76 review round 5
+ *  I1). A relative entry that does NOT escape root's tree keeps the original,
+ *  intentional multi-location check instead: the SAME relative suffix tried
+ *  against every candidate directory in turn — that's how a plain "this file's
+ *  name" evidence has always found a sibling worktree holding a file by that name,
+ *  and it must keep doing so for a NESTED worktree reached by a non-escaping
+ *  relative path, whose containing worktree this fix does not (yet) distinguish
+ *  from root itself — that residual gap fails OPEN (silently uncaught), never
+ *  toward a false positive.
  *
  *  Exported for direct unit testing (issue #54 review, I2) — the candidate logic is
  *  otherwise reachable only through a full MCP client/server integration test. */
-/** A relative entry that names the WHOLE tree as a git pathspec rather than one
- *  file — "." (and its equivalents) — not just falsy. `existsUnder`'s `isFile`
- *  check already rejects these (a directory is never a file), but
- *  `pathKnownToHistory` passes the raw string straight to `git rev-list -- <f>`,
- *  where "." matches virtually every commit — silently satisfying the
- *  known-to-history escape hatch for ANY repo with history at all (PR #76 review
- *  round 4 I1, the same class of bug the directory-entry fix above closes, found
- *  by this fix's OWN regression test). */
-function isWholeTreePathspec(f: string): boolean {
-  return f === "." || f === "./" || f === ".\\";
-}
-
 export const misroutedWorktreeCandidates = (root: string, relatedFiles: readonly string[]): string[] => {
   if (!relatedFiles.length) return [];
   const worktrees = worktreePaths(root);
-  if (relatedFiles.some((f) => existsUnder(root, f, worktrees))) return [];
-  if (relatedFiles.some((f) => f && !isWholeTreePathspec(f) && !isAbsolute(f) && pathKnownToHistory(root, f))) return [];
-  const here = canonicalRootPath(root);
+  const canonRoot = canonicalRootPath(root);
+  const evidence = relatedFiles.filter(Boolean).map((f) => {
+    if (isAbsolute(f)) return f;
+    const resolved = resolve(root, f);
+    return isWithin(canonRoot, canonicalRootPath(resolved)) ? f : resolved;
+  });
+  if (!evidence.length) return [];
+  if (evidence.some((f) => existsUnder(root, f, worktrees))) return [];
+  if (relatedFiles.some((f) => f && !isAbsolute(f) && pathKnownToHistory(root, f))) return [];
+  const here = canonRoot;
   const candidates: string[] = [];
   for (const candidate of worktrees) {
     if (canonicalRootPath(candidate) === here) continue;
-    if (relatedFiles.some((f) => existsUnder(candidate, f, worktrees))) candidates.push(candidate);
+    if (evidence.some((f) => existsUnder(candidate, f, worktrees))) candidates.push(candidate);
   }
   return candidates;
 };

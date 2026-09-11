@@ -1,8 +1,8 @@
 {
   "id": "dec_e87beb0f70",
   "title": "In-tree CLI is authoritative for generated documentation",
-  "topic": null,
-  "status": "accepted",
+  "topic": "grounding.doc-generator-authority",
+  "status": "superseded",
   "context": "Two decision-graph corrections were made via a globally-installed hunch MCP server, which regenerated documentation files. However, the global server reintroduced a record-counts sentence (#68) that had previously been intentionally removed, creating divergence between what the global tool generates and what the in-tree CLI produces.",
   "decision": "Documentation regeneration must use the in-tree CLI, not external/globally-installed tools. Committed docs are grounded in the checkout's own generator, not external systems.",
   "consequences": [
@@ -78,11 +78,11 @@
     "CLAUDE.md"
   ],
   "supersedes": null,
-  "superseded_by": null,
+  "superseded_by": "dec_8b1b016d68",
   "caused_by_bug": null,
   "commit": "1771fef",
   "valid_from": "2026-09-11T09:12:51+02:00",
-  "valid_to": null,
+  "valid_to": "2026-09-11T09:53:52.716131Z",
   "retired": {
     "symbols": [],
     "deps": []

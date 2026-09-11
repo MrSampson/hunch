@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -263,6 +263,52 @@ test("misroutedWorktreeCandidates: direct unit coverage (issue #54 review, I2)",
         misroutedWorktreeCandidates(fixture.root, [fixture.root, "only-in-worktree.ts"]),
         [fixture.worktree],
         `an ABSOLUTE directory entry (root itself) must not silence the guard either`,
+      );
+    } finally {
+      fixture.cleanup();
+    }
+  }
+  // A TRACKED DIRECTORY entry must not satisfy the known-to-history escape hatch
+  // either: `git log -- src` (an ordinary pathspec) matches any commit that ever
+  // touched ANYTHING under src/, not just a file literally named "src" — so
+  // pairing a real tracked directory with a genuinely misrouted file used to
+  // silence the guard the same way the existence check did (PR #76 review round
+  // 5 C1). "src/app.ts" is tracked; "only-in-worktree.ts" exists only in the
+  // worktree.
+  {
+    const root = repo("hunch-roots-trackeddir-");
+    mkdirSync(join(root, "src"), { recursive: true });
+    writeFileSync(join(root, "src", "app.ts"), "export const x = 1;\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-qm", "add src/app.ts");
+    const worktree = `${root}-wt`;
+    git(root, "worktree", "add", "-q", "-b", "feature-trackeddir", worktree);
+    writeFileSync(join(worktree, "only-in-worktree.ts"), "export const y = 1;\n");
+    try {
+      assert.deepEqual(
+        misroutedWorktreeCandidates(root, ["src", "only-in-worktree.ts"]),
+        [worktree],
+        "a tracked directory entry ('src') must not satisfy pathKnownToHistory and silence the guard",
+      );
+    } finally {
+      try { git(root, "worktree", "remove", "--force", worktree); } catch { /* best effort */ }
+      try { rmSync(worktree, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+      try { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+    }
+  }
+  // A RELATIVE entry that ESCAPES root's own tree with a ".." segment is the SAME
+  // #54 misroute as an absolute worktree-rooted path, merely spelled relatively —
+  // the containment hardening must catch this spelling too, not just the
+  // absolute one (PR #76 review round 5 I1).
+  {
+    const fixture = repoWithWorktree();
+    writeFileSync(join(fixture.worktree, "only-in-worktree.ts"), "export const x = 1;\n");
+    const escaped = join(relative(fixture.root, fixture.worktree), "only-in-worktree.ts");
+    try {
+      assert.deepEqual(
+        misroutedWorktreeCandidates(fixture.root, [escaped]),
+        [fixture.worktree],
+        `a relative ".." escape into a sibling worktree must resolve to that worktree, not be silently dropped: ${escaped}`,
       );
     } finally {
       fixture.cleanup();
@@ -851,6 +897,33 @@ test("hunch_record_correction is refused when scope_hint_file only exists in a l
   assert.equal(git(fixture.root, "log", "-1", "--format=%s"), "fixture", "primary checkout must have no new commit");
 });
 
+test("hunch_record_correction: retrying the refused call WITH cwd actually lands the constraint in the worktree", async (t) => {
+  const fixture = repoWithWorktree();
+  writeFileSync(join(fixture.worktree, "worktree-only.ts"), "export const onlyHere = 1;\n");
+  const control = buildServerWithRootControl(fixture.root);
+  const client = new Client({ name: "misroute-guard-correction-remedy-test", version: "0.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  t.after(async () => {
+    await client.close().catch(() => {});
+    await control.server.close().catch(() => {});
+    fixture.cleanup();
+  });
+
+  await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
+
+  const result = await client.callTool({
+    name: "hunch_record_correction",
+    arguments: {
+      rule: "never touch worktree-only.ts without a review",
+      scope_hint_file: "worktree-only.ts",
+      cwd: fixture.worktree,
+    },
+  }) as { isError?: boolean };
+  assert.equal(!!result.isError, false, "the refusal's own remedy must actually work");
+  assert.equal(git(fixture.root, "log", "-1", "--format=%s"), "fixture", "primary checkout must still have no new commit");
+  assert.equal(existsSync(join(fixture.worktree, ".hunch", "constraints")), true, "the constraint must land in the worktree");
+});
+
 test("hunch_record_correction is refused when scope_hint_file is the WORKTREE'S OWN absolute path (issue #76 C1)", async (t) => {
   const fixture = repoWithWorktree();
   writeFileSync(join(fixture.worktree, "worktree-only.ts"), "export const onlyHere = 1;\n");
@@ -972,6 +1045,36 @@ test("hunch_record_finding is refused when affected_files only exist in a linked
   assert.ok(text.includes(fixture.worktree), `refusal should name the likely-correct worktree: ${text}`);
   assert.ok(/cwd/.test(text), `refusal should tell the caller to pass cwd: ${text}`);
   assert.equal(git(fixture.root, "log", "-1", "--format=%s"), "fixture", "primary checkout must have no new commit");
+});
+
+test("hunch_record_finding: retrying the refused call WITH cwd actually lands the finding in the worktree", async (t) => {
+  const fixture = repoWithWorktree();
+  writeFileSync(join(fixture.worktree, "worktree-only.ts"), "export const onlyHere = 1;\n");
+  const control = buildServerWithRootControl(fixture.root);
+  const client = new Client({ name: "misroute-guard-finding-remedy-test", version: "0.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  t.after(async () => {
+    await client.close().catch(() => {});
+    await control.server.close().catch(() => {});
+    fixture.cleanup();
+  });
+
+  await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
+
+  const result = await client.callTool({
+    name: "hunch_record_finding",
+    arguments: {
+      finding: {
+        title: "worktree-only.ts is missing null checks",
+        observation: "audited during work entirely in the linked worktree",
+        affected_files: ["worktree-only.ts"],
+      },
+      cwd: fixture.worktree,
+    },
+  }) as { isError?: boolean };
+  assert.equal(!!result.isError, false, "the refusal's own remedy must actually work");
+  assert.equal(git(fixture.root, "log", "-1", "--format=%s"), "fixture", "primary checkout must still have no new commit");
+  assert.equal(existsSync(join(fixture.worktree, ".hunch", "findings")), true, "the finding must land in the worktree");
 });
 
 test("hunch_record_finding is refused when affected_files is the WORKTREE'S OWN absolute path (issue #76 C1)", async (t) => {

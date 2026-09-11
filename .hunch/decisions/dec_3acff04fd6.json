@@ -1,8 +1,8 @@
 {
   "id": "dec_3acff04fd6",
   "title": "Omit dynamic statistics from auto-generated documentation",
-  "topic": null,
-  "status": "accepted",
+  "topic": "grounding.doc-content-scope",
+  "status": "superseded",
   "context": "Documentation files included stale counts of Hunch records (249 decisions, 2 bugs, etc.) that diverged from reality when underlying data was corrected",
   "decision": "Remove dynamic statistics from committed documentation; direct readers to live hunch_* MCP tools as authoritative source instead",
   "consequences": [
@@ -60,11 +60,11 @@
     "CLAUDE.md"
   ],
   "supersedes": null,
-  "superseded_by": null,
+  "superseded_by": "dec_c6385a2ac1",
   "caused_by_bug": null,
   "commit": "f78fc87",
   "valid_from": "2026-09-11T10:08:01+02:00",
-  "valid_to": null,
+  "valid_to": "2026-09-11T09:53:52.716131Z",
   "retired": {
     "symbols": [],
     "deps": []

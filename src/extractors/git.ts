@@ -1692,15 +1692,28 @@ export function worktreePaths(root: string): string[] {
   return paths;
 }
 
-/** True when `root`'s OWN history has ever tracked `file` at HEAD. Distinguishes an
- *  ordinary delete/rename recorded correctly at the resolved root (the file is gone
- *  here because THIS checkout removed it, and a sibling worktree that branched earlier
- *  simply predates the change) from a genuine misroute (issue #54 review, C1: without
+/** True when `root`'s OWN history has ever tracked `file` — EXACTLY `file`, not
+ *  merely something under it — at HEAD. Distinguishes an ordinary delete/rename
+ *  recorded correctly at the resolved root (the file is gone here because THIS
+ *  checkout removed it, and a sibling worktree that branched earlier simply
+ *  predates the change) from a genuine misroute (issue #54 review, C1: without
  *  this check, deleting or renaming a related_files entry at the correct root was
- *  itself read as evidence the write belonged in whichever sibling still had the old
- *  path — refusing a correct write and pointing the caller at the wrong worktree). */
+ *  itself read as evidence the write belonged in whichever sibling still had the
+ *  old path — refusing a correct write and pointing the caller at the wrong
+ *  worktree). `git rev-list -- <file>` alone (an earlier version of this
+ *  function) treats `file` as an ordinary PATHSPEC: a directory name or a glob
+ *  matches anything under/matching it, so "src" or "*.ts" reads as "known to
+ *  history" whenever ANYTHING under that directory or matching that glob was
+ *  EVER tracked, anywhere in the repo — defeating the one caller's whole point
+ *  (PR #76 review round 5 C1: this silenced the misroute guard for the exact
+ *  directory-shaped related_files entry this repo's own graph already carries).
+ *  `:(literal)` disables glob/magic interpretation, and checking the commit's
+ *  OWN changed-file list for an exact string match (not just "the pathspec
+ *  matched something") confirms `file` was a tracked PATH, not merely a
+ *  directory or pattern something under it happened to satisfy. */
 export function pathKnownToHistory(root: string, file: string): boolean {
-  return !!gitSafe(["rev-list", "-n", "1", "HEAD", "--", file], root);
+  const out = gitSafe(["log", "-n", "1", "--format=", "--name-only", "HEAD", "--", `:(literal)${file}`], root);
+  return out.split("\n").some((line) => line === file);
 }
 
 /** Current branch name (e.g. "main", "feat/x"), or "" in detached HEAD / non-repo.
