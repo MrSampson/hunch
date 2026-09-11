@@ -79,8 +79,8 @@ import { premiseEscalations } from "../core/premises.js";
 import { applyImportedAdrReview, pendingImportedAdrReviews } from "../core/importReview.js";
 import { issueCaptureToken as issueToken, consumeCaptureToken as consumeToken } from "../core/capturetoken.js";
 import { randomUUID } from "node:crypto";
-import { existsSync, statSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { existsSync, lstatSync, statSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 
 type ToolResult = {
   content: Array<{ type: "text"; text: string }>;
@@ -341,6 +341,51 @@ function deepestContainer(f: string, worktrees: readonly string[]): string | nul
   return best;
 }
 
+/** Walks ABSOLUTE path `f` component by component to find its PHYSICAL
+ *  location: a plain component is appended lexically and never resolved; a
+ *  ".." only consults the kernel (fully resolving whatever symlink chain led
+ *  there, via `canonicalRootPath`) when the component it's popping is ITSELF
+ *  a symlink -- the one case where the kernel's ".."-cancellation point
+ *  (the symlink's TARGET's parent) differs from the lexical parent (PR #76
+ *  review round 11 C1). A ".." popping a plain directory stays a lexical
+ *  `dirname()`, since lexical and kernel resolution already agree there. This
+ *  is deliberately narrower than "resolve dirname(f) through the kernel
+ *  whenever `f` contains ANY '..'" (round 12's fix): that gate gets tripped
+ *  by a harmless ".." anywhere in the string, even nowhere near a symlink,
+ *  and then resolves the WHOLE directory chain — following an unrelated
+ *  symlink it should have left alone and reintroducing round 12's own false
+ *  positive (PR #76 review round 13 C1). `usedKernel` tells the caller
+ *  whether any kernel call actually happened, so it knows whether `path` is
+ *  canonical (and therefore whether a worktree path must be canonicalized
+ *  too before comparing) or still purely lexical. Splits on either slash
+ *  character, not just the platform `sep`, so a backslash-spelled path isn't
+ *  silently read as one unsplittable component with no ".." ever detected
+ *  (PR #76 review round 13 I1). */
+function walkPhysicalLocation(f: string): { path: string; usedKernel: boolean } {
+  const root = parse(f).root;
+  const segments = f.slice(root.length).split(/[\\/]/).filter(Boolean);
+  let phys = root || sep;
+  let usedKernel = false;
+  for (const seg of segments) {
+    if (seg === ".") continue;
+    if (seg !== "..") {
+      phys = join(phys, seg);
+      continue;
+    }
+    let base = phys;
+    try {
+      if (lstatSync(phys).isSymbolicLink()) {
+        base = canonicalRootPath(phys);
+        usedKernel = true;
+      }
+    } catch {
+      // unreadable or nonexistent -- fall through to a plain lexical pop
+    }
+    phys = dirname(base);
+  }
+  return { path: phys, usedKernel };
+}
+
 /** The worktree whose own directory tree most specifically contains ABSOLUTE path
  *  `f` AS PHYSICALLY PLACED — its own final path component is never resolved
  *  through a symlink, unlike `deepestContainer`. A symlink physically sitting
@@ -386,36 +431,35 @@ function deepestContainer(f: string, worktrees: readonly string[]): string | nul
  *  nested under root, naming a file through a worktree-local symlink to
  *  root's own directory with no ".." anywhere, had that file reattributed to
  *  root even though it physically exists at the worktree's own spelling (PR
- *  #76 review round 12 C1). Gating the kernel resolution on `f` actually
- *  containing ".." fixes this while keeping both round-11 fixes: a ".."-free
- *  `f` (the common case, and this function's whole reason to exist) stays
- *  purely lexical, and a ".."-bearing `f` — whether the ".." follows a real
- *  directory (round-10/11, lexical and kernel already agree there) or a
- *  symlink (round 11, they don't) — gets the kernel's actual answer. A
- *  round-9 version disqualified any ".."-bearing `f` outright as a defensive
- *  measure; that was ALSO wrong (PR #76 review round 10 C1), refusing
- *  harmless input on all three tools — this version computes the correct
- *  answer instead of refusing to answer. */
+ *  #76 review round 12 C1).
+ *
+ *  A round-12 version gated the kernel resolution on whether `f` contained
+ *  ANY ".." segment at all, resolving `dirname(f)` wholesale through the
+ *  kernel when it did. That gate is too coarse: "`f` contains a .." is a
+ *  necessary condition for lexical/kernel disagreement, not a licence to
+ *  kernel-resolve the ENTIRE directory chain once triggered — a harmless ".."
+ *  with no symlink anywhere near it (e.g. `<worktree>/subdir/../shared-src/
+ *  helper.ts`, where `subdir` is a plain directory and `shared-src` is the
+ *  symlink round 12's fix exists to serve) still routed the WHOLE path
+ *  through `canonicalRootPath`, following `shared-src` and reintroducing
+ *  round 12's exact false positive (PR #76 review round 13 C1).
+ *
+ *  This version decides PER COMPONENT: walking `f` left to right, a plain
+ *  component is appended lexically (never resolved); a ".." only consults the
+ *  kernel (`canonicalRootPath`, fully resolving whatever chain of symlinks
+ *  led there) when the component it's popping is ITSELF a symlink — the one
+ *  case (round 11) where the kernel's cancellation point differs from the
+ *  lexical parent. A ".." popping a plain directory (round 10/11) stays a
+ *  lexical `dirname()`. This is the narrowest discriminator that is still
+ *  correct: any symlink NOT immediately followed by a ".." is never resolved
+ *  (preserving round 9/12's physical-location contract), and every ".." that
+ *  actually needs the kernel gets it, regardless of how many harmless ".."s
+ *  or plain directories surround it. A round-9 version disqualified any
+ *  ".."-bearing `f` outright as a defensive measure; that was ALSO wrong (PR
+ *  #76 review round 10 C1), refusing harmless input on all three tools — this
+ *  version computes the correct answer instead of refusing to answer. */
 function lexicalDeepestContainer(f: string, worktrees: readonly string[]): string | null {
-  // Only take the kernel-resolving path when `f` actually contains a ".."
-  // segment -- that's the ONLY shape where lexical string math and the kernel
-  // can disagree (PR #76 review round 11 C1). Resolving dirname(f) through the
-  // kernel UNCONDITIONALLY (an earlier version of this function) is stronger
-  // than the problem requires: it follows every symlink in the directory
-  // chain even when there's no ".." to make that ambiguous, which resolves
-  // straight through the exact symlinked-DIRECTORY shape this function exists
-  // to serve (a symlink physically inside a worktree pointing elsewhere,
-  // spelled with no ".." at all) and reintroduces the round-9 false positive
-  // in a nested-worktree layout: an agent legitimately working in a worktree
-  // nested under root, naming a file through a worktree-local symlink to
-  // root's own directory, had that file reattributed to root even though it
-  // physically exists at the worktree's own spelling (PR #76 review round 12
-  // C1). Plain resolve() (no realpath anywhere) is correct and sufficient for
-  // every ".."-free `f`, and remains correct for a NON-symlink ".." (the
-  // round-10/11 "sub/../shared-link.ts" case, where ".." follows a real
-  // directory) too -- lexical and kernel resolution agree there regardless.
-  const hasDotDot = f.split(sep).includes("..");
-  const spelled = hasDotDot ? join(canonicalRootPath(dirname(f)), basename(f)) : resolve(f);
+  const { path: spelled, usedKernel } = walkPhysicalLocation(f);
   let best: string | null = null;
   let bestLen = -1;
   for (const wt of worktrees) {
@@ -424,7 +468,7 @@ function lexicalDeepestContainer(f: string, worktrees: readonly string[]): strin
     // spuriously fail to match even a worktree with no symlinks in its own
     // path, on any platform where the canonical form differs cosmetically
     // (e.g. a case-preserving vs case-folding mount).
-    const compareWt = hasDotDot ? canonicalRootPath(wt) : wt;
+    const compareWt = usedKernel ? canonicalRootPath(wt) : wt;
     if (!isWithin(compareWt, spelled)) continue;
     if (compareWt.length > bestLen) {
       best = wt;

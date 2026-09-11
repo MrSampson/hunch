@@ -573,6 +573,39 @@ test("misroutedWorktreeCandidates: direct unit coverage (issue #54 review, I2)",
       try { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
     }
   }
+  // A round-12 fix regression: the SAME no-'..' symlink-inside-a-nested-worktree
+  // shape as the test above, but with a completely HARMLESS ".." elsewhere in
+  // the path (popping a plain, real directory, nowhere near the symlink).
+  // Gating the kernel resolution on "does f contain ANY '..' segment" (round
+  // 12's fix) routes the WHOLE path through the kernel once that harmless ".."
+  // is spotted, following the unrelated symlink anyway and reproducing round
+  // 12's exact false positive (PR #76 review round 13 C1).
+  if (process.platform !== "win32") {
+    const root = repo("hunch-roots-nested-symlink-harmless-dotdot-");
+    const nestedDir = join(root, ".worktrees");
+    mkdirSync(nestedDir, { recursive: true });
+    const nested = join(nestedDir, "feature");
+    git(root, "worktree", "add", "-q", "-b", "feature-nested-harmless-dotdot", nested);
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "src", "helper.ts"), "export const helper = 1;\n");
+    mkdirSync(join(nested, "subdir"));
+    const linkPath = join(nested, "shared-src");
+    symlinkSync(join(root, "src"), linkPath, "dir");
+    const evidence = `${nested}/subdir/../shared-src/helper.ts`;
+    try {
+      assert.ok(evidence.split("/").includes(".."), "test input must actually retain a '..' segment (that's the whole point)");
+      assert.deepEqual(
+        misroutedWorktreeCandidates(nested, [evidence]),
+        [],
+        "a harmless '..' popping a REAL directory, unrelated to the symlink elsewhere in the same path, must not route the whole path through the kernel and reattribute it to root",
+      );
+    } finally {
+      try { rmSync(linkPath, { force: true }); } catch { /* best effort */ }
+      try { git(root, "worktree", "remove", "--force", nested); } catch { /* best effort */ }
+      try { rmSync(nested, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+      try { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+    }
+  }
   // pathKnownToHistory must reject an EMPTY string outright rather than let it
   // match the trailing "" element `-z`'s NUL-termination always produces --
   // defense in depth for the function's own documented contract, even though
