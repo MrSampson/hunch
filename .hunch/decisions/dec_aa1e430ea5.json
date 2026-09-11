@@ -1,0 +1,44 @@
+{
+  "id": "dec_aa1e430ea5",
+  "title": "pathKnownToHistory confirms an exact literal path match, with quotePath/merge-commit rendering pinned",
+  "topic": "mcp.misroute-guard.history-check",
+  "status": "accepted",
+  "context": "misroutedWorktreeCandidates' known-to-history escape hatch (issue #54 review C1: a file genuinely deleted/renamed at the CORRECT root must not be misread as evidence the write belongs in a sibling that predates the change) originally called git rev-list -n1 HEAD -- <file>, an ordinary git PATHSPEC: a directory name or glob matches anything under/matching it, so 'src' or a documented affected_files glob read as 'known to history' whenever ANYTHING under that directory was ever tracked anywhere in the repo -- silencing the guard for a directory-shaped entry this repo's own graph already carried (related_files: ['vscode-extension/']), reproduced end-to-end on two of three tools (PR #76 review round 5 C1). Fixed with :(literal) plus an exact --name-only line match. That fix itself then regressed on two git default behaviors, both producing FALSE POSITIVES (worse than a miss: obeying the refusal's own 'retry with cwd' advice then misroutes a LEGITIMATE write into the wrong worktree) -- reproduced end-to-end (PR #76 review round 6 C1/C2): core.quotePath defaults true, so a non-ASCII path renders backslash-octal-quoted and can never exact-match the raw input (every OTHER path enumerator in this file already pins core.quotePath=false for this exact reason, issue #50 -- this one didn't); and `--name-only` prints NOTHING for a merge commit by default (history simplification), so a file whose most recent touch is a merge (e.g. a conflict resolved by deleting it) reads as never-tracked.",
+  "decision": "pathKnownToHistory (src/extractors/git.ts) runs `git -c core.quotePath=false log -n1 --format= --name-only --diff-merges=first-parent HEAD -- :(literal)<file>` and checks the output for an EXACT line match to `file` -- :(literal) disables glob/pathspec-magic interpretation so a directory or glob can only ever match itself exactly (never something under/matching it); core.quotePath=false matches this file's own established convention for every other path enumerator; --diff-merges=first-parent makes a merge commit report its changes like an ordinary commit instead of being simplified away.",
+  "consequences": [
+    "A directory or glob entry can no longer satisfy the history escape hatch by matching something other than itself, closing the class of bug that let vscode-extension/ silence the guard",
+    "A non-ASCII filename deleted at the correct root is correctly recognized as known-to-history again (regression from round 5 fixed)",
+    "A file whose most recent touch is a merge commit is correctly recognized as known-to-history again (regression from round 5 fixed)",
+    "pathKnownToHistory's correctness now depends on the exact rendering of git's --name-only output for a single commit, not just on whether a pathspec matched anything -- a narrower, more precise question, but one more sensitive to git's own output-formatting defaults; the two regression tests (non-ASCII filename, merge-commit-as-latest-touch) exist specifically to pin that rendering, since 100% line/branch coverage on this function does not by itself prove the git command's OUTPUT is correct for a given git default"
+  ],
+  "alternatives_rejected": [
+    "Keep the ordinary (non-literal) pathspec and add directory/glob heuristics on the CALLER side to filter out likely-directory entries before calling pathKnownToHistory -- rejected: the caller cannot reliably distinguish 'this deleted path was a directory' from 'this deleted path was a file' without asking git, which is exactly what pathKnownToHistory exists to do; pushing the problem to the caller just relocates it",
+    "Special-case only the specific reported strings ('.', './') the way round 4 did, rather than fixing the general exact-match semantics -- rejected: round 5 demonstrated that narrow special-casing just re-opens the same class in the next-encountered shape (directory names other than '.', globs); round 6 demonstrated the same lesson applies to the FIX itself (two more git-default-dependent shapes) -- the fix needed to be general (exact literal match, correct git flags) rather than shape-specific"
+  ],
+  "rejected_tripwires": [],
+  "related_components": [],
+  "related_files": [
+    "src/extractors/git.ts",
+    "test/mcproots.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": null,
+  "valid_from": "2026-09-11T10:32:43.271Z",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "premises": [],
+  "provenance": {
+    "source": "agent_recorded",
+    "confidence": 0.75,
+    "evidence": [
+      "src/extractors/git.ts",
+      "test/mcproots.test.ts"
+    ]
+  },
+  "date": "2026-09-11T10:32:43.271Z"
+}

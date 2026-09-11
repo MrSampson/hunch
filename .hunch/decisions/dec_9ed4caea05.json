@@ -20,7 +20,7 @@
     "src/mcp/server.ts",
     "test/mcproots.test.ts"
   ],
-  "supersedes": "dec_9ed4caea05",
+  "supersedes": null,
   "superseded_by": null,
   "caused_by_bug": null,
   "commit": null,
