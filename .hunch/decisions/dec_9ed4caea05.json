@@ -3,16 +3,16 @@
   "title": "Absolute file evidence resolves to its DEEPEST containing worktree, canonicalized, by exact path segment",
   "topic": "mcp.misroute-guard.absolute-paths",
   "status": "accepted",
-  "context": "dec_d09ab8e9a0 (now corrected/extended here) generalized the misroute guard's existence check to compare an absolute file-evidence entry directly against each candidate directory via relative(dir, f), rather than relativizing against root first. A THIRD independent MR review (mr-complexity-reviewer, PR #76 round 3) verified by execution that this still had three false-negative shapes, one reproduced end-to-end through the real MCP server with nothing written and a silent commit to the wrong root: (a) a NESTED worktree (root/.worktrees/feature -- the exact layout `hunch worktree` itself creates) is lexically under root's own directory tree, so the plain 'is f under root' check wrongly attributed a file that exists only in the nested worktree to root, short-circuiting before the candidate loop ever ran; (b) a worktree reached through a symlinked alias wasn't recognized, since relative() compared raw un-resolved strings; (c) relative()'s return value was checked with rel.startsWith('..'), a STRING PREFIX match, not a path-segment boundary -- a file literally named '..odd.ts' would be wrongly discarded as 'outside the tree'.",
-  "decision": "Introduced deepestContainer(f, worktrees) in src/mcp/server.ts: for an absolute f, canonicalize both f and every known worktree path (canonicalRootPath -- the same symlink/case resolution resolveActiveRoot already relies on), find every worktree whose tree contains f via a new isWithin(parent, child) segment-boundary check (relative() result is '' or does not start with '..' + path.sep and is not '..' itself -- never a naive string prefix), and pick the LONGEST (most specific) match rather than any containing ancestor. existsUnder(dir, f, worktrees) then asks only 'is dir THE deepest container of f, and does f exist' -- so root never swallows a worktree nested inside it, a symlinked alias resolves to the real worktree, and a literal '..'-prefixed filename is never mistaken for a traversal segment.",
+  "context": "dec_9ed4caea05 (now corrected/extended here) introduced deepestContainer/isWithin for absolute file evidence. Two further review rounds found and closed two more gaps in the same area: round 4 (mr-complexity-reviewer) found the existence check used bare existsSync, which is true for DIRECTORIES -- so a single directory-shaped evidence entry (or the natural '.'/\"\" an agent might send meaning 'the repo itself') silenced the guard for every OTHER entry in the same call, verified end-to-end through the real MCP server against a directory-shaped related_files entry this repo's own graph already carried (vscode-extension/). Round 5 found the containment hardening (deepestContainer/isWithin, rounds 3-4) had only ever applied to ABSOLUTE entries -- a RELATIVE entry containing a '..' segment that escapes root's own tree (e.g. '../<worktree>/only-in-worktree.ts', the IDENTICAL #54 misroute merely spelled relatively) bypassed containment entirely.",
+  "decision": "existsUnder now checks isFile(f), never mere existsSync(f) -- a directory can never satisfy either the 'exists at root' escape hatch or a candidate match, closing the directory/empty-string bypass on the existence side (the git-history side of this same class is a separate decision, mcp.misroute-guard.history-check). misroutedWorktreeCandidates now pre-processes relatedFiles before any check: a relative entry is resolved against ROOT specifically (the only base the server actually has -- never re-resolved per candidate, which would answer a different, meaningless question) and promoted to an absolute entry ONLY if that resolution escapes root's own tree; a non-escaping relative entry keeps the original, intentional multi-location check (the same suffix tried at every candidate directory in turn) unchanged. A promoted (escaped) relative entry then runs through the identical deepestContainer/isFile logic an absolute entry gets.",
   "consequences": [
-    "A nested worktree (hunch worktree's own default layout) is now correctly distinguished from its parent root for absolute file evidence -- verified via a real git worktree nested under root, not just reasoned about",
-    "A worktree reached through a symlinked alias resolves correctly -- verified with a real symlink fixture (skipped on Windows, where symlink creation needs elevated permissions, matching the guard's existing win32 path-separator conditionals elsewhere in the test suite)",
-    "Windows and macOS variants of these paths remain reasoned-about rather than executed: CI's platform-matrix-safety job does not run test/mcproots.test.ts on windows-latest/macos-latest (only parse/io/migrate/matrix-release-verification/team-matrix-e2e do) -- a pre-existing CI-coverage gap, not introduced by this change, and out of scope to fix here"
+    "A directory or empty-string entry (relative or absolute) now contributes nothing to either the existence check or the candidate search, closing the class of bug that let this repo's own vscode-extension/ related_files entry silence the guard",
+    "A relative \"../<worktree>/x\" spelling of the #54 misroute is now caught the same way the absolute spelling already was",
+    "A residual, DOCUMENTED gap remains: a non-escaping relative entry that happens to reach a worktree NESTED under root (e.g. '.worktrees/feature/x.ts', no '..' segment) still resolves as 'exists at root' via the plain join() check, since root's own directory tree DOES physically contain it -- this fails OPEN (silently uncaught), never toward a false positive, and full parity with the absolute case would need its own design pass"
   ],
   "alternatives_rejected": [
-    "Document the nested-worktree boundary in the guard's doc comment and file a follow-up issue instead of fixing it, the same treatment #75 got -- considered and offered explicitly, but the fix was deterministic (no heuristic false-positive risk, unlike #75's dirty/clean-git-status idea) and already validated against every existing test case, so fixing was cheaper than documenting and tracking a known-missing behavior per this repo's own 'tickets, not TODOs' convention",
-    "Keep the naive string-prefix check for the '..' traversal guard since it happened to pass every existing test -- rejected once a concrete counterexample (a file literally named '..odd.ts') was identified; a segment-boundary check costs nothing extra"
+    "Resolve EVERY relative entry to an absolute path up front (uniformly, not just escaping ones) and route all of them through deepestContainer alone -- rejected: this collapses the original, intentional 'try this relative suffix at every candidate directory' semantics into a single-location check, since a relative entry resolved once against root is lexically a DIFFERENT absolute path than the same relative entry resolved against a sibling worktree -- verified by execution that this breaks the plain sibling-worktree-by-relative-filename case #63 established",
+    "Fix only the reported case (a single '..' segment) rather than the general escape-detection -- rejected in favor of a general isWithin-based check that already handles multi-level escapes, redundant './.. ' segments, and escape-then-re-enter-root correctly with no special-casing"
   ],
   "rejected_tripwires": [],
   "related_components": [],
@@ -20,7 +20,7 @@
     "src/mcp/server.ts",
     "test/mcproots.test.ts"
   ],
-  "supersedes": "dec_d09ab8e9a0",
+  "supersedes": "dec_9ed4caea05",
   "superseded_by": null,
   "caused_by_bug": null,
   "commit": null,
@@ -39,5 +39,5 @@
       "test/mcproots.test.ts"
     ]
   },
-  "date": "2026-09-11T07:57:16.415Z"
+  "date": "2026-09-11T10:32:09.726Z"
 }
