@@ -1,0 +1,106 @@
+{
+  "id": "dec_7c892695a2",
+  "title": "Remove hardcoded record counts from Hunch documentation",
+  "topic": null,
+  "status": "accepted",
+  "context": "Hunch record counts (decisions, bugs, constraints, etc.) were regenerated frequently and maintained across multiple documentation files (.cursor, .github, .windsurf, CLAUDE.md). Keeping hardcoded counts in sync across four files created maintenance burden and documentation drift.",
+  "decision": "Strip the specific record-count sentence entirely from all Hunch documentation. Retain the conceptual description of what Hunch holds (decisions, bug history, invariants) but remove the quantified metrics (\"264 decisions, 2 bugs, 28 constraints, 21 components, 3 policies, 1 open findings\").",
+  "consequences": [
+    "Documentation is now simpler and requires no updates when Hunch grows",
+    "Readers lose quick visibility into current scope/size of engineering memory",
+    "No more risk of hardcoded counts drifting from actual state",
+    "Fewer files to edit when Hunch is updated"
+  ],
+  "alternatives_rejected": [
+    "Keep counts and maintain them manually across files (unsustainable drift)",
+    "Maintain counts in a single canonical location with references (indirection complexity)",
+    "Auto-generate counts programmatically in documentation (infrastructure cost)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Keep counts and maintain them manually across files (unsustainable drift)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Maintain counts in a single canonical location with references (indirection complexity)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Auto-generate counts programmatically in documentation (infrastructure cost)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_4c40eab00f"
+  ],
+  "related_files": [
+    ".github/copilot-instructions.md",
+    ".windsurf/rules/hunch.md",
+    "AGENTS.md",
+    "CLAUDE.md"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "e8f643a",
+  "valid_from": "2026-09-11T16:31:10+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:e8f643a",
+      "synth:provider=claude-cli",
+      "branch:62-extend-misroute-guard",
+      ".github/copilot-instructions.md",
+      ".windsurf/rules/hunch.md",
+      "AGENTS.md",
+      "CLAUDE.md"
+    ],
+    "last_verified": "2026-09-11T14:31:27.469Z"
+  },
+  "date": "2026-09-11T16:31:10+02:00"
+}
