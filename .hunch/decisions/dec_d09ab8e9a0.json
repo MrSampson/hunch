@@ -2,7 +2,7 @@
   "id": "dec_d09ab8e9a0",
   "title": "Absolute file evidence is checked against each candidate directory directly, not relativized against root first",
   "topic": "mcp.misroute-guard.absolute-paths",
-  "status": "accepted",
+  "status": "superseded",
   "context": "A prior version of this fix (dec_21fde3b22a, now corrected here) relativized an absolute related_files/scope_hint_file/affected_files entry against `root` alone (repoRelativeHint) before checking existence -- and claimed this 'prevents bypass'. Independent MR review (mr-complexity-reviewer, PR #76 second pass) verified by direct execution that the claim was false: the realistic case -- an agent in a linked worktree constructing an absolute path from ITS OWN cwd (the worktree), not from `root` -- relativizes to '../<worktree-dir>/...' against root, which repoRelativeHint's own outside-repo guard drops as \"\". The guard then saw an empty file list and stayed silent, reproducing the exact #54 bypass the fix claimed to close. Reproduced against all three tools (hunch_record_decision, hunch_record_correction, hunch_record_finding) before this fix.",
   "decision": "Generalize the existence check itself (existsUnder(dir, f) in src/mcp/server.ts) to understand BOTH relative and absolute entries directly, for whichever directory is under test (root, or each candidate sibling worktree in turn): a relative entry is joined onto that directory as before; an absolute entry is checked AS ITSELF, scoped via relative(dir, f) to confirm it actually falls under that specific directory's own tree, never joined. This makes an absolute path resolving under a sibling worktree's own tree DIRECT positive evidence for that worktree -- not a heuristic, not a guess -- while an absolute path outside every known worktree correctly contributes nothing (relativizes to \"../...\" everywhere, same as before). Superseded and REMOVED the correctionScopeHint/guardFiles dedup this replaces: with the guard no longer relativizing against root at all, there is only ONE remaining consumer of that normalization (buildCorrectionConstraint's own scope-glob construction, unrelated to the guard), so the exported dedup helper was reverted to a private, inlined implementation to avoid leaving unused public API surface.",
   "consequences": [
@@ -22,11 +22,11 @@
     "test/mcproots.test.ts"
   ],
   "supersedes": "dec_21fde3b22a",
-  "superseded_by": null,
+  "superseded_by": "dec_9ed4caea05",
   "caused_by_bug": null,
   "commit": null,
   "valid_from": "2026-09-11T07:12:07.565Z",
-  "valid_to": null,
+  "valid_to": "2026-09-11T07:57:16.415Z",
   "retired": {
     "symbols": [],
     "deps": []
