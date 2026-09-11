@@ -257,9 +257,24 @@ export const misroutedWorktreeCandidates = (root: string, relatedFiles: readonly
   if (!relatedFiles.length) return [];
   const worktrees = worktreePaths(root);
   const canonRoot = canonicalRootPath(root);
+  // Resolve against the CANONICAL root, not the raw `root` string. `f` almost
+  // always does NOT exist yet (that's the whole point of checking it) --
+  // canonicalRootPath's realpath then throws and falls back to the raw,
+  // un-resolved path (src/mcp/roots.ts). Resolving against raw `root` first and
+  // canonicalizing second means that fallback returns a path still spelled
+  // however `root` was spelled -- if `root` itself reaches the repo through a
+  // symlink (reachable in production via `hunch mcp --root <path through a
+  // symlink>`, which pins the root and skips the client-root canonicalization
+  // path entirely), an ORDINARY relative filename that never escapes root's own
+  // tree gets compared against the CANONICAL root and reads as escaping,
+  // silently disabling the guard for the exact #54 shape it exists to catch
+  // (PR #76 review round 7 C1). Resolving against the already-canonical root
+  // first means the common non-existent-file case is correctly rooted even
+  // when realpath's later canonicalization attempt on the (still nonexistent)
+  // resolved path has nothing to resolve and simply returns it unchanged.
   const evidence = relatedFiles.filter(Boolean).map((f) => {
     if (isAbsolute(f)) return f;
-    const resolved = resolve(root, f);
+    const resolved = resolve(canonRoot, f);
     return isWithin(canonRoot, canonicalRootPath(resolved)) ? f : resolved;
   });
   if (!evidence.length) return [];

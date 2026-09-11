@@ -168,6 +168,35 @@ test("misroutedWorktreeCandidates: direct unit coverage (issue #54 review, I2)",
       try { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
     }
   }
+  // core.quotePath=false (round 6's fix) only stops git quoting bytes > 0x7F —
+  // git ALWAYS C-quotes a `"`, and a filename with a literal TAB or leading
+  // space is independently mishandled by any implementation that trims or
+  // newline-splits the git output. Each of these deleted-at-the-correct-root
+  // shapes was still a FALSE POSITIVE after round 6's fix (PR #76 review round
+  // 7 I1) — the underlying fix (NUL-separated `-z` output, checked with an
+  // UNTRIMMED read) closes the whole class at once rather than one byte range
+  // at a time.
+  for (const name of ['q"uote.ts', "tab\tsep.ts", " lead.ts", "trail.ts "]) {
+    const root = repo("hunch-roots-quoteclass-");
+    writeFileSync(join(root, name), "export const x = 1;\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-qm", `add ${JSON.stringify(name)}`);
+    const worktree = `${root}-wt`;
+    git(root, "worktree", "add", "-q", "-b", "feature-quoteclass", worktree);
+    git(root, "rm", "-q", "--", name);
+    git(root, "commit", "-qm", `drop ${JSON.stringify(name)}`);
+    try {
+      assert.deepEqual(
+        misroutedWorktreeCandidates(root, [name]),
+        [],
+        `a filename shaped like ${JSON.stringify(name)}, deleted at the correct root, must count as known-to-history, not a misroute`,
+      );
+    } finally {
+      try { git(root, "worktree", "remove", "--force", worktree); } catch { /* best effort */ }
+      try { rmSync(worktree, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+      try { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+    }
+  }
   // related_files absent at root because a MERGE commit resolved a conflict by
   // deleting it: `git log --name-only` (default diff simplification) prints
   // NOTHING for a merge commit unless told otherwise, so an earlier version of
@@ -299,6 +328,32 @@ test("misroutedWorktreeCandidates: direct unit coverage (issue #54 review, I2)",
       );
     } finally {
       try { rmSync(alias, { force: true }); } catch { /* best effort */ }
+      fixture.cleanup();
+    }
+  }
+  // A SYMLINK-SPELLED ROOT (reachable in production via `hunch mcp --root
+  // <path through a symlink>`, which pins the root and skips client-root
+  // canonicalization entirely) must not silence the guard for an ORDINARY
+  // relative filename that never escapes root's own tree — the exact #54
+  // shape this whole guard exists to catch. Resolving a non-existent relative
+  // entry against the raw `root` string, then trying to canonicalize the
+  // (still nonexistent) result, hits realpath's not-found fallback and stays
+  // spelled like `root` — comparing that against the CANONICAL root then
+  // reads as "escaping" and silently disables the guard (PR #76 review round
+  // 7 C1).
+  if (process.platform !== "win32") {
+    const fixture = repoWithWorktree();
+    const rootAlias = `${fixture.root}-alias`;
+    symlinkSync(fixture.root, rootAlias, "dir");
+    writeFileSync(join(fixture.worktree, "only-in-worktree.ts"), "export const x = 1;\n");
+    try {
+      assert.deepEqual(
+        misroutedWorktreeCandidates(rootAlias, ["only-in-worktree.ts"]),
+        [fixture.worktree],
+        "an ordinary relative filename must still be caught when root itself is reached through a symlink",
+      );
+    } finally {
+      try { rmSync(rootAlias, { force: true }); } catch { /* best effort */ }
       fixture.cleanup();
     }
   }
