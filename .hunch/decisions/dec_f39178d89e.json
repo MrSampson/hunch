@@ -1,0 +1,111 @@
+{
+  "id": "dec_f39178d89e",
+  "title": "Check absolute paths directly using relative(), not by pre-normalization",
+  "topic": null,
+  "status": "accepted",
+  "context": "The misroute guard was meant to catch when agents record findings/decisions in the wrong checkout (worktree vs. root). A prior fix attempted to handle absolute paths by relativizing them against root before existence checks, but this failed: agents working in a sibling worktree naturally send paths rooted at their own cwd, which relativize to \"../…\" against root and get silently dropped — reintroducing the exact #54 bypass the guard exists to prevent. Touches invariant(s): con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
+  "decision": "Replace pre-normalization (guardFiles, correctionScopeHint) with a path-aware existence check (existsUnder) that handles both relative and absolute entries directly: relative paths join onto the directory as before; absolute paths are checked AS THEMSELVES, confirmed via relative() to actually fall under that directory's own tree. An absolute path existing under a sibling worktree's tree is now direct positive evidence for that worktree, not a heuristic requiring normalization against root.",
+  "consequences": [
+    "Correctly identifies misroutes where agents send worktree-rooted absolute paths",
+    "Absolute paths are now evidence of which specific directory contains them, not normalized away",
+    "Removed correctionScopeHint and guardFiles public API surface (reduced unnecessary exports)",
+    "Test cases updated to reflect realistic agent behavior (joining against worktree, not root)"
+  ],
+  "alternatives_rejected": [
+    "Pre-relativizing all paths against root before checking (fails for sibling worktree absolute paths)",
+    "Naive join(root, absolutePath) checks (produces nonexistent concatenated paths)",
+    "Complex heuristics to infer worktree membership from absolute path shape"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Pre-relativizing all paths against root before checking (fails for sibling worktree absolute paths)",
+      "scope": [
+        "src/core/**",
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Naive join(root, absolutePath) checks (produces nonexistent concatenated paths)",
+      "scope": [
+        "src/core/**",
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Complex heuristics to infer worktree membership from absolute path shape",
+      "scope": [
+        "src/core/**",
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_a94a8fe5cc",
+    "cmp_b256a6aed0",
+    "cmp_dfa5b5acde"
+  ],
+  "related_files": [
+    "src/core/correction.ts",
+    "src/mcp/server.ts",
+    "test/mcproots.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "5f687f2",
+  "valid_from": "2026-09-11T09:12:40+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [
+      "correctionScopeHint"
+    ],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:5f687f2",
+      "synth:provider=claude-cli",
+      "branch:62-extend-misroute-guard",
+      "src/core/correction.ts",
+      "src/mcp/server.ts",
+      "test/mcproots.test.ts"
+    ],
+    "last_verified": "2026-09-11T07:12:58.496Z"
+  },
+  "date": "2026-09-11T09:12:40+02:00"
+}
