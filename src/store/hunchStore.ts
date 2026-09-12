@@ -263,8 +263,10 @@ export class HunchStore {
   putCapture<K extends EntityKind>(kind: K, record: EntityFor[K], isPrivate = false): EntityFor[K] {
     const home = this.captureHome(isPrivate);
     const id = (record as { id: string }).id;
-    const targetHasRecord = home === "private" ? !!this.privateJson?.get(kind, id) : !!this.json.get(kind, id);
-    const otherHasRecord = home === "private" ? !!this.json.get(kind, id) : !!this.privateJson?.get(kind, id);
+    const lookup = (json: JsonStore | undefined) => kind === "derived" || kind === "receipts" || kind === "commitments"
+      ? json?.getDirect(kind, id) : json?.get(kind, id);
+    const targetHasRecord = !!lookup(home === "private" ? this.privateJson : this.json);
+    const otherHasRecord = !!lookup(home === "private" ? this.json : this.privateJson);
     // Legacy repositories can already contain twins, so an idempotent update in
     // the selected home remains possible. A new capture must never CREATE that
     // ambiguous state: merged/private-first reads would make later writers and
@@ -318,6 +320,10 @@ export class HunchStore {
    *  should use this instead of overlay-first `getRec`. */
   getPrivateRec<K extends EntityKind>(kind: K, id: string): EntityFor[K] | undefined {
     return this.privateJson?.get(kind, id);
+  }
+
+  getStateDirect<K extends "derived" | "receipts" | "commitments">(kind: K, id: string, home: "public" | "private"): EntityFor[K] | undefined {
+    return (home === "private" ? this.privateJson : this.json)?.getDirect(kind, id);
   }
 
   /** Update an EXISTING record in the store that holds it — an overlay record must never
@@ -2157,9 +2163,12 @@ const DECISION_FRESHNESS_PATH_CACHE_CAP = 4_096;
  *  had correctly injected just below the cut line. This lifts memory records by a
  *  bounded number of positions; it never EXCLUDES a kind (a symbol-name query still
  *  returns symbols, and a constraint stays reachable), it only breaks the tie toward
- *  intent. Measured on bench/golden-retrieval.json: Recall@10 70% -> 90%, MRR
- *  0.402 -> 0.575. Set HUNCH_MEMORY_PRIOR_SHIFT=0 to disable. */
-const MEMORY_PRIOR_SHIFT = numEnv("HUNCH_MEMORY_PRIOR_SHIFT", 12);
+ *  intent. The task-report additions diluted one previously reachable decision:
+ *  on the same memory corpus, 12 positions gave Recall@10 8/11 (MRR .470);
+ *  16 restores 9/11 (.483), preserving the existing floor and exact-symbol controls.
+ *  This is bounded calibration, not immunity to arbitrary corpus growth.
+ *  Set HUNCH_MEMORY_PRIOR_SHIFT=0 to disable. */
+const MEMORY_PRIOR_SHIFT = numEnv("HUNCH_MEMORY_PRIOR_SHIFT", 16);
 const MEMORY_KINDS = new Set(["decisions", "constraints", "bugs", "runbooks", "policies", ...STATE_KINDS]);
 /** State-of-record ordering in the RAW search path: a nuryel.state/1 history hit (superseded
  *  derived, done/cancelled commitment, failed receipt, retired entity) keeps this fraction of

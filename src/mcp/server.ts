@@ -14,6 +14,8 @@ import { hunchPaths, findRoot, toPosixTarget } from "../core/paths.js";
 import { canonicalRootPath, resolveActiveRoot } from "./roots.js";
 import { HunchStore } from "../store/hunchStore.js";
 import { StateRefusal, SubscribeResponseSchema, capabilities, partitionOf, readState, recordsState, subscribeState, writeState } from "../store/stateBinding.js";
+import { captureState, captureBatchState } from "../store/stateCapture.js";
+import { CaptureRequestSchema, CaptureBatchRequestSchema, CaptureBatchResultSchema, STATE_CAPTURE_VERSION, STATE_CAPTURE_BATCH_VERSION } from "../core/stateContract.js";
 import { ReadRequestSchema, ReadResponseSchema, WriteRequestSchema, WriteResultSchema, SubscribeRequestSchema, RecordsRequestSchema, RecordsResponseSchema, STATE_READ_VERSION, STATE_WRITE_VERSION, STATE_SUBSCRIBE_VERSION, STATE_RECORDS_VERSION, stateHash } from "../core/stateContract.js";
 import { selectEmbedder } from "../store/embedder.js";
 import { decisionId, findingId, manualDecisionId } from "../core/ids.js";
@@ -60,6 +62,11 @@ import { PROJECT_DNA_DELTA_SCHEMA_VERSION, diffProjectDna } from "../core/projec
 import { projectDnaDeliverySupplement } from "../core/projectDnaDelivery.js";
 import { armExecutionObligations, loadPipelineState, savePipelineState } from "../core/pipeline.js";
 import { recordServed } from "../core/served.js";
+import { TaskIdSchema, recordTaskDelivery, unseenLessons } from "../core/taskReport.js";
+import { renderRecalledLine } from "../core/taskReportRender.js";
+import { observeReportCapture } from "../core/taskReportCapture.js";
+import { snapshotDeliveredRecords } from "../core/taskReportEvidence.js";
+import { registerTaskReportTools } from "./taskReportTools.js";
 import { EdgeSchema, ResourceSchema, type Runbook } from "../core/types.js";
 import { compareCandidates } from "../core/compare.js";
 import { checkConformance } from "../core/conformance.js";
@@ -81,6 +88,7 @@ import { issueCaptureToken as issueToken, consumeCaptureToken as consumeToken } 
 import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
+import { initiatorFromClient, withInitiator } from "../synthesis/initiator.js";
 
 type ToolResult = {
   content: Array<{ type: "text"; text: string }>;
@@ -89,6 +97,14 @@ type ToolResult = {
 };
 const ok = (text: string): ToolResult => ({ content: [{ type: "text", text }] });
 const err = (text: string): ToolResult => ({ content: [{ type: "text", text }], isError: true });
+/** Error classes as text prefixes — client-agnostic, no schema change, so any MCP client
+ *  can pick its next move from the first word:
+ *    Refused: …    a gate held. Do not retry the same call; resolve the named conflict or ask a human.
+ *    Invalid: …    the arguments are wrong. Fix them and call again.
+ *    Failed to …   internal or environmental. One retry is reasonable.
+ *  Transient states that say "retry" in their own words stay unprefixed. */
+const refused = (text: string): ToolResult => err(`Refused: ${text}`);
+const invalid = (text: string): ToolResult => err(`Invalid: ${text}`);
 
 /** Shared by every auto-committing write tool (issue #20): the MCP `roots` protocol
  *  cannot see an agent-driven `cd`/EnterWorktree, so a stdio server's cached root
@@ -1199,17 +1215,17 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         // root/store/route epoch for its complete execution.
         const teamFileNow = !explicitOverlay && existsSync(teamFile);
         if (teamFileNow !== teamAdvertised) {
-          return err("The committed team-memory routing changed after this MCP process started. Reconnect Hunch before reading or writing memory.");
+          return refused("The committed team-memory routing changed after this MCP process started. Reconnect Hunch before reading or writing memory.");
         }
         const currentTeamConfig = teamFileNow ? readTeamConfig(root) : null;
         if (teamAdvertised && !matchesStartupTeamRoute()) {
-          return err("The team-memory URL or branch changed after this MCP process started. Refusing the old graph; reconnect Hunch first.");
+          return refused("The team-memory URL or branch changed after this MCP process started. Refusing the old graph; reconnect Hunch first.");
         }
         if (teamFileNow && (!currentTeamConfig
           || store.mode !== "shared"
           || !store.privateDir
           || !overlayMatchesTeamRemote(root, join(store.privateDir, "..")))) {
-          return err("The committed team memory destination is invalid or no longer matches this process. Refusing the stale graph; reconnect Hunch first.");
+          return refused("The committed team memory destination is invalid or no longer matches this process. Refusing the stale graph; reconnect Hunch first.");
         }
         if (store.mode === "shared" && store.privateDir) {
           pullTeamMemory();
@@ -1218,7 +1234,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
           // blocked; serving after that race would attach the old checkout to a new
           // destination even though the pull itself correctly refused.
           if (teamAdvertised && !matchesStartupTeamRoute()) {
-            return err("The team-memory route changed during refresh. Refusing to serve a stale or redirected graph; reconnect Hunch first.");
+            return refused("The team-memory route changed during refresh. Refusing to serve a stale or redirected graph; reconnect Hunch first.");
           }
         }
         // Stamp check in EVERY mode, not only shared: a CLI capture or post-commit
@@ -1230,9 +1246,9 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         try {
           if (store.sourceStamp() !== indexedSourceStamp) refreshIndex();
         } catch { /* corrupt/churning local source — serve the last durable indexed view */ }
-        const result = await callback(...args);
+        const result = await withInitiator(initiatorFromClient(server.server.getClientVersion()?.name), () => callback(...args));
         if (teamAdvertised && !matchesStartupTeamRoute()) {
-          return err("The team-memory route changed while the tool was running. Its startup destination was not published; reconnect Hunch before retrying.");
+          return refused("The team-memory route changed while the tool was running. Its startup destination was not published; reconnect Hunch before retrying.");
         }
         return result;
       } finally {
@@ -1247,7 +1263,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     {
       title: "Query Hunch",
       description:
-        "Full-text + graph search across the engineering memory (decisions, bugs, constraints, components, symbols). Returns ranked records with provenance. Use this to ask 'why' questions about the codebase.",
+        "Full-text + graph search across the engineering memory (decisions, bugs, constraints, components, symbols). Returns ranked records with provenance. Use this to ask 'why' questions about the codebase. Not for orienting on a known file or symbol (hunch_context / hunch_why give the curated slice with its blast radius) or for finding where code lives (hunch_structure).",
       inputSchema: { query: z.string().describe("A natural-language question or keywords.") },
     },
     async ({ query }): Promise<ToolResult> => {
@@ -1261,13 +1277,15 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     },
   );
 
+  registerTaskReportTools(server, () => root, () => store);
+
   // -- hunch_runbook --------------------------------------------------------
   server.registerTool(
     "hunch_runbook",
     {
       title: "Find a runbook for a task",
       description:
-        "Look up the proven 'how-to' (ordered steps + files) for a recurring task — runbook-SCOPED retrieval (searches within runbooks, not the whole graph). Use at the START of a task to reuse a known procedure instead of re-deriving it. Advisory.",
+        "Look up the proven 'how-to' (ordered steps + files) for a recurring task — runbook-SCOPED retrieval (searches within runbooks, not the whole graph). Use at the START of a task to reuse a known procedure instead of re-deriving it. Advisory. Not for design rationale (hunch_why) or free-text memory search (hunch_query).",
       inputSchema: { task: z.string().describe("The task/intent, e.g. 'add an MCP tool' or 'cut a release'.") },
     },
     async ({ task }): Promise<ToolResult> => {
@@ -1290,7 +1308,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     {
       title: "Explain why a file/symbol is the way it is",
       description:
-        "Return the decisions, bugs, and constraints that explain a file path or symbol — the 'why' and the 'what must not break', with evidence. Pass `as_of` (a commit/tag/branch) to time-travel: see what was believed at that point in history.",
+        "Return the decisions, bugs, and constraints that explain a file path or symbol — the 'why' and the 'what must not break', with evidence. Pass `as_of` (a commit/tag/branch) to time-travel: see what was believed at that point in history. Use when you need the full rationale for ONE target. Not for a budgeted task brief (hunch_context), keyword search (hunch_query), or where-is-it questions (hunch_structure).",
       inputSchema: {
         target: z.string().describe("A file path (e.g. src/auth/session.ts) or symbol name."),
         as_of: z.string().optional().describe("Time-travel ref: a commit sha, tag, or branch (e.g. v0.7.0). Omit for the current view."),
@@ -1298,7 +1316,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     },
     async ({ target, as_of }): Promise<ToolResult> => {
       const asOf = as_of ? asOfDate(as_of, root) : undefined;
-      if (as_of && !asOf) return err(`Could not resolve as_of "${as_of}" to a commit.`);
+      if (as_of && !asOf) return invalid(`Could not resolve as_of "${as_of}" to a commit.`);
       const w = store.why(target, { asOf });
       // Highest-signal first, then cap: invariants by severity, decisions by
       // confidence, bugs by severity — so a hot file's trim drops the tail, not
@@ -1346,7 +1364,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     {
       title: "Check invariants in scope",
       description:
-        "Return constraints whose scope matches a glob/path, sorted by severity. Call this BEFORE editing code to avoid breaking intentional invariants.",
+        "Return constraints whose scope matches a glob/path, sorted by severity. Call this BEFORE editing code to avoid breaking intentional invariants. Returns each constraint's id, severity, enforcement, statement, and rationale. Not for who-depends-on-this (hunch_get_dependents) or invariants reachable only through dependents (hunch_blast_radius).",
       inputSchema: { scope: z.string().describe("A path or glob, e.g. src/auth/** or src/auth/session.ts") },
     },
     async ({ scope }): Promise<ToolResult> => {
@@ -1363,7 +1381,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     {
       title: "Blast radius (transitive dependents)",
       description:
-        "Return everything that transitively depends on a symbol/component (callers + dependent components) so a change's blast radius is known before editing.",
+        "Return everything that transitively depends on a symbol/component (callers + dependent components) so a change's blast radius is known before editing. Returns dependents nearest first with depth and edge kind. Not for the invariants those dependents carry (hunch_blast_radius) or constraints on the target itself (hunch_check_constraints).",
       inputSchema: { symbol: z.string().describe("A symbol id, symbol name, or file path.") },
     },
     async ({ symbol }): Promise<ToolResult> => {
@@ -1386,7 +1404,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     {
       title: "Blast radius + near-violations for a file",
       description:
-        "Given a file you're about to change, return its dependency blast radius (files whose code depends on it) AND any invariants reached THROUGH that radius — 'near-violations' you could break indirectly without touching their own scope. Call before editing a widely-depended-on file. Mirrors `hunch check --blast`.",
+        "Given a file you're about to change, return its dependency blast radius (files whose code depends on it) AND any invariants reached THROUGH that radius — 'near-violations' you could break indirectly without touching their own scope. Call before editing a widely-depended-on file. Mirrors `hunch check --blast`. Not for a bare dependent list (hunch_get_dependents) or constraints scoped to the target alone (hunch_check_constraints).",
       inputSchema: { target: z.string().describe("A file path (e.g. src/auth/jwt.ts) or symbol.") },
     },
     async ({ target }): Promise<ToolResult> => {
@@ -1451,7 +1469,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     {
       title: "Derive a sealed semantic proof for an exact change",
       description:
-        "Bind an exact committed Git transition to its change identity, Project DNA, base/result semantic graphs, current decisions and constraints, blast radius, conformance, guard verdict, and explicit gaps. Read-only and deterministic; grants no execution, CI, deployment, merge, ranking, promotion, or policy authority.",
+        "Bind an exact committed Git transition to its change identity, Project DNA, base/result semantic graphs, current decisions and constraints, blast radius, conformance, guard verdict, and explicit gaps. Read-only and deterministic; grants no execution, CI, deployment, merge, ranking, promotion, or policy authority. Needs two committed refs. Not for a verdict on staged work (hunch_merge_verdict) or an impact map (hunch_pr_impact).",
       inputSchema: {
         base_ref: z.string().min(1).max(1_024).describe("Base commit or ref for the exact tree transition."),
         result_ref: z.string().min(1).max(1_024).optional().describe("Result commit or ref (default HEAD)."),
@@ -1578,18 +1596,36 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     {
       title: "Assemble the minimal relevant Hunch slice for a task",
       description:
-        "Given a file, symbol, or task phrase you're about to work on, return the MINIMAL relevant memory — invariants to preserve, decisions explaining the design, bug history not to reintroduce, and the blast radius — as a compact brief. Call this FIRST when starting work on something. A task phrase that resolves to no file/symbol falls back to the closest graph matches.",
+        "Given a file, symbol, or task phrase you're about to work on, return the MINIMAL relevant memory — invariants to preserve, decisions explaining the design, bug history not to reintroduce, and the blast radius — as a compact brief. Call this FIRST when starting work on something. A task phrase that resolves to no file/symbol falls back to the closest graph matches. Returns a budgeted brief plus a delivery receipt. Not for exhaustive rationale on one file (hunch_why) or keyword search (hunch_query).",
       inputSchema: {
         target: z.string().describe("A file path, symbol, or task phrase you're about to work on."),
         budget_tokens: z.number().optional().describe("Rough token budget for the brief (default 1500)."),
         profile: z.enum(DELIVERY_PROFILES).optional().describe("Delivery role: builder (default), reviewer, or architect. Changes non-blocking order only."),
         as_of: z.string().optional().describe("Time-travel ref (commit/tag/branch): assemble the slice as it stood then."),
+        task_id: TaskIdSchema.optional().describe("Exact task ID from hunch_task; records this delivery for the task's contribution report."),
+        cwd: cwdHintField,
       },
       outputSchema: DELIVERY_OUTPUT_SCHEMA,
     },
-    async ({ target, budget_tokens, profile, as_of }, extra): Promise<ToolResult> => {
+    async ({ target, budget_tokens, profile, as_of, task_id }, extra): Promise<ToolResult> => {
+      const deliver = (envelope: DeliveryEnvelope): ToolResult => {
+        const result = deliveredContext(root, as_of ? `${target} (as_of:${as_of})` : target, envelope, extra.sessionId);
+        if (task_id) {
+          try {
+            // Historical contexts must not borrow today's record text/revision.
+            const records = as_of ? [] : snapshotDeliveredRecords(store, envelope);
+            // First delivery of a revision in this task earns one line; repeats stay quiet.
+            const recalled = renderRecalledLine(unseenLessons(root, task_id, records));
+            const occurrence = recordTaskDelivery(root, task_id, envelope, records);
+            result.content.push({ type: "text", text: `${recalled ? `${recalled}\n` : ""}Task evidence: ${task_id} · occurrence ${occurrence}.\n${records.slice(0, 20).map(r => `${r.record_id} @ ${r.content_hash}`).join("\n")}${records.length > 20 ? "\nMore record identities: hunch_report(task_id)." : ""}` });
+          } catch {
+            result.content.push({ type: "text", text: `Task evidence could not be recorded for ${task_id}. Context remains available; this delivery's report attribution is unverified. Check the task ID, working directory, and local ledger.` });
+          }
+        }
+        return result;
+      };
       const asOf = as_of ? asOfDate(as_of, root) : undefined;
-      if (as_of && !asOf) return err(`Could not resolve as_of "${as_of}" to a commit.`);
+      if (as_of && !asOf) return invalid(`Could not resolve as_of "${as_of}" to a commit.`);
       const ctx = store.assembleContext(target, budget_tokens ?? 1500, { asOf });
       let dnaSupplement: ReturnType<typeof projectDnaDeliverySupplement> = null;
       try {
@@ -1650,11 +1686,11 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
               })),
             ],
           });
-          return deliveredContext(root, target, envelope, extra.sessionId);
+          return deliver(envelope);
         }
       }
       const envelope = buildDeliveryEnvelope(ctx, options);
-      return deliveredContext(root, as_of ? `${target} (as_of:${as_of})` : target, envelope, extra.sessionId);
+      return deliver(envelope);
     },
   );
 
@@ -1763,7 +1799,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     {
       title: "Decisions the human must make now (ask inline, not a queue)",
       description:
-        "The rare decisions the graph cannot resolve on its own — surfaced so you ASK THE USER in the prompt at the moment, then act. Auto-captured memory is trusted automatically and never appears here; this returns topic conflicts (>1 live decision for one topic), premise-stale decisions (a live decision whose recorded REASON no longer holds — its authority is unchanged until the human re-attests, supersedes, or retires), one exact imported ADR at a time awaiting approve/decline, a queued commit-provenance repair (the post-merge hook detected a decision's commit was squash-merged away but never applies the fix unattended — apply with `hunch repair-provenance --apply` or leave it queued), and Constitution human moments (candidate policies awaiting review, proposed policies awaiting an activation decision). Normally empty. Raise each question with the user; do NOT decide it for them — an entry is a question, silence is never approval. Reads the public store, or the unified overlay when the repo is in shared mode (where the overlay IS the store) — never private-mode overlay records, EXCEPT a queued commit-repair's liveness is checked against the full store (so a private-overlay decision's fully-answerable repair doesn't go silently unanswerable); only its id and the commit shas ever surface, never its title.",
+        "The rare decisions the graph cannot resolve on its own — surfaced so you ASK THE USER in the prompt at the moment, then act. Auto-captured memory is trusted automatically and never appears here; this returns topic conflicts (>1 live decision for one topic), premise-stale decisions (a live decision whose recorded REASON no longer holds — its authority is unchanged until the human re-attests, supersedes, or retires), one exact imported ADR at a time awaiting approve/decline, a queued commit-provenance repair (the post-merge hook detected a decision's commit was squash-merged away but never applies the fix unattended — apply with `hunch repair-provenance --apply` or leave it queued), and Constitution human moments (candidate policies awaiting review, proposed policies awaiting an activation decision). Normally empty. Raise each question with the user; do NOT decide it for them — an entry is a question, silence is never approval. Reads the public store, or the unified overlay when the repo is in shared mode — never private-mode overlay records, EXCEPT a queued commit-repair, whose liveness is checked against the full store; only its id and commit shas ever surface, never its title.",
       inputSchema: {},
     },
     async (): Promise<ToolResult> => {
@@ -1814,7 +1850,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     async ({ decision_id, expected_source_hash, expected_review_hash, disposition, reviewed_by }): Promise<ToolResult> => {
       try {
         const decision = store.advisoryRecs("decisions").find((candidate) => candidate.id === decision_id);
-        if (!decision) return err(`Imported ADR ${decision_id} is not present in the current advisory memory home.`);
+        if (!decision) return invalid(`Imported ADR ${decision_id} is not present in the current advisory memory home.`);
         const reviewed = applyImportedAdrReview(decision, {
           disposition,
           expectedSourceHash: expected_source_hash,
@@ -1894,7 +1930,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     {
       title: "Capture a decision (grilling interview)",
       description:
-        "Start a decision-capture interview: returns the grilling protocol (interrogate ONE question at a time until the decision tree is resolved) plus a capture-session token. Grill the human, then commit via hunch_record_decision with the token + confirmed topic. Use for '/capture', 'record this decision', 'grill me on this'. The token proves the write is the tail of an interview, not a silent guess.",
+        "Start a decision-capture interview: returns the grilling protocol (interrogate ONE question at a time until the decision tree is resolved) plus a capture-session token. Grill the human, then commit via hunch_record_decision with the token + confirmed topic. Use for '/capture', 'record this decision', 'grill me on this'. The token proves the write is the tail of an interview, not a silent guess. Returns the protocol text and the token; it writes nothing. Not for corrections (hunch_record_correction) or observations (hunch_record_finding).",
       inputSchema: {
         topic: z.string().optional().describe("proposed topic anchor (confirm with the human before committing)"),
         seed: z.string().optional().describe("what the decision is about, to focus the first question"),
@@ -1961,7 +1997,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     {
       title: "Record a decision (write-back)",
       description:
-        "Persist a new Decision (ADR) into Hunch with provenance. Use after making a non-trivial design choice so future sessions are grounded in it. Set private:true to keep a SENSITIVE decision out of a (possibly public) repo — it is written to the HUNCH_PRIVATE_DIR overlay store and stays queryable locally, never committed here.",
+        "Persist a new Decision (ADR) into Hunch with provenance. Use after making a non-trivial design choice so future sessions are grounded in it. Set private:true to keep a SENSITIVE decision out of a (possibly public) repo — it is written to the HUNCH_PRIVATE_DIR overlay store and stays queryable locally, never committed here. Returns the stored id, home, and status. Not for a rule the agent must obey (hunch_record_correction) or an observation with no choice made (hunch_record_finding). Errors are classed by prefix: 'Refused:' means a gate held (resolve it, do not retry), 'Invalid:' means fix the arguments, 'Failed to' means internal.",
       inputSchema: {
         decision: z.object({
           title: z.string(),
@@ -1992,10 +2028,11 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
           private: z.boolean().optional().describe("write into the PRIVATE overlay store (HUNCH_PRIVATE_DIR) instead of the committed repo — for sensitive decisions kept out of a public repo. Errors if no private store is configured."),
         }),
         capture_token: z.string().optional().describe("token from hunch_capture_decision — proves this write is the tail of a grilling interview. Omit only for a quick manual record (a deprecation nudge is returned)."),
+        task_id: TaskIdSchema.optional().describe("Exact task ID for observing this successful save; reporting never changes capture authority."),
         cwd: cwdHintField,
       },
     },
-    async ({ decision, capture_token }): Promise<ToolResult> => {
+    async ({ decision, capture_token, task_id }): Promise<ToolResult> => {
       try {
         const misroute = misrouteGuard(root, `"${decision.title.slice(0, 60)}"`, (decision.related_files ?? []).map(toPosixTarget));
         if (misroute) return misroute;
@@ -2057,7 +2094,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         // displaced by a differently-identified record, vouched or not.
         const conflictsWithHuman = curated && !sameHumanIdentity && !(gated && !existingIsHuman);
         if (conflictsWithHuman) {
-          return err(
+          return refused(
             `Decision id ${id} already identifies a different curated decision: ` +
             `"${existing!.title}"${existing!.topic ? ` (topic "${existing!.topic}")` : ""}. ` +
             `Refusing to overwrite it with "${decision.title}"${decision.topic ? ` (topic "${decision.topic}")` : ""}. ` +
@@ -2132,7 +2169,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
             const crossStore = decision.supersedes && !willClose
               ? ` (note: supersedes:"${decision.supersedes}" is not in the ${home} store this write lands in, so it can't be closed from here)`
               : "";
-            return err(
+            return refused(
               `Topic "${rec.topic}" already has a live decision: ${list}.${crossStore} ` +
                 `Hunch will not create a second current decision for one topic. Resolve it: ` +
                 `re-record with supersedes:<id> to replace it (linked, same store), pick a distinct topic to split, or discard this capture.`,
@@ -2149,7 +2186,8 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         // closes the other, leaving two live decisions on one topic and grounding
         // silently injecting nothing for it. The guard throws; the surrounding catch
         // turns that into a clean tool error instead of a silent twin.
-        store.putCapture("decisions", rec, !!decision.private);
+        const stored = store.putCapture("decisions", rec, !!decision.private);
+        const observed = observeReportCapture(root, task_id, "decisions", stored, home, !!existing, home === "private" ? store.privateDir ?? undefined : hunchPaths(root).hunch);
         // Invalidate, don't delete: closing the superseded decision's valid-time window
         // (+ a supersedes edge) preserves the why-it-changed trail. Route the close to the
         // same store the new record landed in — a private decision supersedes within the
@@ -2162,8 +2200,8 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         // Auto-flush the store the record landed in (on by default in every mode): a private
         // record commits+pushes its overlay repo; a public one commits .hunch/ in THIS repo
         // (commit only — it rides the user's next push, never auto-pushing their code branch).
-        const flush = flushCapture(store, hunchPaths(root).hunch, !!decision.private, `hunch: capture ${id}`, startupTeamRoute ?? undefined);
-        const flushed = flushNote(flush, home, store.mode) + publicHomeNote(home, store.hasPrivate, rec, hunchPaths(root).hunch);
+        const flush = flushCapture(store, hunchPaths(root).hunch, !!decision.private, `hunch: capture ${id}`, startupTeamRoute ?? undefined, observed.observe);
+        const flushed = flushNote(flush, home, store.mode) + publicHomeNote(home, store.hasPrivate, rec, hunchPaths(root).hunch) + observed.note;
         // Capture-session gate (staged deprecation, §9.3): the token was consumed
         // above (it also decides the provenance tier). No token still writes
         // (non-breaking) but lands as agent_recorded with a nudge toward /capture.
@@ -2203,7 +2241,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     {
       title: "Capture a correction as an enforced constraint (Never Twice)",
       description:
-        "When a human corrects the agent ('no, do it this way' / 'never call X here'), persist that correction as a first-class, SCOPED Constraint with provenance — so the pre-edit hook and the CI Constraint Guard hold EVERY assistant to it from now on, instead of it being forgotten next session. Writes to the shared .hunch/ graph (client-agnostic). Set severity:'blocking' only when the human said never/must; set applies_to_all:true only when the rule is genuinely repo-wide (otherwise it is scoped to scope_hint_file).",
+        "When a human corrects the agent ('no, do it this way' / 'never call X here'), persist that correction as a first-class, SCOPED Constraint with provenance — so the pre-edit hook and the CI Constraint Guard hold EVERY assistant to it from now on, instead of it being forgotten next session. Writes to the shared .hunch/ graph (client-agnostic). Set severity:'blocking' only when the human said never/must; set applies_to_all:true only when the rule is genuinely repo-wide (otherwise it is scoped to scope_hint_file). Returns the constraint id, scope, and what it now enforces. Not for a design choice with alternatives (hunch_record_decision) or an observed gap with no rule yet (hunch_record_finding).",
       inputSchema: {
         rule: z.string().describe("The invariant in the human's words, e.g. \"never call the pay-per-token API here\"."),
         scope_hint_file: z.string().optional().describe("A file the correction was about; scopes the constraint to it (the conservative default). Prefer a REPO-RELATIVE path (src/foo.ts); an absolute path is relativized against the repo root, and one outside the repo is discarded rather than scoped to a path that could never match."),
@@ -2214,12 +2252,13 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         source_decision: z.string().optional().describe("id of a decision this correction derives from."),
         private: z.boolean().optional().describe("write into the PRIVATE overlay store (HUNCH_PRIVATE_DIR) instead of the committed repo — a sensitive rule enforced locally (pre-edit hook + local check) but never exposed in a public PR comment. Errors if no private store is configured."),
         capture_token: z.string().optional().describe("token from hunch_capture_decision. The rule is recorded and enforced either way — the token only decides whether it may DENY: without one it lands as advisory testimony capped at severity 'warning'."),
+        task_id: TaskIdSchema.optional().describe("Exact task ID for observing this successful save; reporting never changes capture authority."),
         cwd: cwdHintField,
       },
     },
     async (input): Promise<ToolResult> => {
       try {
-        if (!input.rule || !input.rule.trim()) return err("rule is required — state the invariant in plain words.");
+        if (!input.rule || !input.rule.trim()) return invalid("rule is required — state the invariant in plain words.");
         // Same misroute guard as hunch_record_decision (issue #54, extended here by #62):
         // a scope_hint_file that exists in a sibling linked worktree but not here is very
         // likely a subagent that forgot cwd, about to silently scope-and-commit a
@@ -2250,11 +2289,12 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         const home = store.captureHome(!!input.private);
         if (home === "public" && rec.source_decision && !store.json.get("decisions", rec.source_decision)) {
           const location = store.getPrivateRec("decisions", rec.source_decision) ? "exists only in the private overlay" : "does not exist in the public home";
-          return err(`Refusing to record public correction ${rec.id}: source decision ${rec.source_decision} ${location}.`);
+          return refused(`source decision ${rec.source_decision} ${location}; refusing to record public correction ${rec.id}.`);
         }
         const existing = home === "private" ? store.getPrivateRec("constraints", rec.id) : store.json.get("constraints", rec.id);
         // Same cross-home twin guard as the decision path above.
-        store.putCapture("constraints", rec, !!input.private);
+        const stored = store.putCapture("constraints", rec, !!input.private);
+        const observed = observeReportCapture(root, input.task_id, "constraints", stored, home, !!existing, home === "private" ? store.privateDir ?? undefined : hunchPaths(root).hunch);
         store.reindex();
         // Propagate the new rule to EVERY assistant's ambient grounding (Cursor/Copilot/
         // Windsurf/AGENTS.md/CLAUDE.md), so a correction captured in one assistant is held
@@ -2265,8 +2305,8 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         // selector to skip them and leave successful captures with stale HEAD plus
         // dirty AGENTS/assistant docs. Manual mode still refreshes in place.
         if (home === "public" && !store.autoCommit) refreshExistingGrounding(root, store); // overlay rules never render into committed grounding
-        const flush = flushCapture(store, hunchPaths(root).hunch, !!input.private, `hunch: capture ${rec.id}`, startupTeamRoute ?? undefined);
-        const flushed = flushNote(flush, home, store.mode) + publicHomeNote(home, store.hasPrivate, rec, hunchPaths(root).hunch);
+        const flush = flushCapture(store, hunchPaths(root).hunch, !!input.private, `hunch: capture ${rec.id}`, startupTeamRoute ?? undefined, observed.observe);
+        const flushed = flushNote(flush, home, store.mode) + publicHomeNote(home, store.hasPrivate, rec, hunchPaths(root).hunch) + observed.note;
         const enforce = rec.severity === "blocking"
           ? "blocks a DIRECT edit to its scope at strict firmness, and fails a PR whose diff touches that scope (CI guard); blast-radius hits and lower firmness stay advisory"
           : "flags violating edits and PRs (advisory)";
@@ -2297,7 +2337,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     {
       title: "Record a finding (an observation with no code change)",
       description:
-        "Persist an OBSERVATION into Hunch — audited knowledge with no diff: an audit that surfaced a gap (e.g. queries missing tenant scoping), a measured number, a vendor/platform fact, an incident with no code fix. The anchor is a date + evidence, not a commit. Advisory: it grounds future edits to the affected files/symbols (pre-edit hook + hunch_context) and is listed by hunch_findings; it never blocks. Re-record the SAME title to update triage (e.g. triage:'resolved' + resolved_commit once fixed). If the finding is a violation of a rule that ISN'T recorded yet, record the rule first (hunch_record_correction) and link it via violates_constraint.",
+        "Persist an OBSERVATION into Hunch — audited knowledge with no diff: an audit that surfaced a gap (e.g. queries missing tenant scoping), a measured number, a vendor/platform fact, an incident with no code fix. The anchor is a date + evidence, not a commit. Advisory: it grounds future edits to the affected files/symbols (pre-edit hook + hunch_context) and is listed by hunch_findings; it never blocks. Re-record the SAME title to update triage (e.g. triage:'resolved' + resolved_commit once fixed). If the finding is a violation of a rule that ISN'T recorded yet, record the rule first (hunch_record_correction) and link it via violates_constraint. Returns the finding id, triage, and the files it now grounds. Not for a rule to enforce (hunch_record_correction) or a choice between alternatives (hunch_record_decision).",
       inputSchema: {
         finding: z.object({
           title: z.string().describe("stable one-line name — re-recording the same title updates the finding"),
@@ -2313,13 +2353,14 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
           resolved_commit: z.string().optional().describe("the commit that fixed it (with triage:'resolved')"),
           private: z.boolean().optional().describe("write into the PRIVATE overlay store instead of the committed repo. Errors if no private store is configured."),
         }),
+        task_id: TaskIdSchema.optional().describe("Exact task ID for observing this successful save; reporting never changes capture authority."),
         cwd: cwdHintField,
       },
     },
-    async ({ finding }): Promise<ToolResult> => {
+    async ({ finding, task_id }): Promise<ToolResult> => {
       try {
-        if (!finding.title.trim()) return err("title is required.");
-        if (!finding.observation.trim()) return err("observation is required — state what you saw.");
+        if (!finding.title.trim()) return invalid("title is required.");
+        if (!finding.observation.trim()) return invalid("observation is required — state what you saw.");
         // Same misroute guard as hunch_record_decision (issue #54, extended here by #62).
         const findingMisroute = misrouteGuard(root, `finding "${finding.title.slice(0, 60)}"`, (finding.affected_files ?? []).map(toPosixTarget));
         if (findingMisroute) return findingMisroute;
@@ -2329,7 +2370,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         const now = new Date().toISOString();
         const triage = finding.triage ?? existing?.triage ?? "open";
         if (triage === "resolved" && !(finding.resolved_commit ?? existing?.resolved_commit)) {
-          return err(`Refusing to mark ${id} resolved without resolved_commit — a resolution claim needs the fixing commit (or use triage:'stale' if it no longer applies).`);
+          return refused(`refusing to mark ${id} resolved without resolved_commit — a resolution claim needs the fixing commit (or use triage:'stale' if it no longer applies).`);
         }
         const rec: Finding = {
           id,
@@ -2347,10 +2388,11 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
           resolved_commit: finding.resolved_commit ?? existing?.resolved_commit ?? null,
           provenance: { source: "human_confirmed", confidence: 0.95, evidence: finding.evidence ?? existing?.provenance.evidence ?? [], last_verified: now },
         };
-        store.putCapture("findings", rec, !!finding.private);
+        const stored = store.putCapture("findings", rec, !!finding.private);
+        const observed = observeReportCapture(root, task_id, "findings", stored, home, !!existing, home === "private" ? store.privateDir ?? undefined : hunchPaths(root).hunch);
         store.reindex();
-        const flush = flushCapture(store, hunchPaths(root).hunch, !!finding.private, `hunch: capture ${id}`, startupTeamRoute ?? undefined);
-        const flushed = flushNote(flush, home, store.mode) + publicHomeNote(home, store.hasPrivate, rec, hunchPaths(root).hunch);
+        const flush = flushCapture(store, hunchPaths(root).hunch, !!finding.private, `hunch: capture ${id}`, startupTeamRoute ?? undefined, observed.observe);
+        const flushed = flushNote(flush, home, store.mode) + publicHomeNote(home, store.hasPrivate, rec, hunchPaths(root).hunch) + observed.note;
         const where = finding.private
           ? ` [PRIVATE overlay — not committed to this repo]${flushed}`
           : home === "private" ? ` [SHARED store — one source of truth for the whole team]${flushed}` : flushed;
@@ -2402,7 +2444,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     {
       title: "nuryel.state/1 read — the system-of-record answer for a subject",
       description:
-        "Read organizational state under a delivery receipt. Pass the principal (id, kind, grants) and the scope; optionally a subject (an entity id, a decision topic, an external `object_type:object_key`) to get state_of_record — what is current, in force, done, what it depends on and what invalidates it — plus a task phrase for the ranked delivery envelope. Scopes the principal is not granted are named in denied_scopes, never silently dropped.",
+        "Read organizational state under a delivery receipt. Pass the principal (id, kind, grants) and the scope; optionally a subject (an entity id, a decision topic, an external `object_type:object_key`) to get state_of_record — what is current, in force, done, what it depends on and what invalidates it — plus a task phrase for the ranked delivery envelope. Scopes the principal is not granted are named in denied_scopes, never silently dropped. To read observations beyond the default 64, use observed_page:{} with one scope and a subject, then pass state_of_record.observed_page.next_cursor as observed_page.cursor until null. A conflict means the observations changed: restart from the first page. Never claim complete coverage while a next cursor remains.",
       inputSchema: ReadRequestSchema.omit({ schema: true }).shape,
       outputSchema: ReadResponseSchema.shape,
     },
@@ -2411,7 +2453,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         const { response, envelope } = readState(store, { schema: STATE_READ_VERSION, ...input });
         const sor = response.state_of_record;
         const summary = sor
-          ? `subject ${sor.subject}: current ${sor.current.length} · in force ${sor.in_force.length} · done ${sor.done.length} · depends on ${sor.depends_on.length} · invalidated by ${sor.invalidated_by.length}`
+          ? `subject ${sor.subject}: current ${sor.current.length} · in force ${sor.in_force.length} · done ${sor.done.length} · observed ${sor.observed?.length ?? 0} · depends on ${sor.depends_on.length} · invalidated by ${sor.invalidated_by.length}`
           : "no subject — delivery envelope only";
         const deniedNote = response.denied_scopes.length ? `\ndenied scopes: ${response.denied_scopes.map((s) => `${s.kind}/${s.id}`).join(", ")}` : "";
         // Render the state of record itself, not only its refs: a consumer answers from this text.
@@ -2439,6 +2481,9 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         };
         const stateText = sor
           ? [...sor.current.map((r) => line("current", r)), ...sor.in_force.map((r) => line("in force", r)), ...sor.done.map((r) => line("done", r)),
+             ...(sor.observed ?? []).map(r => line("observed; verify currentness before relying on it", r)),
+             ...(sor.observed_page ? [`- Observation page: ${sor.observed_page.total} total; next_cursor: ${JSON.stringify(sor.observed_page.next_cursor)}`]
+               : sor.observed_truncated ? ['- More observations exist; read this subject with observed_page:{} in one partition, then follow next_cursor.'] : []),
              ...(sor.invalidated_by.length ? [`- invalidated by: ${sor.invalidated_by.join(", ")}`] : [])].join("\n") || "(nothing on record for this subject)"
           : "";
         return stateResult(`${response.receipt_id} · ${summary}${deniedNote}${stateText ? `\n\nState of record:\n${stateText}` : ""}\n\n${envelope.text}`, response);
@@ -2453,7 +2498,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     {
       title: "nuryel.state/1 write — provenance + idempotency in, durability out",
       description:
-        "Write one record into a facet (receipts, commitments, derived, entities, relationships, or the legacy decisions/constraints/bugs/findings). The record must carry provenance; the request must carry an idempotency_key — a replay returns the original, a reused key with a different payload is refused. Ids are derived from the record's facts, never chosen. A second live decision on a topic is refused with the incumbent named; pass supersedes to replace it explicitly. organization/team/user partitions never ride a repository: they require an overlay.",
+        "Write one record into a facet (receipts, commitments, derived, entities, relationships, or the legacy decisions/constraints/bugs/findings). The record must carry provenance; the request must carry an idempotency_key — a replay returns the original, a reused key with a different payload is refused. Ids are derived from the record's facts, never chosen. A second live decision on a topic is refused with the incumbent named; pass supersedes to replace it explicitly. organization/team/user partitions never ride a repository: they require an overlay. To show an existing captured observation under another subject without copying it, write a relationship type observation_about with from=observation id, to=subject, observation_hash, lifecycle=active, reason and hashed external evidence of the explicit association. Retire the relationship to unlink; reactivation requires expected_version.",
       inputSchema: { ...WriteRequestSchema.omit({ schema: true }).shape, cwd: cwdHintField },
       outputSchema: WriteResultSchema.shape,
     },
@@ -2468,6 +2513,42 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
       } catch (e) {
         return stateRefusal(e);
       }
+    },
+  );
+
+  server.registerTool(
+    "nuryel_capture",
+    {
+      title: "nuryel.state/1 capture — one relevant assertion with exact source excerpts",
+      description: "Save ONE relevant atomic assertion learned during the task. First split mixed source material into independent assertions; check each one, retaining new relevant details inside otherwise known passages. Exclude chatter, speculation, unsupported conclusions and transient tool output. Supply a concrete future-use reason and exact excerpts from the source text. Whole source text is transient and is never stored. Deduplication is per assertion + subject + source excerpt, independent of agent and read time; never skip a whole document because some of it is known. Records are observations, not verified current summaries or execution receipts. Call after substantive learning without waiting for the user to say remember. Read back the returned record before claiming it was saved.",
+      inputSchema: { ...CaptureRequestSchema.omit({ schema: true }).shape, cwd: cwdHintField },
+      outputSchema: WriteResultSchema.shape,
+    },
+    async ({ cwd: _cwd, ...input }): Promise<ToolResult> => {
+      try {
+        const result = await withWriteLock(hunchPaths(root).hunch, () => captureState(store, { schema: STATE_CAPTURE_VERSION, ...input }, {
+          flush: (isPrivate, message) => flushCapture(store, hunchPaths(root).hunch, isPrivate, message, startupTeamRoute ?? undefined),
+        }));
+        return stateResult(`${result.outcome} observation ${result.record_id} (${result.durability}); this does not assert currentness. ${result.record_hash}`, result);
+      } catch (e) { return stateRefusal(e); }
+    },
+  );
+
+  server.registerTool(
+    "nuryel_capture_batch",
+    {
+      title: "nuryel.state/1 capture batch — save relevant atomic observations",
+      description: "Preferred capture for multiple facts learned during the task. Split source material into independent relevant assertions, select exact supporting excerpts and give each a concrete future-use reason. Exclude chatter, unsupported inference and transient output. Check every assertion even in a known paragraph: deduplication never discards a whole passage. Send each source once and reference its zero-based index. At most 32 observations and 8 sources; split larger work into batches. One partition lock and index update, no extra model call. Results preserve input indexes; inspect every refusal and stored record. Saved observations have unknown currentness, not verified receipts or current summaries. Use your own initiating agent identity automatically after substantive learning. Optional reviews withdraw specific prior observations: supply record_id, expected_hash, a reason, and exact excerpts from a changed source that observation depends on. Mere hash changes, missing text or uncertain interpretation never suffice; the initiating agent must identify explicit contradiction or withdrawal. Original facts remain in history with the review author and evidence. Review results are separately indexed; inspect every refusal.",
+      inputSchema: { ...CaptureBatchRequestSchema.omit({ schema: true }).shape, cwd: cwdHintField },
+      outputSchema: CaptureBatchResultSchema.shape,
+    },
+    async ({ cwd: _cwd, ...input }): Promise<ToolResult> => {
+      try {
+        const result = await withWriteLock(hunchPaths(root).hunch, () => captureBatchState(store, { schema: STATE_CAPTURE_BATCH_VERSION, ...input }, {
+          flush: (isPrivate, message) => flushCapture(store, hunchPaths(root).hunch, isPrivate, message, startupTeamRoute ?? undefined),
+        }));
+        return stateResult(`Capture batch: ${result.results.filter(r => r.status === "saved").length} saved/replayed, ${result.results.filter(r => r.status === "refused").length} refused.${result.reviews ? ` Reviews: ${result.reviews.filter(r => r.status === "saved").length} withdrawn/replayed, ${result.reviews.filter(r => r.status === "refused").length} refused.` : ''} Inspect each indexed result.`, result);
+      } catch (e) { return stateRefusal(e); }
     },
   );
 
@@ -2518,7 +2599,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     {
       title: "Open findings for a scope",
       description:
-        "List LIVE findings (observed gaps/debt with no fix yet — triage open/accepted-risk/scheduled) concerning a file, glob, or symbol; omit scope for the whole ledger. Call before planning work in an area to inherit past audits instead of re-discovering them. Advisory; resolved/stale findings are excluded unless all:true.",
+        "List LIVE findings (observed gaps/debt with no fix yet — triage open/accepted-risk/scheduled) concerning a file, glob, or symbol; omit scope for the whole ledger. Call before planning work in an area to inherit past audits instead of re-discovering them. Advisory; resolved/stale findings are excluded unless all:true. Not for invariants (hunch_check_constraints) or bug history (hunch_bug_lineage): findings are observations, never rules.",
       inputSchema: {
         scope: z.string().optional().describe("a path, glob, or symbol (e.g. src/procs/** or dbo.GetOrders); omit for all"),
         all: z.boolean().optional().describe("include resolved/stale findings (the full history)"),
@@ -2554,7 +2635,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     },
     async ({ constraint_id, public_only, private_only, include_artifacts }): Promise<ToolResult> => {
       try {
-        if (public_only && private_only) return err("Choose only one of public_only or private_only.");
+        if (public_only && private_only) return invalid("Choose only one of public_only or private_only.");
         // Resolve the correction's exact home before any writes. Overlay-first is
         // the same selection contract as ConstitutionService.upgradeCorrection;
         // deriving this later from a policy id is unsafe when legacy public and
@@ -2628,7 +2709,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     {
       title: "Causal merge verdict: is this change safe against the recorded WHY?",
       description:
-        "Before opening or merging a PR, replay a diff against engineering memory and return ONE verdict — BLOCK / WARN / PASS. For each invariant DIRECTLY in scope it cites WHY the guard exists (the decision that motivated it + the bug whose root cause spawned it); it also lists invariants reached via blast radius (near, advisory), any deliberately-retired code the diff re-introduces, and symbols the diff adds that are already defined elsewhere in the graph (possible re-implementation/sprawl, advisory). Deterministic, no LLM. Omit base, commit, and working to check STAGED changes; pass working:true for all local changes, base (e.g. origin/main) for a PR range, or commit for a single commit. Call this before merging a widely-scoped change.",
+        "Before opening or merging a PR, replay a diff against engineering memory and return ONE verdict — BLOCK / WARN / PASS. For each invariant DIRECTLY in scope it cites WHY the guard exists (the decision that motivated it + the bug whose root cause spawned it); it also lists invariants reached via blast radius (near, advisory), any deliberately-retired code the diff re-introduces, and symbols the diff adds that are already defined elsewhere in the graph (possible re-implementation/sprawl, advisory). Deterministic, no LLM. Omit base, commit, and working to check STAGED changes; pass working:true for all local changes, base (e.g. origin/main) for a PR range, or commit for a single commit. Call this before merging a widely-scoped change. Not for an advisory impact map (hunch_pr_impact), intent erosion with no diff (hunch_conformance), or a sealed proof of one committed transition (hunch_change_proof).",
       inputSchema: {
         base: z.string().optional().describe("Diff against this base ref (e.g. origin/main) — for a PR/branch."),
         commit: z.string().optional().describe("Diff a single commit (sha/ref). Omit base AND commit to check staged changes."),
@@ -2637,9 +2718,9 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     },
     async ({ base, commit, working }): Promise<ToolResult> => {
       try {
-        if ([base, commit, working].filter(Boolean).length > 1) return err("Pass at most one of base/commit/working (omit all to check staged changes).");
-        if (base && !revExists(base, root)) return err(`base ref "${base}" does not resolve (in CI, fetch the base branch first).`);
-        if (commit && !revExists(commit, root)) return err(`commit "${commit}" does not resolve.`);
+        if ([base, commit, working].filter(Boolean).length > 1) return invalid("Pass at most one of base/commit/working (omit all to check staged changes).");
+        if (base && !revExists(base, root)) return invalid(`base ref "${base}" does not resolve (in CI, fetch the base branch first).`);
+        if (commit && !revExists(commit, root)) return invalid(`commit "${commit}" does not resolve.`);
         const files = commit ? commitFiles(commit, root) : base ? rangeFiles(base, root) : working ? workingFiles(root) : stagedFiles(root);
         const scope = commit ? `commit ${commit}` : base ? `${base}..HEAD` : working ? "working changes" : "staged changes";
         if (!files.length) return ok(`VERDICT: ✅ PASS — no changed files in ${scope}.`);
@@ -2664,7 +2745,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     {
       title: "The indexed shape of the repo / a dir / a file / a symbol",
       description:
-        "Orient WITHOUT grep/glob rounds: the graph already holds the repo's structure. No target → repo map (components + directories by symbol weight). A directory → its files with their symbols. A file → its outline (symbols, fan-in/out, callers). An exact symbol name → its definition site(s) with one-hop neighbors. Call this FIRST when exploring unfamiliar code — it tells you exactly which file to read, instead of searching for it.",
+        "Orient WITHOUT grep/glob rounds: the graph already holds the repo's structure. No target → repo map (components + directories by symbol weight). A directory → its files with their symbols. A file → its outline (symbols, fan-in/out, callers). An exact symbol name → its definition site(s) with one-hop neighbors. Call this FIRST when exploring unfamiliar code — it tells you exactly which file to read, instead of searching for it. Returns shape only (files, symbols, one-hop neighbors), never why. Not for rationale (hunch_why) or memory search (hunch_query).",
       inputSchema: {
         target: z.string().optional().describe("A directory, file path, or exact symbol name. Omit for the repo map."),
       },
@@ -2678,7 +2759,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     {
       title: "PR impact: the dependency + memory surface of a change",
       description:
-        "Given a change (staged, working tree, a branch vs base, or a single commit), return its IMPACT SURFACE: the files whose code transitively depends on the changed files, the invariants directly in scope and those reached via blast radius, and the recorded decisions concerning the touched files. Read-only and advisory — use hunch_merge_verdict for the gate. Call before review to know what a PR can break and which recorded intent it touches. Omit base, commit, and working for staged changes.",
+        "Given a change (staged, working tree, a branch vs base, or a single commit), return its IMPACT SURFACE: the files whose code transitively depends on the changed files, the invariants directly in scope and those reached via blast radius, and the recorded decisions concerning the touched files. Read-only and advisory — use hunch_merge_verdict for the gate. Call before review to know what a PR can break and which recorded intent it touches. Omit base, commit, and working for staged changes. Not for a verdict (hunch_merge_verdict) or a sealed proof (hunch_change_proof).",
       inputSchema: {
         base: z.string().optional().describe("Diff against this base ref (e.g. origin/main) — for a PR/branch."),
         commit: z.string().optional().describe("Impact of a single commit (sha/ref). Omit base AND commit for staged changes."),
@@ -2687,9 +2768,9 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     },
     async ({ base, commit, working }): Promise<ToolResult> => {
       try {
-        if ([base, commit, working].filter(Boolean).length > 1) return err("Pass at most one of base/commit/working (omit all for staged changes).");
-        if (base && !revExists(base, root)) return err(`base ref "${base}" does not resolve (in CI, fetch the base branch first).`);
-        if (commit && !revExists(commit, root)) return err(`commit "${commit}" does not resolve.`);
+        if ([base, commit, working].filter(Boolean).length > 1) return invalid("Pass at most one of base/commit/working (omit all for staged changes).");
+        if (base && !revExists(base, root)) return invalid(`base ref "${base}" does not resolve (in CI, fetch the base branch first).`);
+        if (commit && !revExists(commit, root)) return invalid(`commit "${commit}" does not resolve.`);
         const files = commit ? commitFiles(commit, root) : base ? rangeFiles(base, root) : working ? workingFiles(root) : stagedFiles(root);
         const scope = commit ? `commit ${commit}` : base ? `${base}..HEAD` : working ? "working changes" : "staged changes";
         if (!files.length) return ok(`No changed files in ${scope}.`);
@@ -2717,8 +2798,8 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     async ({ from, to, max_depth }): Promise<ToolResult> => {
       const A = store.resolveNodeIds(from);
       const B = store.resolveNodeIds(to);
-      if (!A.length) return err(`"${from}" resolves to no indexed symbol/component (is the repo indexed?).`);
-      if (!B.length) return err(`"${to}" resolves to no indexed symbol/component.`);
+      if (!A.length) return invalid(`"${from}" resolves to no indexed symbol/component (is the repo indexed?).`);
+      if (!B.length) return invalid(`"${to}" resolves to no indexed symbol/component.`);
       let best: Array<{ id: string; via: string }> | null = null;
       for (const a of A.slice(0, 4)) {
         for (const b of B.slice(0, 4)) {
@@ -2747,8 +2828,8 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     async ({ candidates, base }): Promise<ToolResult> => {
       try {
         const b = base ?? "main";
-        if (!candidates.length) return err("Pass at least one candidate ref.");
-        if (!revExists(b, root)) return err(`base ref "${b}" does not resolve (in CI, fetch it first).`);
+        if (!candidates.length) return invalid("Pass at least one candidate ref.");
+        if (!revExists(b, root)) return invalid(`base ref "${b}" does not resolve (in CI, fetch it first).`);
         const ranked = compareCandidates(store, root, b, candidates);
         const icon = (v: string) => (v === "pass" ? "✅" : v === "warn" ? "⚠" : "⛔");
         const lines = ranked.map((c, i) =>
@@ -3022,7 +3103,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     {
       title: "Does the code still satisfy the recorded intent?",
       description:
-        "Intent-conformance (the inversion of a normal guard): for every in-force decision carrying a conformance predicate, deterministically verify the CODE still satisfies its intent over the dependency graph — e.g. 'pay still reaches verifySession'. Returns the violations: intent the code has silently drifted away from, with NO diff required. Run before a refactor or merge to catch intent erosion a diff-only check can't see.",
+        "Intent-conformance (the inversion of a normal guard): for every in-force decision carrying a conformance predicate, deterministically verify the CODE still satisfies its intent over the dependency graph — e.g. 'pay still reaches verifySession'. Returns the violations: intent the code has silently drifted away from, with NO diff required. Run before a refactor or merge to catch intent erosion a diff-only check can't see. Returns the violation list. Not for a diff-scoped verdict (hunch_merge_verdict) or an impact map (hunch_pr_impact).",
       inputSchema: {},
     },
     async (): Promise<ToolResult> => {

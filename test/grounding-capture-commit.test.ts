@@ -113,7 +113,7 @@ test("flushCapture refreshes a git-clean grounding doc and commits it with the c
     git("add", "-A");
     git("commit", "-qm", "baseline");
     const baseline = readFileSync(join(root, "CLAUDE.md"), "utf8");
-    assert.match(baseline, /hunch_context\(target\)/, "baseline block was rendered");
+    assert.match(baseline, /hunch_context\(target/, "baseline block was rendered");
     assert.doesNotMatch(baseline, /Top invariants/, "but carries no invariants yet");
 
     store.json.put("decisions", decision("dec_two", "second choice"));
@@ -169,7 +169,7 @@ test("hunch index commits refreshed grounding atomically with an auto-pumped gra
     git("commit", "-qm", "fixture: indexed graph and grounding");
 
     const baseline = readFileSync(join(root, "CLAUDE.md"), "utf8");
-    assert.match(baseline, /hunch_context\(target\)/, "baseline block was rendered");
+    assert.match(baseline, /hunch_context\(target/, "baseline block was rendered");
     assert.doesNotMatch(baseline, /Top invariants/, "but carries no invariants yet");
 
     const changed = new HunchStore(hunchPaths(root));

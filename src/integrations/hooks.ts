@@ -96,16 +96,32 @@ export function installPreCommitHook(root: string, invocation: string, strict = 
   return installManagedBlock(root, "pre-commit", PRE_MARK, PRE_END, blk);
 }
 
-const MERGE_MARK = "# >>> hunch post-merge >>>";
-const MERGE_END = "# <<< hunch post-merge <<<";
+// Original marker, kept byte-for-byte for backward compat: an existing install's
+// grounding-refresh block must still be found and updated in place by its own
+// exact marker text (fnd_c402046ac7).
+const GROUNDING_MERGE_MARK = "# >>> hunch post-merge >>>";
+const GROUNDING_MERGE_END = "# <<< hunch post-merge <<<";
+// Distinct marker for the (newer) repair-provenance half, so the two blocks
+// never collide inside the same post-merge hook file and each can be
+// independently created/updated/removed without touching the other.
+const REPAIR_MERGE_MARK = "# >>> hunch post-merge (repair-provenance) >>>";
+const REPAIR_MERGE_END = "# <<< hunch post-merge (repair-provenance) <<<";
 
-function mergeBlock(invocation: string): string {
+function groundingMergeBlock(invocation: string): string {
   return [
-    MERGE_MARK,
-    // Own guard (HUNCH_MERGE_SYNC, not HUNCH_SYNC): this action makes no commit of
-    // its own, so it can't re-trigger itself the way HUNCH_SYNC guards post-commit
-    // against its own commit — kept independent so it never interacts with the
-    // grounding-refresh guard below.
+    GROUNDING_MERGE_MARK,
+    'if [ -z "$HUNCH_SYNC" ]; then',
+    "  if ! git diff --quiet ORIG_HEAD HEAD -- .hunch 2>/dev/null; then",
+    `    ( HUNCH_SYNC=1 ${invocation} grounding --refresh 2>/dev/null || true )`,
+    "  fi",
+    "fi",
+    GROUNDING_MERGE_END,
+  ].join("\n");
+}
+
+function repairProvenanceMergeBlock(invocation: string): string {
+  return [
+    REPAIR_MERGE_MARK,
     'if [ -z "$HUNCH_MERGE_SYNC" ]; then',
     "  export HUNCH_MERGE_SYNC=1",
     // No --apply: this only detects a squash-merge orphaning a decision's commit
@@ -115,40 +131,42 @@ function mergeBlock(invocation: string): string {
     // trust an unattended, backgrounded write into shared team memory.
     `  ( ${invocation} repair-provenance --from-hook --quiet >/dev/null 2>&1 || true ) &`,
     "fi",
-    // Re-sync the committed grounding docs when the merge brought .hunch/ content in
-    // behind them (fnd_c402046ac7): two branches that each capture regenerate the same
-    // line, the forge/local merge folds it in without a conflict, and the committed
-    // doc ends up one behind the store. Foreground (it rewrites up to five files) so
-    // the next commit carries them; can never fail the merge. Guarded by HUNCH_SYNC
-    // (shared with post-commit's own guard) rather than HUNCH_MERGE_SYNC, and the
-    // refresh command itself sets HUNCH_SYNC=1 so it can't recursively re-trigger a
-    // hunch-driven git operation into firing this same hook again.
-    'if [ -z "$HUNCH_SYNC" ]; then',
-    "  if ! git diff --quiet ORIG_HEAD HEAD -- .hunch 2>/dev/null; then",
-    `    ( HUNCH_SYNC=1 ${invocation} grounding --refresh 2>/dev/null || true )`,
-    "  fi",
-    "fi",
-    MERGE_END,
+    REPAIR_MERGE_END,
   ].join("\n");
 }
 
-/** Install a post-merge hook with two independently-guarded actions: (1) opportunistically
- *  DETECTS a decision's commit provenance going orphaned right after a squash-merged
- *  branch lands locally (including a fast-forward from `git pull`) — while the original
- *  commits are still fully intact and matchable — and queues the match for a human to
- *  confirm (own guard, HUNCH_MERGE_SYNC, since it makes no commit of its own so can't
- *  re-trigger itself the way HUNCH_SYNC guards post-commit against its own commit); and
- *  (2) re-syncs the committed grounding docs when the merge brought `.hunch/` content in
- *  behind them (guarded by HUNCH_SYNC, shared with post-commit, since the refresh it runs
- *  IS the kind of hunch-driven git operation that guard exists to keep from recursing). */
+/** How significant a combined install result is, for picking one HookInstall
+ *  action out of two independent sub-installs into the same file — "created"
+ *  (the file itself is new) outranks "appended"/"updated" (an existing file
+ *  changed), which outrank "unchanged". */
+const ACTION_RANK: Record<HookInstall["action"], number> = { created: 3, appended: 2, updated: 2, unchanged: 1 };
+
+/** Install a post-merge hook carrying TWO independently-managed blocks:
+ *  re-sync the committed grounding docs when a merge brought memory in behind
+ *  them (fnd_c402046ac7, HUNCH_SYNC-guarded, foreground — it rewrites five
+ *  files and can never fail the merge), and opportunistically DETECT a
+ *  decision's commit provenance going orphaned right after a squash-merged
+ *  branch lands locally (including a fast-forward from `git pull`) — while
+ *  the original commits are still fully intact and matchable — queuing the
+ *  match for a human to confirm via `hunch repair-provenance --apply`
+ *  (HUNCH_MERGE_SYNC-guarded, backgrounded; own env var since this hook makes
+ *  no commit of its own and so can't reuse HUNCH_SYNC's re-trigger guard).
+ *  Each block is keyed by its own marker pair (installManagedBlock), so
+ *  re-running updates only its own block, preserves the other untouched, and
+ *  a repo carrying only one half (an older install, or a hand-edited hook)
+ *  gets the other appended rather than clobbered. */
 export function installPostMergeHook(root: string, invocation: string): HookInstall {
-  return installManagedBlock(root, "post-merge", MERGE_MARK, MERGE_END, mergeBlock(invocation));
+  const grounding = installManagedBlock(root, "post-merge", GROUNDING_MERGE_MARK, GROUNDING_MERGE_END, groundingMergeBlock(invocation));
+  const repair = installManagedBlock(root, "post-merge", REPAIR_MERGE_MARK, REPAIR_MERGE_END, repairProvenanceMergeBlock(invocation));
+  return ACTION_RANK[repair.action] >= ACTION_RANK[grounding.action] ? repair : grounding;
 }
 
 /** Read-only diagnostic (used by `hunch doctor`): which of the three managed
  *  hooks are currently present. Never writes anything — a hook counts as
  *  installed if its managed marker is present, regardless of whether the
- *  invocation inside it happens to be stale. */
+ *  invocation inside it happens to be stale. postMerge requires BOTH halves
+ *  (grounding-refresh and repair-provenance) present — a repo carrying only
+ *  one is a partial install, same as `installPostMergeHook` self-healing it. */
 export function hookStatus(root: string): { postCommit: boolean; preCommit: boolean; postMerge: boolean } {
   const dir = hooksDir(root);
   const abs = isAbsolute(dir) ? dir : join(root, dir);
@@ -158,6 +176,6 @@ export function hookStatus(root: string): { postCommit: boolean; preCommit: bool
   return {
     postCommit: has("post-commit", MARK),
     preCommit: has("pre-commit", PRE_MARK),
-    postMerge: has("post-merge", MERGE_MARK),
+    postMerge: has("post-merge", GROUNDING_MERGE_MARK) && has("post-merge", REPAIR_MERGE_MARK),
   };
 }

@@ -1,6 +1,6 @@
 {
   "name": "@davesheffer/hunch",
-  "version": "1.29.0",
+  "version": "1.32.2",
   "mcpName": "io.github.davesheffer/hunch",
   "license": "Apache-2.0",
   "author": "Dave Sheffer <dave.sheffer1@gmail.com>",
@@ -27,15 +27,16 @@
       "default": "./dist/projectDna.js"
     },
     "./state": "./dist/client/state.js",
+    "./reports": {
+      "types": "./dist/taskReports.d.ts",
+      "default": "./dist/taskReports.js"
+    },
     "./dist/*": "./dist/*",
     "./package.json": "./package.json"
   },
   "files": [
     "dist/**/*.js",
-    "dist/changeProof.d.ts",
-    "dist/core/changeProofContract.d.ts",
-    "dist/projectDna.d.ts",
-    "dist/core/projectDna*.d.ts",
+    "dist/**/*.d.ts",
     "contracts/change-proof/*.json",
     "server.json",
     "bench/constitution-exp03-v1.json",
@@ -94,6 +95,7 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@tree-sitter-grammars/tree-sitter-yaml": "^0.6.1",
     "commander": "^15.0.0",
+    "cross-spawn": "^7.0.6",
     "smol-toml": "1.8.0",
     "tree-sitter": "0.21.1",
     "tree-sitter-go": "^0.23.4",
@@ -103,6 +105,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/cross-spawn": "^6.0.6",
     "@types/node": "^22.13.0",
     "tsx": "^4.22.4",
     "typescript": "^5.9.3"

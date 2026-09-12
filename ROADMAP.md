@@ -1,6 +1,6 @@
 # Hunch roadmap
 
-Updated 2026-09-09.
+Updated 2026-09-12.
 
 Hunch is moving from repository-only engineering memory toward a broader deterministic state layer for organizations that use many probabilistic agents.
 
@@ -12,20 +12,49 @@ This file is the public execution view. Historical releases and completed implem
 
 Read [Deterministic organizational state](docs/deterministic-state.md) for the current architecture.
 
-## Status — 2026-09-08
+## Documents
+
+Every planning, contract and program document, and what it is for. A document not listed here is
+not a plan.
+
+| Document | Role |
+| --- | --- |
+| this file | public execution view: status, gates, landscape items, programs |
+| [CHANGELOG.md](CHANGELOG.md) | what shipped, per version; authoritative for "shipped" |
+| [Deterministic organizational state](docs/deterministic-state.md) | the architecture, boundary, pilot sequence and kill criterion |
+| [The state contract](docs/nuryel-state-contract.md) | `nuryel.state/1`: facets, verbs, invariants, served partitions, replay; indexes the capability notes ([observations](docs/agent-observations.md), [links](docs/observation-links.md), [review](docs/observation-review.md), [pages](docs/observation-pages.md), [ledger read reuse](docs/ledger-read-reuse.md)) |
+| [Task contribution reports](docs/task-reports.md) | how the 1.32 reports work; [qualification record](docs/task-report-qualification.md); [release plan](docs/next-release-memory-impact.md) (historical) |
+| [Autonomous development](docs/autonomous-development.md) | the red team of 2026-09-09, the promotion ladder, what has been configured since; [autonomy ladder](docs/autonomy-ladder.md) for the in-code ladders |
+| [Competitive landscape](docs/competitive-landscape.md) | dated snapshots, append-only |
+| [Engineering Landscape](docs/engineering-landscape.md), [Project DNA](docs/project-dna.md), [Project DNA Engine](docs/project-dna-engine.md), [Native change proof](docs/change-proof.md), [Outcome experience protocol](docs/outcome-experience-protocol.md) | shipped engine primitives the state layer builds on |
+| [Outreach pipeline](docs/outreach-pipeline.md), [MCP registry](docs/mcp-registry.md) | founder-led pilot recruitment; per-release registry publish |
+| Sofia repository: `docs/sofia-baseline.md`, `docs/sofia-state.md` | the pilot's baseline ledger and Sofia's use of the contract |
+
+A private overlay holds the plan of record, the Constitution dossier and product direction; this
+file is its public view and lags it by design.
+
+## Next release — see what Hunch contributed
+
+**Next implementation priority, requested 2026-09-11:** make Hunch's contribution visible to repository users in their normal agent workflow. Ship a clear connection check, task-linked memory delivery, a concise contribution card, and an inspectable local evidence view. The defining demonstration is a lesson recorded in one task, received by a fresh agent in the next, and linked to an observed action and verification result without the developer repeating it.
+
+The release must distinguish delivered context, agent-reported application, verified checks, and unsupported attribution. Production acceptance requires the completion card to appear during normal work without the user asking about Hunch or running a report command, plus a real-host rehearsal of the original user's setup. Hunch remains provider- and harness-agnostic: Kimi, Codex, Claude, CCC, and Watchtower are consumers of one task/evidence contract, not required product-specific forks. A harness can own task lifecycle and deterministic presentation; standalone integrations receive the same data. Advertise automatic display only where it has been verified. Shipped in 1.32.0 (2026-09-11); hardened by dogfooding in 1.32.1 and 1.32.2 (2026-09-12): `hunch task verify --timeout`, a bounded MCP report summary, hook runtime evidence in `integrations check`, the first-delivery `Hunch recalled:` line, and `drift --fail-on` in the release gate. Usage: [Task contribution reports](docs/task-reports.md).
+
+1.32.0 ships task-scoped reports, command verification, rule-supported applications, local HTML, and managed completion instructions. [Development qualification](docs/task-report-qualification.md) records the flow in real hosts, the original Claude lifecycle failure and its latest-host regression, and the acceptance items still open after publication: interactive-terminal display, the two repository-user acceptance sessions (not the two Sofia users of Gate 0), a live task showing a rule-supported application, and the MCP registry publish for 1.32.x. The shared harness contract and verified capability boundaries are the shipped surface; individual external integrations are not assumed qualified. The [release execution plan](docs/next-release-memory-impact.md) remains the reference for the experience, evidence rules, and remaining gates. Existing live-pilot measurement continues; the organizational-state direction and gates below remain in force.
+
+## Status — 2026-09-12
 
 The category is named **Deterministic State** (blog post in five locales, homepage band).
 Gate status against the plan below:
 
 | Gate | Status | Evidence |
 | --- | --- | --- |
-| 0 — baseline | done for one user; second user not yet instrumented | one week of Sofia: 2 of 3 replies without an observable source; repeated re-summaries of unchanged evidence |
+| 0 — baseline | done for one user; the second user needs a second participant and a shared task (the CRM credential was repaired on 2026-09-11) | one week of Sofia: 2 of 3 replies without an observable source; repeated re-summaries of unchanged evidence |
 | 1 — additive state contracts | done, 1.25.0 | `nuryel.state/1`: read / write / subscribe, five facets, invariants as tests; `records` verb added in 1.27.0; the `changed` facet has its first writer (a current summary written back `stale` with an external cause is an `invalidated` change naming the pointer that moved) |
 | 2 — fold the state service | done, 1.26.0–1.27.0 | `hunch serve`: served partitions, bearer → principal, cross-process write lock, typed client; Hunch Memory marked folded; `hunch mcp --root` for stdio agents |
-| 3 — integrate Sofia | done | receipts, commitments, cited summaries written through the contract; the drawer read before summarizing AND before answering a status question in chat (held state first, a reply that needed no source read says so under the read's receipt — the baseline's unsourced-reply number turned around: 12 of 12 answered from held state in the emulation, live re-measure pending); the summary rests on the drawer's receipts and fulfilled commitments as record dependencies; reuse 50 s → 4.5 s; deterministic action gate preserved; state-layer evidence shown in Sofia's UI as verified records |
-| 4 — second heterogeneous agent | partial; many-agents proven on an emulated organization | Claude Code, opened on a code repository, read the drawer and wrote a commitment through the contract. Three emulated Sofias over ten clinics and a generated year (mail, chat, CRM), one organization drawer: 96 cited summaries, 24 verified receipts, 24 commitments with same-subject duplicates replayed, ledger contiguous, zero contradictions (1.28.0: union read, supersede target must be open, subjects keyed by CRM site). The cross-domain incident → engineering decision → change proof → closure chain is now a contract feature run end to end through the binding by three principals (receipt `rests_on` the decision + change proof, commitment `closed_by` the receipt, `depends_on` answers the chain, `records` resolves the decision grants-first); run on the agent farm every test run (3 sofias raise incidents, the engineer closes each through the chain, every sofia sees the closure, the orc verifies every link, 0 contradictions) and on the Sofia emulation with REAL Sofia code (3 Sofias over the 10-clinic year: 3 escalations closed by the engineer, 5 of 5 closures seen by the Sofias from the drawer alone — Sofia's summary now rests on the drawer's receipts and fulfilled commitments as record dependencies — 7 links per closure verified by the ORC, the receipt resting on a real `hunch prove` proof that binds the decision hash for hash, 0 contradictions); not yet driven by a live Sofia and a live engineering agent |
-| 5 — re-measure, kill criterion | pending live; emulation measured | after-measurement runs the week of 2026-09-08 with the second agent writing; the emulation already counts the two numbers the pilot is about — closures seen by the agent that was not told (5 of 5) and status replies answered from held state without a source read (12 of 12) — both 100 % with 0 contradictions |
-| 6 — naming | deferred | on purpose; a product name is not a category |
+| 3 — integrate Sofia | done in emulation and live for one user | receipts, commitments, cited summaries written through the contract; the drawer read before summarizing AND before answering a status question in chat (held state first, a reply that needed no source read says so under the read's receipt — the baseline's unsourced-reply number turned around: 12 of 12 answered from held state in the emulation; live on 2026-09-12 a chat read of an event becomes held state through Sofia's refresh worker and the next status questions answer from the drawer under a receipt, 0 of 3 unsourced, Sofia PR #14); the summary rests on the drawer's receipts and fulfilled commitments as record dependencies; reuse 50 s → 4.5 s; deterministic action gate preserved; state-layer evidence shown in Sofia's UI as verified records |
+| 4 — second heterogeneous agent | live chain run twice on 2026-09-12, the second time by a real Claude Code MCP session; many-agents proven on an emulated organization | Claude Code, opened on a code repository, read the drawer and wrote a commitment through the contract. Three emulated Sofias over ten clinics and a generated year (mail, chat, CRM), one organization drawer: 96 cited summaries, 24 verified receipts, 24 commitments with same-subject duplicates replayed, ledger contiguous, zero contradictions (1.28.0: union read, supersede target must be open, subjects keyed by CRM site). The cross-domain incident → engineering decision → change proof → closure chain is now a contract feature run end to end through the binding by three principals (receipt `rests_on` the decision + change proof, commitment `closed_by` the receipt, `depends_on` answers the chain, `records` resolves the decision grants-first); run on the agent farm every test run (3 sofias raise incidents, the engineer closes each through the chain, every sofia sees the closure, the orc verifies every link, 0 contradictions) and on the Sofia emulation with REAL Sofia code (3 Sofias over the 10-clinic year: 3 escalations closed by the engineer, 5 of 5 closures seen by the Sofias from the drawer alone — Sofia's summary now rests on the drawer's receipts and fulfilled commitments as record dependencies — 7 links per closure verified by the ORC, the receipt resting on a real `hunch prove` proof that binds the decision hash for hash, 0 contradictions); driven live on 2026-09-12 with real material: Sofia's own capture incident and the escalation engineering owed, the engineering decision, a real `hunch prove` change proof of the fix (Sofia PR #15) and a verified `shipped` receipt resting on all three, the escalation closed by that receipt, and two Sofia instances reporting the closure from the drawer alone, unprompted; the partition replays hash for hash. Run a second time the same day with the engineering side as a real headless Claude Code session over `hunch mcp --root` on the partition (principal claude@gate5): it read the escalation in force, recorded the decision, wrote the shipped receipt resting on decision, proof and escalation, and closed the escalation, in six turns with no refusals; the fix was Sofia PR #16 with its own change proof; Sofia then listed both closures from held state. One operator still drove both sides |
+| 5 — re-measure, kill criterion | measured live for one user, scripted, both legs (status from held state; approval → receipt → held state); two-user week not run | live on 2026-09-12, real CRM, Claude as planner, isolated partition: before the fix 2 of 3 status replies came from conversation history (the baseline number reproduced); after it, one CRM read then 2 of 2 from held state under the read receipt, 0 of 3 unsourced, worker failures 0. The approval → receipt → held-state leg was measured live the same day: a human-approved comment became a verified receipt, the snapshot re-rested on it, 3 of 3 status questions answered from held state naming the verified action, and a second Sofia principal on the same partition saw it within two and a half minutes (the emulation's 12 of 12 has its live counterpart). The live cross-domain chain ran the same day (Gate 4 row). Not yet run: the two-user week (needs a second participant and a shared task). The emulation's numbers — closures seen by the agent that was not told (5 of 5), status replies from held state (12 of 12) — are a different population from the live ones and are never quoted as them. The planned "week of 2026-09-08" was missed |
+| 6 — naming | deferred | on purpose; a product name is not a category. The contract and the MCP tools already carry the name (`nuryel.state/1`, `nuryel_*`); the product stays Hunch |
 
 Defects found by the first live writers and fixed the same day (1.26.1–1.28.0): served writes
 not committing, MCP roots re-homing a served partition, reads without record bodies, a stable
@@ -54,11 +83,11 @@ copied claims:
 
 | Item | Why | Status |
 | --- | --- | --- |
-| Subject identity by external reference | two agents over one CRM record, thread or chat must land on one subject; 1.28.0 keyed subjects by CRM site, the general rule is not frozen yet | proposed (`state.entity-identity`) |
-| Audited entity merge and split | the cases an external reference cannot settle; recorded as ledger events with provenance, never silent rewrites | proposed, follows the item above |
-| Replay determinism as a check | rebuild a partition from its ledger and compare byte-for-byte to the stored records; publish the command, not the claim | proposed (`state.replay-determinism`) |
+| Subject identity by external reference | two agents over one CRM record, thread or chat must land on one subject; 1.28.0 keyed subjects by CRM site | done, 1.30.0 — `externalKey` / `subjectOfRef` frozen in the contract; one active entity per external key per partition (`409`, incumbent named), a subject written as an entity's key refused with the entity id (`422`), reads resolve one explicit hop (`state.entity-identity`) |
+| Audited entity merge and split | the cases an external reference cannot settle; recorded as ledger events with provenance, never silent rewrites | done, 1.30.0 — `merged_into` on a retired entity, `retired` ledger event, reads resolve old id and keys to the survivor (chains, cycle-safe), new state refused under the old name; split is the explicit reverse |
+| Replay determinism as a check | fold a partition's ledger into the state it implies and compare it hash for hash (canonical bytes) to the stored records; publish the command, not the claim | done, 1.30.0 — `hunch serve replay`, typed divergences, exit 1; every farm run replays every partition (`state.replay-determinism`) |
 | Field-level provenance on derived state | a summary today cites its sources as a whole; per-field citation lets a reader see which source a sentence rests on | later, after the second-user measurement |
-| Correction outranks later agent writes | prove, with a test, that a human correction on a record is not overridden by a subsequent agent write on the same field; a peer's reducer was observed to lose this | test to add |
+| Correction outranks later agent writes | prove, with a test, that a human correction on a record is not overridden by a subsequent agent write on the same field; a peer's reducer was observed to lose this | done, 1.30.0 — invariant `human-correction-outranks-agent-writes`, enforced at write time (`409 conflict`, `human-confirmed incumbent`), tested in `test/state-replay.test.ts`; per record, not per field (per-field provenance stays later) |
 | Attested principal identity | bearer keys today; key-thumbprint or hardware-attested principals for the organization partition when a second person holds a key | after Gate 5 |
 | Read-only operator view | a page over a served partition: current records, ledger, who wrote what; no editing | after Gate 5 |
 | Typed clients beyond TypeScript | a Python client for the three verbs, generated from the contract | when a non-TypeScript orchestrator asks for it |
@@ -112,9 +141,9 @@ Going forward:
 
 The current priority is to prove that agents behave better when they act from shared deterministic state instead of independently reconstructing organizational reality each session.
 
-The working future contract name is `nuryel.state/1`; it is **not frozen yet**.
+The contract name is `nuryel.state/1`. It is **frozen as code** (`src/core/stateContract.ts`, shipped 1.25.0, bound to the store, MCP and `hunch serve`) and still **proposed** as a public commitment: additive changes only until the pilot number exists. See [the contract](docs/nuryel-state-contract.md).
 
-Planned state facets:
+State facets (`receipts`, `commitments`, `derived`, `entities`, `relationships` are registered store kinds; `decided`, `DNA` and `changed` ride existing records):
 
 ```text
 decided
@@ -142,12 +171,13 @@ current-with-dependencies
   derived state plus exact evidence/version dependencies
 ```
 
-Planned contract verbs:
+Contract verbs:
 
 ```text
 read       current authorized state + delivery receipt
 write      provenance + idempotency key -> durability result
 subscribe  changes to state the principal is authorized to hold
+records    a subject's records, grants-first (added 1.27.0)
 ```
 
 HTTP, MCP, CLI and typed clients must be bindings of the same schema, not separate integration models.
@@ -291,6 +321,8 @@ Accept the broad system-of-record thesis only if the incident -> decision -> cha
 
 If agents receive the state but continue to re-derive/contradict it, narrow the product toward enforcement and delivery hooks before expanding the hosted platform.
 
+Measured so far: see the status table above (one user, live, 0 of 3 unsourced after one read). Still to measure: the two-user week, the approval → receipt leg, the live cross-domain chain.
+
 Target for one complete pilot cycle: **2026-12-31**. A delay in integration is a capacity finding, not by itself a verdict on the thesis.
 
 ### Gate 6 — naming decision
@@ -364,9 +396,15 @@ See [Native Change Proof](docs/change-proof.md).
 
 ### Constitution / deterministic policy
 
+Shipped and not otherwise listed here: the preregistered experiment runner (`hunch experiment validate|prepare|create|run|…`, reports carry `authority: none`), the G2/G3 readiness reports (`hunch constitution g2|g3`, `hunch_constitution_g2_readiness` / `g3_readiness`), and the clean-install rehearsal. Gate status: G2 and G3 are signed, and G3 is advisory operation only — the readiness report still says `g3_passed: false`, no policy holds blocking authority, and G4/G5 (external pilots of blocking policy) are not approved. The promotion rules are written down in [the autonomy ladder](docs/autonomy-ladder.md).
+
 The deterministic gate remains the enforcement edge. Trusted policies must be provenance-backed, inspectable and human-authorized; probabilistic agent output cannot silently become blocking authority.
 
 The organizational-state pilot should reuse this edge when state-backed policy needs to refuse a known-invalid action, while keeping connector permissions in the agent/action-control layer.
+
+## Autonomous development
+
+The development loop itself is promoted by the same rule as a policy: rung by rung, on measured numbers, never switched on. The readiness checklist, the red-team findings of 2026-09-09 and the promotion table are in [Autonomous development](docs/autonomous-development.md); since then the required checks and environment reviewers are configured, `drift --fail-on` gates releases, and memory hygiene is a standing agent obligation (`con_039cee7367`). The loop stands at rung 1: the agent authors, a human merges. The items no agent can do are Gate 5's two-user week (a second participant) and the one approved CRM comment for the approval leg; they are the critical path.
 
 ## Deliberate non-goals for the pilot
 
