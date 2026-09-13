@@ -21,6 +21,12 @@ does the same in its trusted checkout. This keeps a release bump from silently
 leaving a permanent old version in the policy; a report from another evaluator
 version is refused.
 
+The producer's separate finalizer is the only job with `statuses:write`. It
+validates the bounded producer artifact and rechecks the live PR before posting
+`hunch-guard-review` for ordinary pass or failure results. A failed direct-scope
+result remains failure until the separately authorized review workflow publishes
+the success status; other failure classes stay failure.
+
 The workflow checks out only the default branch and treats the downloaded guard
 report as data. It never checks out a PR, installs a PR package, runs a PR script,
 or invokes Hunch against a PR worktree. The receipt producer must therefore be a
