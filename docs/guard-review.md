@@ -8,8 +8,10 @@ PR head SHA; it does not edit branch protection or replace the required check.
 
 The dispatch must be made from `main` and supplies the PR number, full head and
 base SHAs, a guard run id, a canonical report hash, a human reason, and an
-explicit authorization boolean. The verifier binds all of those values to the
-live open PR, the configured maintainer's GitHub numeric id and login, and the
+explicit authorization boolean. The supplied `base_sha` must be the current
+`refs/heads/main` commit, which is checked independently of the PR API's
+possibly stale `base.sha`. The verifier binds all of those values to the live
+open PR, the configured maintainer's GitHub numeric id and login, and the
 trusted evaluator receipt. A report is reviewable only when its failure class is
 exactly `direct_scope_blocker`. Policy failures, executable behavior policy
 failures, conformance failures, vetoes, regressions, unknown results, incomplete
