@@ -22,7 +22,7 @@ not a plan.
 | this file | public execution view: status, gates, landscape items, programs |
 | [CHANGELOG.md](CHANGELOG.md) | what shipped, per version; authoritative for "shipped" |
 | [Deterministic organizational state](docs/deterministic-state.md) | the architecture, boundary, pilot sequence and kill criterion |
-| [The state contract](docs/nuryel-state-contract.md) | `nuryel.state/1`: facets, verbs, invariants, served partitions, replay; indexes the capability notes ([observations](docs/agent-observations.md), [links](docs/observation-links.md), [review](docs/observation-review.md), [pages](docs/observation-pages.md), [ledger read reuse](docs/ledger-read-reuse.md)) |
+| [The state contract](docs/nuryel-state-contract.md) | `nuryel.state/1`: facets, verbs, invariants, served partitions, replay; indexes the capability notes ([observations](docs/agent-observations.md), [links](docs/observation-links.md), [review](docs/observation-review.md), [pages](docs/observation-pages.md), [ledger read reuse](docs/ledger-read-reuse.md), [field citations](docs/field-provenance.md)) |
 | [Task contribution reports](docs/task-reports.md) | how the 1.32 reports work; [qualification record](docs/task-report-qualification.md); [release plan](docs/next-release-memory-impact.md) (historical) |
 | [Autonomous development](docs/autonomous-development.md) | the red team of 2026-09-09, the promotion ladder, what has been configured since; [autonomy ladder](docs/autonomy-ladder.md) for the in-code ladders |
 | [Competitive landscape](docs/competitive-landscape.md) | dated snapshots, append-only |
@@ -44,6 +44,26 @@ The reports distinguish delivered context, agent-reported application, verified 
 The 1.32.8 release repairs legacy hook launch commands during updates, preserves disabled hooks and user settings, and explains the Codex trust and session-restart steps. Public product pages now distinguish the shipped tools from the pilot vision. These updates do not complete the remaining pilot or host-acceptance gates.
 
 **Next product milestone — shared state view (in development).** A person can open a served workspace, inspect the state for a subject, see current records, completed work and open commitments, and follow the evidence without using an API client. `/operator` uses the existing grants and state contract; observations keep their unverified status. Recent activity is retained history, not a complete inventory. This milestone has been brought forward at the user's request; the outstanding pilot measurements remain open.
+
+## Remaining implementation sequence — requested 2026-09-13
+
+The user requested completing the remaining buildable roadmap. Each change must pass relevant
+contract, transport and platform checks before release. A merged change is not a published
+release; the changelog records publication. Pilot evidence and policy authority remain separate.
+
+| Order | Deliverable | Current state |
+| --- | --- | --- |
+| 1 | Read-only operator view and exact field citations | Operator PR #214 qualified; citations in development |
+| 2 | Per-record visibility | Planned; permission checks must cover reads, retrieval, history, dependencies and conflicts |
+| 3 | Explicit user, team and organization conventions | Planned; reviewable sources and conflicts, no silent precedence over repository DNA |
+| 4 | State CLI read, write, records and subscribe | Planned; use the existing client and contract |
+| 5 | Optional key-bound principal authentication | Planned; rotation, revocation and replay resistance; no claim of hardware attestation |
+| 6 | Python client and state recall evaluation | Planned implementation/measurement; no external Python consumer claimed |
+| 7 | Release qualification and public content | Pending the completed implementations; retain explicit open acceptance gates |
+
+Real-user acceptance, the two-user pilot week, and human policy/promotion decisions remain open.
+Conditional load optimizations, deferred profile catalogs and excluded product directions are
+not added to this build queue merely because historical documents mention them.
 
 ## Status — 2026-09-12
 
@@ -90,7 +110,7 @@ copied claims:
 | Subject identity by external reference | two agents over one CRM record, thread or chat must land on one subject; 1.28.0 keyed subjects by CRM site | done, 1.30.0 — `externalKey` / `subjectOfRef` frozen in the contract; one active entity per external key per partition (`409`, incumbent named), a subject written as an entity's key refused with the entity id (`422`), reads resolve one explicit hop (`state.entity-identity`) |
 | Audited entity merge and split | the cases an external reference cannot settle; recorded as ledger events with provenance, never silent rewrites | done, 1.30.0 — `merged_into` on a retired entity, `retired` ledger event, reads resolve old id and keys to the survivor (chains, cycle-safe), new state refused under the old name; split is the explicit reverse |
 | Replay determinism as a check | fold a partition's ledger into the state it implies and compare it hash for hash (canonical bytes) to the stored records; publish the command, not the claim | done, 1.30.0 — `hunch serve replay`, typed divergences, exit 1; every farm run replays every partition (`state.replay-determinism`) |
-| Field-level provenance on derived state | a summary today cites its sources as a whole; per-field citation lets a reader see which source a sentence rests on | later, after the second-user measurement |
+| Field-level provenance on derived state | a summary today cites its sources as a whole; per-field citation lets a reader see which source a sentence rests on | in development — exact scalar fields and Unicode text passages, source-bound hashes, shared read display; brought forward on 2026-09-13 |
 | Correction outranks later agent writes | prove, with a test, that a human correction on a record is not overridden by a subsequent agent write on the same field; a peer's reducer was observed to lose this | done, 1.30.0 — invariant `human-correction-outranks-agent-writes`, enforced at write time (`409 conflict`, `human-confirmed incumbent`), tested in `test/state-replay.test.ts`; per record, not per field (per-field provenance stays later) |
 | Attested principal identity | bearer keys today; key-thumbprint or hardware-attested principals for the organization partition when a second person holds a key | after Gate 5 |
 | Read-only operator view | a page over a served partition: current records, ledger, who wrote what; no editing | in development — brought forward on 2026-09-13; subject lookup, retained activity and source inspection over the existing API; no change to pilot acceptance status |

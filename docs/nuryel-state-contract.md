@@ -388,7 +388,9 @@ Additive capabilities specified beside this contract, each with its own schema n
 [observation links](observation-links.md) (`nuryel.observation-links/1`),
 [observation review](observation-review.md) (`nuryel.observation-review/1`),
 [observation pages](observation-pages.md) (`nuryel.observation-pages/1`) and
-[ledger read reuse](ledger-read-reuse.md).
+[ledger read reuse](ledger-read-reuse.md). The next release adds optional
+[field citations](field-provenance.md) (`nuryel.field-provenance/1`); upgrade every shared
+reader before writing annotated records.
 
 ## Not decided here
 
@@ -402,8 +404,8 @@ Additive capabilities specified beside this contract, each with its own schema n
   body-limit and write-lock decisions. Its per-store concurrency gate, context-consistency
   watermarks and the usefulness / Project DNA intake routes are not ported; they return only if a
   served partition needs them.
-- **Per-field provenance on derived state.** A summary cites its sources as a whole; the
-  human-correction guard therefore works per record, not per field.
+- **Per-field authority/currentness.** Optional field citations are in development, but
+  human-correction protection and invalidation continue to apply to the whole record.
 - **Repository-scope private content.** The contract has no `private` flag: scope decides the
   home. Sensitive repository-scope state goes through the existing `hunch_record_*` tools
   with `private:true`, or into a user/team partition.
