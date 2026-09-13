@@ -58,7 +58,7 @@ release; the changelog records publication. Pilot evidence and policy authority 
 | 3 | Explicit user, team and organization conventions | In development; explicit records, human review, source currentness, bounded delivery and conflicts |
 | 4 | State CLI read, write, records and subscribe | In development; use the existing client and contract |
 | 5 | Optional key-bound principal authentication | In development; DPoP key binding, live rotation/revocation and durable replay checks; no hardware-attestation claim |
-| 6 | Python client and state recall evaluation | Python client implemented with generated types and real-server tests; recall measurement next; no external Python consumer claimed |
+| 6 | Python client and state recall evaluation | Python client implemented; [fixture recall measured](docs/state-recall-evaluation.md), including the local model; production corpus and external Python adoption remain unmeasured |
 | 7 | Release qualification and public content | Pending the completed implementations; retain explicit open acceptance gates |
 
 Real-user acceptance, the two-user pilot week, and human policy/promotion decisions remain open.

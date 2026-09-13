@@ -399,7 +399,8 @@ reader before writing annotated records.
   apply. Shared/private overlay support is explicitly excluded from restricted writes.
 - **Semantic (embedding) recall over state records.** They ride the FTS index and the bounded
   liveness prior (see Delivery above); the optional embedding stream indexes them like any other
-  search doc, but no state-specific recall has been measured.
+  search doc. [State-specific fixture recall](state-recall-evaluation.md) is now measured for
+  keywords and a pinned local model; a production corpus remains unmeasured.
 - **What else of Hunch Memory folds in.** `serve` carries its bind-loopback, bearer, problem+json,
   body-limit and write-lock decisions. Its per-store concurrency gate, context-consistency
   watermarks and the usefulness / Project DNA intake routes are not ported; they return only if a
@@ -412,7 +413,8 @@ reader before writing annotated records.
 - **State CLI and Python client** are in development: [Python usage](python-state-client.md)
   covers the generated contract types and complete HTTP client; [terminal bindings](state-cli.md) for `read`, `write`,
   `records` and `subscribe` use the existing authenticated HTTP client. State-specific semantic
-  recall still needs measurement.
+  recall has a [repeatable fixture benchmark](state-recall-evaluation.md); production accuracy
+  still needs pilot evidence.
 - **Naming** — engine `hunch` / platform Nuryel, or one name for both.
 
 ### Explicit conventions
