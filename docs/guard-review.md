@@ -8,8 +8,10 @@ PR head SHA; it does not edit branch protection or replace the required check.
 
 The dispatch must be made from `main` and supplies the PR number, full head and
 base SHAs, a guard run id, a canonical report hash, a human reason, and an
-explicit authorization boolean. The verifier binds all of those values to the
-live open PR, the configured maintainer's GitHub numeric id and login, and the
+explicit authorization boolean. The supplied `base_sha` must be the current
+`refs/heads/main` commit, which is checked independently of the PR API's
+possibly stale `base.sha`. The verifier binds all of those values to the live
+open PR, the configured maintainer's GitHub numeric id and login, and the
 trusted evaluator receipt. A report is reviewable only when its failure class is
 exactly `direct_scope_blocker`. Policy failures, executable behavior policy
 failures, conformance failures, vetoes, regressions, unknown results, incomplete
@@ -26,6 +28,11 @@ validates the bounded producer artifact and rechecks the live PR before posting
 `hunch-guard-review` for ordinary pass or failure results. A failed direct-scope
 result remains failure until the separately authorized review workflow publishes
 the success status; other failure classes stay failure.
+
+Before building the synthetic repository, the producer also requires the live
+main commit to be an ancestor of the PR head. A branch behind main receives a
+non-reviewable `stale_base` receipt, so newly added main files cannot be
+misread as deletions from the PR.
 
 The workflow checks out only the default branch and treats the downloaded guard
 report as data. It never checks out a PR, installs a PR package, runs a PR script,
