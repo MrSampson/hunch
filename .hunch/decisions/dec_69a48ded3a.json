@@ -42,10 +42,7 @@
   "valid_from": "2026-09-13T22:44:25+03:00",
   "valid_to": null,
   "retired": {
-    "symbols": [
-      "canonicalize",
-      "stateHash"
-    ],
+    "symbols": [],
     "deps": []
   },
   "provenance": {
@@ -62,7 +59,8 @@
       "src/core/stateCanonical.ts",
       "src/core/stateContract.ts",
       "src/core/stateRecords.ts",
-      "src/mcp/server.ts"
+      "src/mcp/server.ts",
+      "agent-review: helpers were moved and re-exported, not retired; node:fs remains in use"
     ],
     "last_verified": "2026-09-13T19:46:05.591Z"
   },

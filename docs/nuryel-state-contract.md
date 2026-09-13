@@ -409,5 +409,7 @@ reader before writing annotated records.
 - **Repository-scope private content.** The contract has no `private` flag: scope decides the
   home. Sensitive repository-scope state goes through the existing `hunch_record_*` tools
   with `private:true`, or into a user/team partition.
-- **A CLI binding** for `read` / `write` / `subscribe` (`hunch serve init` and `hunch serve replay` exist; the verbs themselves are HTTP, MCP and the typed client). State records already participate in text search and context delivery; state-specific semantic recall still needs measurement.
+- **State CLI** is in development: [terminal bindings](state-cli.md) for `read`, `write`,
+  `records` and `subscribe` use the existing authenticated HTTP client. State-specific semantic
+  recall still needs measurement.
 - **Naming** — engine `hunch` / platform Nuryel, or one name for both.
