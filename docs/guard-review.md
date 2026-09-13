@@ -18,11 +18,19 @@ evaluation, and infrastructure errors are always refused.
 The workflow checks out only the default branch and treats the downloaded guard
 report as data. It never checks out a PR, installs a PR package, runs a PR script,
 or invokes Hunch against a PR worktree. The receipt producer must therefore be a
-trusted-base `pull_request_target` run with a machine-readable `hunch-guard-report`
-artifact whose `workflow_sha` equals the requested base SHA. The current
-`pull_request` guard does not satisfy that provenance contract, by design; until a
-trusted producer is qualified, this candidate refuses every report from it rather
-than granting an unsafe exception.
+trusted-base `workflow_run` run with a machine-readable `hunch-guard-report`
+artifact whose `workflow_sha` equals the requested base SHA. The companion
+`Hunch Guard Review Producer (candidate)` now creates that artifact from a
+synthetic repository: it archives the exact base and PR trees, restores only the
+base `.hunch` memory, and invokes the trusted evaluator with `--base`, SARIF, and
+`--public-only`. It never checks out or executes PR code. The producer rejects
+active executable-behavior policies before evaluation, so those policies remain
+non-waivable rather than being silently skipped.
+
+The current required `pull_request` guard does not satisfy that provenance
+contract, by design. The candidate consumer reads only the companion producer's
+bounded artifact and refuses reports from the current guard rather than granting
+an unsafe exception.
 
 [GitHub's workflow syntax documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onworkflow_dispatch)
 says `workflow_dispatch` runs only when the workflow exists on the default
