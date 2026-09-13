@@ -19,7 +19,7 @@ The workflow checks out only the default branch and treats the downloaded guard
 report as data. It never checks out a PR, installs a PR package, runs a PR script,
 or invokes Hunch against a PR worktree. The receipt producer must therefore be a
 trusted-base `workflow_run` run with a machine-readable `hunch-guard-report`
-artifact whose `workflow_sha` equals the requested base SHA. The companion
+artifact whose `workflow_sha` equals the trusted producer run's default-branch `head_sha`; the requested PR `base_sha` is bound separately. The companion
 `Hunch Guard Review Producer (candidate)` now creates that artifact from a
 synthetic repository: it archives the exact base and PR trees, restores only the
 base `.hunch` memory, and invokes the trusted evaluator with `--base`, SARIF, and
