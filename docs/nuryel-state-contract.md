@@ -409,7 +409,8 @@ reader before writing annotated records.
 - **Repository-scope private content.** The contract has no `private` flag: scope decides the
   home. Sensitive repository-scope state goes through the existing `hunch_record_*` tools
   with `private:true`, or into a user/team partition.
-- **State CLI** is in development: [terminal bindings](state-cli.md) for `read`, `write`,
+- **State CLI and Python client** are in development: [Python usage](python-state-client.md)
+  covers the generated contract types and complete HTTP client; [terminal bindings](state-cli.md) for `read`, `write`,
   `records` and `subscribe` use the existing authenticated HTTP client. State-specific semantic
   recall still needs measurement.
 - **Naming** — engine `hunch` / platform Nuryel, or one name for both.
