@@ -29,6 +29,11 @@ validates the bounded producer artifact and rechecks the live PR before posting
 result remains failure until the separately authorized review workflow publishes
 the success status; other failure classes stay failure.
 
+Before building the synthetic repository, the producer also requires the live
+main commit to be an ancestor of the PR head. A branch behind main receives a
+non-reviewable `stale_base` receipt, so newly added main files cannot be
+misread as deletions from the PR.
+
 The workflow checks out only the default branch and treats the downloaded guard
 report as data. It never checks out a PR, installs a PR package, runs a PR script,
 or invokes Hunch against a PR worktree. The receipt producer must therefore be a
