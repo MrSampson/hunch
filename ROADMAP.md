@@ -22,7 +22,7 @@ not a plan.
 | this file | public execution view: status, gates, landscape items, programs |
 | [CHANGELOG.md](CHANGELOG.md) | what shipped, per version; authoritative for "shipped" |
 | [Deterministic organizational state](docs/deterministic-state.md) | the architecture, boundary, pilot sequence and kill criterion |
-| [The state contract](docs/nuryel-state-contract.md) | `nuryel.state/1`: facets, verbs, invariants, served partitions, replay; indexes the capability notes ([observations](docs/agent-observations.md), [links](docs/observation-links.md), [review](docs/observation-review.md), [pages](docs/observation-pages.md), [ledger read reuse](docs/ledger-read-reuse.md), [field citations](docs/field-provenance.md)) |
+| [The state contract](docs/nuryel-state-contract.md) | `nuryel.state/1`: facets, verbs, invariants, served partitions, replay; indexes the capability notes ([observations](docs/agent-observations.md), [links](docs/observation-links.md), [review](docs/observation-review.md), [pages](docs/observation-pages.md), [ledger read reuse](docs/ledger-read-reuse.md), [field citations](docs/field-provenance.md), [record visibility](docs/record-visibility.md)) |
 | [Task contribution reports](docs/task-reports.md) | how the 1.32 reports work; [qualification record](docs/task-report-qualification.md); [release plan](docs/next-release-memory-impact.md) (historical) |
 | [Autonomous development](docs/autonomous-development.md) | the red team of 2026-09-09, the promotion ladder, what has been configured since; [autonomy ladder](docs/autonomy-ladder.md) for the in-code ladders |
 | [Competitive landscape](docs/competitive-landscape.md) | dated snapshots, append-only |
@@ -54,7 +54,7 @@ release; the changelog records publication. Pilot evidence and policy authority 
 | Order | Deliverable | Current state |
 | --- | --- | --- |
 | 1 | Read-only operator view and exact field citations | Operator PR #214 qualified; citations in development |
-| 2 | Per-record visibility | Planned; permission checks must cover reads, retrieval, history, dependencies and conflicts |
+| 2 | Per-record visibility | In development; permission checks must cover reads, retrieval, history, dependencies and conflicts |
 | 3 | Explicit user, team and organization conventions | Planned; reviewable sources and conflicts, no silent precedence over repository DNA |
 | 4 | State CLI read, write, records and subscribe | Planned; use the existing client and contract |
 | 5 | Optional key-bound principal authentication | Planned; rotation, revocation and replay resistance; no claim of hardware attestation |

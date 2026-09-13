@@ -394,9 +394,9 @@ reader before writing annotated records.
 
 ## Not decided here
 
-- **Per-record visibility** inside a scope. Partition-level grants are the v1 permission model
-  (GitHub's repo-level model); finer visibility is the first security primitive to add before a
-  second team shares an organization partition.
+- **Record visibility** is in development for dedicated partitions: [owner, reader and writer
+  permissions](record-visibility.md), with an old-reader upgrade gate. Partition grants still
+  apply. Shared/private overlay support is explicitly excluded from restricted writes.
 - **Semantic (embedding) recall over state records.** They ride the FTS index and the bounded
   liveness prior (see Delivery above); the optional embedding stream indexes them like any other
   search doc, but no state-specific recall has been measured.
