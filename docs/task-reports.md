@@ -4,15 +4,15 @@ Shipped in 1.32.0. Live-host results and the acceptance items still open are
 recorded in the [qualification record](task-report-qualification.md); this
 document is not a claim that every host has passed its live acceptance tests.
 
-Hunch can retain the lessons returned during a task, the agent's stated application
-of those lessons, and command results observed by its local verification wrapper.
-The result is available as a short completion card and a self-contained HTML view.
+**See what Hunch contributed to the work.** A short completion card and a local HTML report show what memory reached the agent, what the agent says it used, and which checks actually ran. These are separate kinds of evidence: a delivered lesson or a passing test alone does not prove that Hunch improved the result.
+
+The durable memory is the decision, rule, bug history or finding that future tasks can reuse. A task report records how that memory appeared in one task. Project DNA is different again: it describes observed repository conventions, such as terminology and review habits; it does not make those habits mandatory.
 
 ## Normal agent workflow
 
 The generated Hunch instructions ask the agent to:
 
-1. Start one task with `hunch_task(action: "start", title: "Short task title")`.
+1. Reuse the task ID supplied by a trusted native prompt hook. If none was supplied, start one task with `hunch_task(action: "start", title: "Short task title")`.
 2. Carry the returned `task_id` into each `hunch_context` call and each decision,
    correction, or finding capture.
 3. Run a relevant verification using the exact `verification_argv` launcher from
@@ -30,7 +30,7 @@ line — `Hunch recalled: <lesson title>` — in the `hunch_context` result, the
 same task stay silent; deduplication is per task and record revision, so a new
 prompt hears a lesson once more. Presentation opt-out silences the hook line.
 
-This lifecycle is instruction-driven. Configuration does not prove the host
+Native hooks can supply task identity; the agent's reporting workflow remains instruction-driven. Configuration does not prove the host
 followed it. A host must load the current MCP server and allow the tool calls;
 missing task identity or denied tools cannot produce a verified contribution.
 Hunch does not guess a task ID from a transport session or recent activity.
@@ -38,7 +38,9 @@ Hunch does not guess a task ID from a transport session or recent activity.
 `hunch init` writes the instructions. `hunch update` invokes the freshly installed
 CLI's `integrations repair-pins`, which now also refreshes existing Hunch
 grounding documents. Other user prose and unrelated integration settings remain
-preserved. Restart/reconnect the host after updating.
+preserved. Restart/reconnect the host after updating. In Codex, open `/hooks` to review and trust changed hook commands, then start a new session. An updated version pin changes the command and needs renewed trust. Hunch does not grant that trust automatically.
+
+`hunch integrations check --harness codex --probe --require mcp` checks a fresh MCP process. After a trusted hook has run in the host, `hunch integrations check --harness codex --require context` checks its recorded context delivery. The first check does not prove the second, or prove that the model used the delivered memory.
 
 ## Terminal access
 
@@ -230,6 +232,12 @@ Claude Code 2.1.196+ supplies an authoritative prompt identifier. Existing Hunch
 Stop does not close an unfinished report: another hook may continue the turn, and Stop is not an independent assertion that all user work finished. Explicit finish/interruption records remain authoritative. Older Claude versions receive an unassociated coverage notice, never a report selected by time or recent task. Presentation opt-out silences both notices and cards; firmness off retains its existing disabled-hook semantics.
 
 Live Claude 2.1.268 headless qualification observed exact prompt continuity through a Stop continuation, informational-message delivery, and the previously failing README task now returning an empty-memory card with a clickable Markdown evidence link. Interactive display and CCC/Watchtower adapters require their own qualification.
+
+## Native Codex lifecycle coverage
+
+Codex 0.153+ has a Hunch lifecycle adapter for `.codex/hooks.json`. After the project and hook commands are trusted, the prompt hook can supply the task identity from `turn_id`; the agent reuses it through MCP. Pre-edit and post-tool events support grounding and observation, and Stop can present the contribution card. Hook command changes require renewed review through `/hooks` and a new session.
+
+Check observed delivery with `hunch integrations check`. Enabled configuration does not prove that each event ran, that a failed-tool event was delivered, or that the model used a lesson.
 
 ## Provider-neutral engine API
 
