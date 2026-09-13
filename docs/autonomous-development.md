@@ -41,6 +41,31 @@ What changed since the red team, each with where it is verified:
   only from `npm ci`). The three slowest tests took 160 s, 124 s and 77 s. An unattended loop needs a
   budget of at least 20 minutes for the suite, and `npm ci` before it.
 
+## Update — 2026-09-14
+
+The current implementation and repository configuration supersede the earlier current-state
+claims above; the dated measurements remain historical evidence.
+
+- Bounded auto-merge is wired in `hunch-guard.yml` using the trusted base classifier
+  (`174f8656ddf1c0d4cd5e68116f5ca0d11c6572fc`, 2026-09-12). This does not authorize general auto-merge.
+- The observed `main` protection requires the two Node CI checks, the two platform checks and
+  `hunch-guard`; `required_pull_request_reviews` is null. A one-review requirement in the ladder
+  is a governance expectation, not an enforced repository setting. No protection was changed
+  during this preparation.
+- The single-user approval → receipt leg and live cross-domain chain were measured on
+  2026-09-12, as recorded in the roadmap's Gate 4/5 table. The two-user week remains open.
+- [Development preparation](development-preparation.md) provides an operator-invoked one-task
+  launcher, fixed draft-PR prompt, process receipt and bounded PR metrics. It installs no schedule
+  and grants no authority. The public proposal queue was empty at inspection; no real agent run
+  was invented to fill it.
+- A read-only sample of 100 merged PRs found two with recorded change requests and a median
+  time to merge of 10 min 28.5 s. No exact merge-commit revert marker was found in the bounded
+  history. This is not proof of a zero revert rate. Initial-head CI coverage was zero; the new
+  observation workflow retains that evidence prospectively. These numbers grant no promotion.
+- Ten active advisory behavior policies currently report stale dependency snapshots. Their
+  errors remain non-blocking. Re-proving an active policy does not update its pinned inputs;
+  replacement selection, activation and retirement remain explicit human decisions.
+
 The findings below are the 2026-09-09 snapshot and are kept as written.
 
 ## What the red team found (2026-09-09)
@@ -119,7 +144,7 @@ repository. Every other item below can be done by an agent; this one cannot. Sch
 
 *2026-09-12:* the single-user leg was run by an agent on the live environment (see the update
 above). What remains human-only is narrower: the CRM configuration on the second machine for the
-two-user week (a second participant, not a machine), and one approved CRM comment for the approval → receipt leg.
+two-user week (a second participant, not a machine). The approval → receipt leg was subsequently completed on 2026-09-12; see the 2026-09-14 update.
 
 ## The promotion ladder for the development loop
 
@@ -130,7 +155,7 @@ that promotes it. Promotion is one human act per rung. Demotion is immediate on 
 |---|---|---|---|
 | 0 — propose | read the queue, write a plan as a `proposed` decision with a topic | nothing is written outside `.hunch/` | the plan survives one human read without correction, five times |
 | 1 — author | branch, implement under fable-mode, run `npm ci && npm test`, open a PR whose body carries `hunch_merge_verdict` and `hunch_pr_impact` output | required checks (`ci` ×2, `hunch-guard`, `platform-matrix-safety`) + one human review; the agent never approves or merges | twenty merged PRs with revert rate 0 and change-request rate under 20 % |
-| 2 — auto-merge, bounded class | enable GitHub auto-merge on PRs in a declared class only: docs, tests, memory captures, generated locale copies (dependency bumps stay outside until a semantic lockfile check exists) | the class is the path allowlist in `tooling/merge-class.mjs` (`--base origin/main --require-bounded` exits 1 outside it); wiring it into `hunch-guard` and enabling auto-merge are human acts; anything outside it needs rung 1 | twenty class merges with zero reverts |
+| 2 — auto-merge, bounded class | enable GitHub auto-merge on PRs in a declared class only: docs, tests, memory captures, generated locale copies (dependency bumps stay outside until a semantic lockfile check exists) | the class is the path allowlist in `tooling/merge-class.mjs` (`--base origin/main --require-bounded` exits 1 outside it); wired in `hunch-guard` on 2026-09-12; anything outside it needs rung 1 | twenty class merges with zero reverts |
 | 3 — auto-merge, general | auto-merge any PR that passes required checks and `hunch_merge_verdict` PASS (not WARN) | WARN or BLOCK verdicts always wait for a human | only after Gate 5 of the pilot has a number, and only if a second reviewer identity exists |
 | never | publish to npm or the marketplace, activate a policy, delete a branch someone else pushed, edit `.github/workflows/` | environment protection rules with a required reviewer | — |
 
@@ -158,7 +183,7 @@ Human-only actions are marked. Everything else an agent can do from this checkou
    until `verified`. Either wire `.claude/pipeline/` into settings or delete it. Move the six
    human-confirmed blocking constraints from `advisory_v1` to `ci` enforcement so the guard fails
    the commit, not only the PR comment. Turn semantic search on.
-5. **The loop (agent, once the above is green).** A scheduled headless session with one fixed
+5. **The loop (preparation implemented; scheduling remains pending).** See [the one-task launcher](development-preparation.md). A scheduled headless session with one fixed
    template: read `hunch now`, take the top proposal, `hunch_context` on it, branch, implement,
    verify, open the PR with the receipts in the body, stop. Never self-merge. One task per run.
 6. **Measure and promote (human, weekly).** Per PR: reverted or not, change requests, CI red on

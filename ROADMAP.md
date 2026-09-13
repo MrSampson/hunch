@@ -1,6 +1,6 @@
 # Hunch roadmap
 
-Product summary updated 2026-09-13. Pilot measurements below remain dated 2026-09-12.
+Product summary updated 2026-09-14. Pilot measurements below remain dated 2026-09-12.
 
 Hunch gives agents a shared record of decisions, completed work, and commitments, with their sources. Engineering memory and a self-hosted state server ship today. The next challenge is to measure how reliably different agents use that record across real work.
 
@@ -43,7 +43,7 @@ The reports distinguish delivered context, agent-reported application, verified 
 
 The 1.32.8 release repairs legacy hook launch commands during updates, preserves disabled hooks and user settings, and explains the Codex trust and session-restart steps. Public product pages now distinguish the shipped tools from the pilot vision. These updates do not complete the remaining pilot or host-acceptance gates.
 
-**Next product milestone — shared state view (in development).** A person can open a served workspace, inspect the state for a subject, see current records, completed work and open commitments, and follow the evidence without using an API client. `/operator` uses the existing grants and state contract; observations keep their unverified status. Recent activity is retained history, not a complete inventory. This milestone has been brought forward at the user's request; the outstanding pilot measurements remain open.
+**Shared state view — implemented, awaiting release.** A person can open a served workspace, inspect the state for a subject, see current records, completed work and open commitments, and follow the evidence without using an API client. `/operator` uses the existing grants and state contract; observations keep their unverified status. Recent activity is retained history, not a complete inventory. This milestone has been brought forward at the user's request; the outstanding pilot measurements remain open.
 
 ## Remaining implementation sequence — requested 2026-09-13
 
@@ -54,12 +54,13 @@ release; the changelog records publication. Pilot evidence and policy authority 
 | Order | Deliverable | Current state |
 | --- | --- | --- |
 | 1 | Read-only operator view and exact field citations | Operator PR #214 and citations PR #215 qualified; awaiting release |
-| 2 | Per-record visibility | In development; permission checks must cover reads, retrieval, history, dependencies and conflicts |
-| 3 | Explicit user, team and organization conventions | In development; explicit records, human review, source currentness, bounded delivery and conflicts |
-| 4 | State CLI read, write, records and subscribe | In development; use the existing client and contract |
-| 5 | Optional key-bound principal authentication | In development; DPoP key binding, live rotation/revocation and durable replay checks; no hardware-attestation claim |
+| 2 | Per-record visibility | PR #216 qualified; visibility covers reads, retrieval, history, dependencies and conflicts |
+| 3 | Explicit user, team and organization conventions | PR #218 qualified; explicit records, human review, source currentness, bounded delivery and conflicts |
+| 4 | State CLI read, write, records and subscribe | PR #217 qualified; uses the existing client and contract |
+| 5 | Optional key-bound principal authentication | PR #219 qualified; DPoP key binding, live rotation/revocation and durable replay checks; no hardware-attestation claim |
 | 6 | Python client and state recall evaluation | Python client implemented; [fixture recall measured](docs/state-recall-evaluation.md), including the local model; production corpus and external Python adoption remain unmeasured |
-| 7 | Release qualification and public content | Pending the completed implementations; retain explicit open acceptance gates |
+| 7 | Development loop preparation | One-task launcher, fixed draft-PR prompt and read-only outcome collection implemented; [usage and limits](docs/development-preparation.md). No schedule or authority promotion |
+| 8 | Release qualification and public content | Pending the completed implementations; retain explicit open acceptance gates |
 
 Real-user acceptance, the two-user pilot week, and human policy/promotion decisions remain open.
 Conditional load optimizations, deferred profile catalogs and excluded product directions are
@@ -345,7 +346,7 @@ Accept the broad system-of-record thesis only if the incident -> decision -> cha
 
 If agents receive the state but continue to re-derive/contradict it, narrow the product toward enforcement and delivery hooks before expanding the hosted platform.
 
-Measured so far: see the status table above (one user, live, 0 of 3 unsourced after one read). Still to measure: the two-user week, the approval → receipt leg, the live cross-domain chain.
+Measured so far: see the status table above (one user, live, 0 of 3 unsourced after one read). Still to measure: the two-user week. The approval → receipt leg and live cross-domain chain were run on 2026-09-12 as recorded above; one operator drove both sides.
 
 Target for one complete pilot cycle: **2026-12-31**. A delay in integration is a capacity finding, not by itself a verdict on the thesis.
 
@@ -428,7 +429,7 @@ The organizational-state pilot should reuse this edge when state-backed policy n
 
 ## Autonomous development
 
-The development loop itself is promoted by the same rule as a policy: rung by rung, on measured numbers, never switched on. The readiness checklist, the red-team findings of 2026-09-09 and the promotion table are in [Autonomous development](docs/autonomous-development.md); since then the required checks and environment reviewers are configured, `drift --fail-on` gates releases, and memory hygiene is a standing agent obligation (`con_039cee7367`). The loop stands at rung 1: the agent authors, a human merges. The items no agent can do are Gate 5's two-user week (a second participant) and the one approved CRM comment for the approval leg; they are the critical path.
+The development loop itself is promoted by the same rule as a policy: rung by rung, on measured numbers, never switched on. The readiness checklist, the red-team findings of 2026-09-09 and the promotion table are in [Autonomous development](docs/autonomous-development.md); since then the required checks and environment reviewers are configured, `drift --fail-on` gates releases, and memory hygiene is a standing agent obligation (`con_039cee7367`). Bounded auto-merge is wired for the existing declared class; general auto-merge is not authorized. The [one-task launcher and measurement tools](docs/development-preparation.md) prepare authoring and review without installing a schedule. Gate 5's two-user week still needs a second participant and shared task. Its single-user approval leg and cross-domain chain were already measured on 2026-09-12.
 
 ## Deliberate non-goals for the pilot
 
