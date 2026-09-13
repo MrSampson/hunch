@@ -50,3 +50,5 @@ gaps; those gaps are not evidence of a lost event. Observation reads preserve th
 
 Input is bounded to 1 MiB. Tokens are never part of CLI results. HTTP redirects are refused so
 record payloads cannot be forwarded to an unexpected destination.
+
+For a key-bound token, add `--proof-key-file <private PEM or JWK>`. The client answers one server nonce challenge automatically before the request runs. See [Key-bound credentials](key-bound-principals.md) for HTTPS setup and rotation.
