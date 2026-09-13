@@ -15,6 +15,12 @@ exactly `direct_scope_blocker`. Policy failures, executable behavior policy
 failures, conformance failures, vetoes, regressions, unknown results, incomplete
 evaluation, and infrastructure errors are always refused.
 
+The evaluator package name is fixed by the review policy, while its version is
+read from the checked-out trusted `package.json` at dispatch time. The producer
+does the same in its trusted checkout. This keeps a release bump from silently
+leaving a permanent old version in the policy; a report from another evaluator
+version is refused.
+
 The workflow checks out only the default branch and treats the downloaded guard
 report as data. It never checks out a PR, installs a PR package, runs a PR script,
 or invokes Hunch against a PR worktree. The receipt producer must therefore be a
