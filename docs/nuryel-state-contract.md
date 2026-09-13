@@ -417,3 +417,7 @@ reader before writing annotated records.
 ### Explicit conventions
 
 In development: `nuryel.convention/1` adds user/team/organization/repository conventions as an advisory facet with reviewable sources, explicit supersession and conflict flags. See [Scoped conventions](scoped-conventions.md). These records never activate policy authority or replace Git-derived Project DNA.
+
+### Optional key-bound HTTP credentials
+
+In development: the HTTP binding advertises `nuryel.auth.dpop/1`. [Key-bound credentials](key-bound-principals.md) add a signing-key proof to the existing token-to-principal mapping. Facet schemas and grants remain the same; this is not hardware attestation or policy authority.
