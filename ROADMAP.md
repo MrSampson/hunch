@@ -53,14 +53,14 @@ release; the changelog records publication. Pilot evidence and policy authority 
 
 | Order | Deliverable | Current state |
 | --- | --- | --- |
-| 1 | Read-only operator view and exact field citations | Operator PR #214 and citations PR #215 qualified; awaiting release |
-| 2 | Per-record visibility | PR #216 qualified; visibility covers reads, retrieval, history, dependencies and conflicts |
-| 3 | Explicit user, team and organization conventions | PR #218 qualified; explicit records, human review, source currentness, bounded delivery and conflicts |
-| 4 | State CLI read, write, records and subscribe | PR #217 qualified; uses the existing client and contract |
-| 5 | Optional key-bound principal authentication | PR #219 qualified; DPoP key binding, live rotation/revocation and durable replay checks; no hardware-attestation claim |
-| 6 | Python client and state recall evaluation | Python client implemented; [fixture recall measured](docs/state-recall-evaluation.md), including the local model; production corpus and external Python adoption remain unmeasured |
+| 1 | Read-only operator view and exact field citations | Operator PR #214 and citations PR #215 merged; included in the 1.33 candidate |
+| 2 | Per-record visibility | PR #216 merged; visibility covers reads, retrieval, history, dependencies and conflicts |
+| 3 | Explicit user, team and organization conventions | PR #218 merged; explicit records, human review, source currentness, bounded delivery and conflicts |
+| 4 | State CLI read, write, records and subscribe | PR #217 merged; uses the existing client and contract |
+| 5 | Optional key-bound principal authentication | PR #219 merged; DPoP key binding, live rotation/revocation and durable replay checks; no hardware-attestation claim |
+| 6 | Python client and state recall evaluation | Python PR #220 and recall PR #221 qualified; [fixture recall measured](docs/state-recall-evaluation.md), including the local model; production corpus and external Python adoption remain unmeasured |
 | 7 | Development loop preparation | One-task launcher, fixed draft-PR prompt and read-only outcome collection implemented; [usage and limits](docs/development-preparation.md). No schedule or authority promotion |
-| 8 | Release qualification and public content | Pending the completed implementations; retain explicit open acceptance gates |
+| 8 | Release qualification and public content | 1.33 candidate prepared; full release gate and publication pending. [Upgrade guide](docs/upgrade-1.33.md); explicit acceptance gates remain open |
 
 Real-user acceptance, the two-user pilot week, and human policy/promotion decisions remain open.
 Conditional load optimizations, deferred profile catalogs and excluded product directions are
