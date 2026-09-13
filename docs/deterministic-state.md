@@ -25,6 +25,16 @@ hunch serve --config ./hunch-serve.json
 
 Initialization prints the agent token once; keep it private. The server binds to `127.0.0.1`. Use a Git repository for the partition when you need committed history; write results distinguish local, committed and pushed records. The [state contract](nuryel-state-contract.md#served-partitions-hunch-serve) explains authenticated HTTP access, MCP and the typed client. The CLI manages the service; state reads and writes use those interfaces.
 
+### Shared state view — next release
+
+With the server running, open `http://127.0.0.1:7474/operator` (use your configured port). Connect with a server-issued token and choose an authorized workspace. The page keeps the token in this tab’s memory; reloading or disconnecting clears it.
+
+Enter an exact subject, such as `customer:c1`, or a decision topic. **Show state** displays current records, open commitments and rules, completed work, and a separate section for observations whose currentness is unverified. **Sources & record details** shows the author or source, evidence, dependencies and stored record. **Inspect record ID** also opens failed, cancelled or stale records that a current-subject view leaves out.
+
+Recent activity shows up to 50 retained changes and lets you open their subjects or inspect their latest stored records. It is not a full inventory or an archive of every revision: earlier history may have been compacted. Observation pages are bound to a snapshot; if records change between pages, restart the subject lookup. **Refresh** retrieves newer state; this page does not continuously poll.
+
+The view is read-only and uses the existing authenticated state API. The token retains its server permissions. Source references are displayed without fetching external systems, and a record’s status is not an independent check of its claims. No hosted account or separate database is needed.
+
 Naming is deliberately not the current deliverable. `Hunch` remains the product name until the state contract and Sofia pilot are validated. A possible hosted-platform name, **Nuryel**, is deferred (roadmap Gate 6); the contract name `nuryel.state/1` and the `nuryel_*` MCP tools already ship under it.
 
 ## One product, one graph, one contract

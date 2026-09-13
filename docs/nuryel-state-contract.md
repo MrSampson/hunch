@@ -231,6 +231,12 @@ schemas minus `schema` and `principal`), plus `GET /nuryel/v1/health`. Errors ar
 a `StateRefusal` maps to 403 outside-grants, 409 conflict / idempotency, 422 identity, 400
 malformed / unsupported, 404 no-partition-home.
 
+**Shared state view (next release).** `/operator` serves a static browser client for the
+existing capabilities, read, records and subscribe endpoints. It introduces no state verb or
+storage format. The public HTML and assets contain no workspace data; reads use the token's
+existing grants. The view retains its token only in memory and renders sources as text without
+external fetches. See the [operator walkthrough](deterministic-state.md#shared-state-view--next-release).
+
 A **served partition is a directory whose `.hunch/partition.json` names the scope it IS** — so
 user, team and organization state need no overlay: the partition is the store, and
 `partitionOf(store)` (formerly `repositoryScope`) tells the binding to home writes there. The

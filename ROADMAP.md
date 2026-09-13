@@ -43,6 +43,8 @@ The reports distinguish delivered context, agent-reported application, verified 
 
 The 1.32.8 release repairs legacy hook launch commands during updates, preserves disabled hooks and user settings, and explains the Codex trust and session-restart steps. Public product pages now distinguish the shipped tools from the pilot vision. These updates do not complete the remaining pilot or host-acceptance gates.
 
+**Next product milestone — shared state view (in development).** A person can open a served workspace, inspect the state for a subject, see current records, completed work and open commitments, and follow the evidence without using an API client. `/operator` uses the existing grants and state contract; observations keep their unverified status. Recent activity is retained history, not a complete inventory. This milestone has been brought forward at the user's request; the outstanding pilot measurements remain open.
+
 ## Status — 2026-09-12
 
 The category is named **Deterministic State** (blog post in five locales, homepage band).
@@ -91,7 +93,7 @@ copied claims:
 | Field-level provenance on derived state | a summary today cites its sources as a whole; per-field citation lets a reader see which source a sentence rests on | later, after the second-user measurement |
 | Correction outranks later agent writes | prove, with a test, that a human correction on a record is not overridden by a subsequent agent write on the same field; a peer's reducer was observed to lose this | done, 1.30.0 — invariant `human-correction-outranks-agent-writes`, enforced at write time (`409 conflict`, `human-confirmed incumbent`), tested in `test/state-replay.test.ts`; per record, not per field (per-field provenance stays later) |
 | Attested principal identity | bearer keys today; key-thumbprint or hardware-attested principals for the organization partition when a second person holds a key | after Gate 5 |
-| Read-only operator view | a page over a served partition: current records, ledger, who wrote what; no editing | after Gate 5 |
+| Read-only operator view | a page over a served partition: current records, ledger, who wrote what; no editing | in development — brought forward on 2026-09-13; subject lookup, retained activity and source inspection over the existing API; no change to pilot acceptance status |
 | Typed clients beyond TypeScript | a Python client for the three verbs, generated from the contract | when a non-TypeScript orchestrator asks for it |
 
 Deliberately not borrowed: file ingestion and copies of external content. Hunch holds pointers and
