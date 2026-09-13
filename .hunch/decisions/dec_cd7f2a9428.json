@@ -107,7 +107,7 @@
   "supersedes": null,
   "superseded_by": null,
   "caused_by_bug": null,
-  "commit": "b50467c",
+  "commit": "61c8ee4",
   "valid_from": "2026-08-06T13:25:19+03:00",
   "valid_to": null,
   "retired": {
@@ -118,7 +118,7 @@
     "source": "llm_draft+summary",
     "confidence": 0.5,
     "evidence": [
-      "commit:b50467c",
+      "commit:61c8ee4",
       "synth:provider=claude-cli",
       "branch:fix/round3-high-severity",
       "src/core/correction.ts",
