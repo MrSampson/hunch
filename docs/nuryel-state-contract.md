@@ -413,3 +413,7 @@ reader before writing annotated records.
   `records` and `subscribe` use the existing authenticated HTTP client. State-specific semantic
   recall still needs measurement.
 - **Naming** — engine `hunch` / platform Nuryel, or one name for both.
+
+### Explicit conventions
+
+In development: `nuryel.convention/1` adds user/team/organization/repository conventions as an advisory facet with reviewable sources, explicit supersession and conflict flags. See [Scoped conventions](scoped-conventions.md). These records never activate policy authority or replace Git-derived Project DNA.
