@@ -17,7 +17,9 @@ hunch init --firmness advisory     # start gentle; raise later
 git commit --allow-empty -m "hunch: first capture"
 ```
 
-**Observe:** `.hunch/` appears (git-tracked JSON), `.claude/settings.json` gains five hook events (`PreToolUse`, `UserPromptSubmit`, `SessionStart`, `PostToolUse`, `Stop`), and your next assistant session opens with a 🧠 orientation block.
+**Observe:** `.hunch/` appears, and supported assistant configurations gain lifecycle hooks. Claude Code uses `.claude/settings.json`; Codex uses `.codex/hooks.json` and requires review and trust through `/hooks`. Reload the assistant, then use `hunch integrations check` to inspect configuration and observed delivery. A configured hook does not prove that the host ran it.
+
+For later updates, run `hunch update` in the repository. Reconnect the assistant; in Codex, review and trust changed commands with `/hooks`, then start a new session. A version pin change changes the hook command and requires renewed trust.
 
 Cold start on an old repo:
 
@@ -49,9 +51,9 @@ What each level may and may not do, and the human act that arms blocking, is spe
 
 ## 3. The verification pipeline (v1.4.0+)
 
-The operating loop — **scope → evidence → change → verify → attack → report** — is injected at session start and *enforced* at turn end. Facts, not claims: the `PostToolUse` hook records which product files were edited and whether a verify-shaped command (test / build / typecheck / plan) ran afterwards. At `firm`/`strict`, the `Stop` hook refuses to end a turn with unverified product edits (max twice per turn, so a broken gate can never trap you).
+On hosts that support and run the configured hooks, the operating loop — **scope → evidence → change → verify → attack → report** — is delivered at session start. `PostToolUse` records observed product-file edits and subsequent verification-shaped commands. At `firm`/`strict`, a supported `Stop` hook can request continued work when edits lack that evidence, at most twice per turn. This does not prove a check passed or that the model used the context; [task reports](task-reports.md) distinguish those claims.
 
-**Why it exists (measured, 2026-07-08):** instruction skills installed as files were read in **0/20** benchmark sessions — and pass rates were identical to having no skill at all. When the same content was guaranteed-delivered, hard-bug diagnosis flipped FAIL→PASS on every discriminating cell (Opus and Haiku both). Delivery, not content, is the bottleneck; hooks are the only delivery mechanism the model can't ignore.
+**Why it exists (benchmark, 2026-07-08):** instruction skills installed as files were read in **0/20** benchmark sessions; directly supplying the same content changed the hard-bug diagnosis result in the tested cells. That result motivated hook delivery. It is scoped benchmark evidence, not a guarantee about every host or task: even delivered context can be ignored or misunderstood.
 
 Escape hatches:
 

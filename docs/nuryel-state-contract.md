@@ -1,11 +1,15 @@
 # nuryel.state/1 — the state contract
 
-Status: **proposed, frozen as code, bound to the store, MCP and HTTP (`hunch serve`).** Verbs, canonical hashing,
+Status: **shipped in Hunch, bound to the store, MCP and HTTP (`hunch serve`).** Reviewed 2026-09-13. Broader deployment remains a pilot; the limits at the end of this document remain open.
+
+This is the technical contract behind Hunch's shared record: decisions, actions, commitments and the evidence they depend on. It lets authorized agents read and update that record through the same rules. A stored action record preserves the writer's verification status; writing it is not independent proof that the external action happened.
+
+Verbs, canonical hashing,
 id derivation and invariants live in `src/core/stateContract.ts`; the record schemas (facets) in
 `src/core/stateRecords.ts`, a leaf module so the store's kind registry can reference them without
 an import cycle (`stateContract` re-exports them — one module to import). The ONE implementation
 of the verbs over a store is `src/store/stateBinding.ts`; the per-scope change ledger is
-`src/store/changeLedger.ts`; the MCP binding is the four `nuryel_*` tools in `src/mcp/server.ts`.
+`src/store/changeLedger.ts`; the MCP bindings include `nuryel_capabilities`, `nuryel_read`, `nuryel_write`, `nuryel_subscribe` and `nuryel_records` in `src/mcp/server.ts`.
 Tests: `test/state-contract.test.ts`, `test/state-kinds.test.ts`, `test/state-binding.test.ts`,
 `test/mcp-state.test.ts`.
 
@@ -15,16 +19,15 @@ path (store, overlay safety, private migrate, reindex, `dropAll`) picks them up 
 entities and relationships are index-file stored like resources because their ids are not safe
 file names, and the gitignore writer whitelists the new directories. The verbs **are** wired
 into the store (`readState` / `writeState` / `subscribeState`), exposed over MCP
-(`nuryel_capabilities`, `nuryel_read`, `nuryel_write`, `nuryel_subscribe`) and over HTTP by
-`hunch serve` with a typed client. Every transport calls the same three functions — a transport
+(`nuryel_capabilities`, `nuryel_read`, `nuryel_write`, `nuryel_subscribe`, `nuryel_records`) when state tools are enabled, and over HTTP by
+`hunch serve` with a typed client. Every transport calls the shared store binding — a transport
 that re-implements a rule is a bug.
 
-> Agents are probabilistic. Organizations need deterministic state. Nuryel is the state layer
-> between them.
+The product name is **Hunch**. `nuryel.state/1` and `nuryel_*` are existing contract and tool identifiers; they do not name a separate product.
 
-Every orchestrator and agent — Sofia, Codex, Claude Code, whatever comes next — speaks this one
-contract to one state graph. Protocols are bindings of it, never separate integrations. No
-adapters live in Nuryel: the orchestrator owns the mapping from its world to the contract.
+An integrated orchestrator or agent — Sofia, Codex, Claude Code or another client — can use this
+contract. Each owns the mapping from its source tools to Hunch records. Hunch does not fetch or
+change CRM, email or chat data on the client's behalf.
 
 ## Scope model
 
@@ -48,7 +51,7 @@ is decided against grants *before* retrieval; the read assertion checks it again
 | changed | what moved in an external system | `ExternalRef` — credential-free version pointer | **new** |
 | current | what is true now, and on what it rests | `nuryel.derived/1` — `DerivedState` with mandatory dependencies | **new** |
 | entity / relationship | who and what, and how they connect | `nuryel.entity/1`, `nuryel.relationship/1` (Landscape-shaped ids) | **new** |
-| DNA | how this user / team / organization works | `hunch.project-dna/1` profiles keyed by scope | profile exists; scope keying new |
+| DNA | observed working conventions, distinct from decisions and rules | `hunch.project-dna/1` | repository profiles ship; broader scope profiles are a direction |
 
 Each new facet is lifted from a record Sofia already keeps:
 
@@ -398,5 +401,5 @@ Additive capabilities specified beside this contract, each with its own schema n
 - **Repository-scope private content.** The contract has no `private` flag: scope decides the
   home. Sensitive repository-scope state goes through the existing `hunch_record_*` tools
   with `private:true`, or into a user/team partition.
-- **A CLI binding** for `read` / `write` / `subscribe` (`hunch serve init` and `hunch serve replay` exist; the verbs themselves are HTTP, MCP and the typed client), and FTS / delivery ranking of the new kinds.
+- **A CLI binding** for `read` / `write` / `subscribe` (`hunch serve init` and `hunch serve replay` exist; the verbs themselves are HTTP, MCP and the typed client). State records already participate in text search and context delivery; state-specific semantic recall still needs measurement.
 - **Naming** — engine `hunch` / platform Nuryel, or one name for both.

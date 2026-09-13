@@ -1,8 +1,8 @@
 # Hunch roadmap
 
-Updated 2026-09-12.
+Product summary updated 2026-09-13. Pilot measurements below remain dated 2026-09-12.
 
-Hunch is moving from repository-only engineering memory toward a broader deterministic state layer for organizations that use many probabilistic agents.
+Hunch gives agents a shared record of decisions, completed work, and commitments, with their sources. Engineering memory and a self-hosted state server ship today. The next challenge is to measure how reliably different agents use that record across real work.
 
 The current product remains **Hunch**. Naming is deliberately deferred until the contract and pilot are proven.
 
@@ -33,13 +33,15 @@ not a plan.
 A private overlay holds the plan of record, the Constitution dossier and product direction; this
 file is its public view and lags it by design.
 
-## Next release — see what Hunch contributed
+## Current implementation — see what Hunch contributed
 
-**Next implementation priority, requested 2026-09-11:** make Hunch's contribution visible to repository users in their normal agent workflow. Ship a clear connection check, task-linked memory delivery, a concise contribution card, and an inspectable local evidence view. The defining demonstration is a lesson recorded in one task, received by a fresh agent in the next, and linked to an observed action and verification result without the developer repeating it.
+**Shipped foundation, requested 2026-09-11:** a connection check, task-linked memory delivery, a concise contribution card, and an inspectable local evidence view make Hunch's contribution visible to repository users. The defining demonstration is a lesson recorded in one task, received by a fresh agent in the next, and linked to an observed action and verification result without the developer repeating it.
 
-The release must distinguish delivered context, agent-reported application, verified checks, and unsupported attribution. Production acceptance requires the completion card to appear during normal work without the user asking about Hunch or running a report command, plus a real-host rehearsal of the original user's setup. Hunch remains provider- and harness-agnostic: Kimi, Codex, Claude, CCC, and Watchtower are consumers of one task/evidence contract, not required product-specific forks. A harness can own task lifecycle and deterministic presentation; standalone integrations receive the same data. Advertise automatic display only where it has been verified. Shipped in 1.32.0 (2026-09-11); hardened by dogfooding in 1.32.1 and 1.32.2 (2026-09-12): `hunch task verify --timeout`, a bounded MCP report summary, hook runtime evidence in `integrations check`, the first-delivery `Hunch recalled:` line, and `drift --fail-on` in the release gate. Usage: [Task contribution reports](docs/task-reports.md).
+The reports distinguish delivered context, agent-reported application, verified checks, and unsupported attribution. Production acceptance requires the completion card to appear during normal work without the user asking about Hunch or running a report command, plus a real-host rehearsal of the original user's setup. Hunch remains provider- and harness-agnostic: Kimi, Codex, Claude, CCC, and Watchtower are consumers of one task/evidence contract, not required product-specific forks. A harness can own task lifecycle and deterministic presentation; standalone integrations receive the same data. Advertise automatic display only where it has been verified. Shipped in 1.32.0 (2026-09-11); hardened by dogfooding in 1.32.1 and 1.32.2 (2026-09-12): `hunch task verify --timeout`, a bounded MCP report summary, hook runtime evidence in `integrations check`, the first-delivery `Hunch recalled:` line, and `drift --fail-on` in the release gate. Usage: [Task contribution reports](docs/task-reports.md).
 
 1.32.0 ships task-scoped reports, command verification, rule-supported applications, local HTML, and managed completion instructions. [Development qualification](docs/task-report-qualification.md) records the flow in real hosts, the original Claude lifecycle failure and its latest-host regression, and the acceptance items still open after publication: interactive-terminal display, the two repository-user acceptance sessions (not the two Sofia users of Gate 0), a live task showing a rule-supported application, and the MCP registry publish for 1.32.x. The shared harness contract and verified capability boundaries are the shipped surface; individual external integrations are not assumed qualified. The [release execution plan](docs/next-release-memory-impact.md) remains the reference for the experience, evidence rules, and remaining gates. Existing live-pilot measurement continues; the organizational-state direction and gates below remain in force.
+
+The 1.32.8 release repairs legacy hook launch commands during updates, preserves disabled hooks and user settings, and explains the Codex trust and session-restart steps. Public product pages now distinguish the shipped tools from the pilot vision. These updates do not complete the remaining pilot or host-acceptance gates.
 
 ## Status — 2026-09-12
 
