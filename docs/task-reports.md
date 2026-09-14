@@ -227,6 +227,14 @@ machine or teammate finished. `hunch report <id>` prints the graph record when
 the local ledger no longer has the task. Graph tasks are indexed for
 `hunch_query`, and `hunch_why <file>` lists recent tasks that touched the file.
 Set `"taskRecords": false` in `.hunch/local.json` to keep tasks ledger-only.
+Set `"taskRecordsFlush": "batch"` to write records without their own commit;
+they ride the next capture commit (decision, finding, correction) instead.
+
+Native tasks (Claude Code, Codex) are titled from the prompt's first line,
+cut at 72 characters. Credential-looking prompts fall back to the generic
+"Assistant task" title. That title is the only prompt-derived prose retained.
+The files a task touched include the targets of its context deliveries when
+they name a path or symbol; task phrases are never recorded as files.
 
 ## Integration boundary
 
