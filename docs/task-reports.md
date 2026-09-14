@@ -230,9 +230,13 @@ Set `"taskRecords": false` in `.hunch/local.json` to keep tasks ledger-only.
 Set `"taskRecordsFlush": "batch"` to write records without their own commit;
 they ride the next capture commit (decision, finding, correction) instead.
 
-Native tasks (Claude Code, Codex) are titled from the prompt's first line,
-cut at 72 characters. Credential-looking prompts fall back to the generic
-"Assistant task" title. That title is the only prompt-derived prose retained.
+By default native tasks (Claude Code, Codex) carry the generic title
+"Assistant task" and no prompt text is retained anywhere. Set
+`"taskTitles": "prompt"` in `.hunch/local.json` to title them from the prompt's
+first line (72 characters, cut at a word). Credential-looking prompts keep the
+generic title. That title is then the only prompt-derived prose retained, and it
+travels into the task's graph record, so opt in only where the graph's home is
+acceptable for it.
 The files a task touched include the targets of its context deliveries when
 they name a path or symbol; task phrases are never recorded as files.
 
@@ -257,7 +261,7 @@ references are presentation metadata alongside the report, outside its content h
 
 ## Native Claude lifecycle coverage
 
-Claude Code 2.1.196+ supplies an authoritative prompt identifier. Existing Hunch prompt hooks create an exact report from physical worktree, provider, session, prompt and optional agent identity; raw prompt text and host identifiers are not retained. Every prompt receives its ID and canonical worktree `cwd` even when ambient reminders are deduplicated. The model reuses both through MCP. The Stop hook emits a nonblocking `systemMessage`, including missing coverage when no linked retrieval occurred. It never adds a Stop block or another model turn. An existing verification gate still takes precedence.
+Claude Code 2.1.196+ supplies an authoritative prompt identifier. Existing Hunch prompt hooks create an exact report from physical worktree, provider, session, prompt and optional agent identity; raw prompt text and host identifiers are not retained (a repository that opts in with `taskTitles: "prompt"` keeps only a bounded first-line title). Every prompt receives its ID and canonical worktree `cwd` even when ambient reminders are deduplicated. The model reuses both through MCP. The Stop hook emits a nonblocking `systemMessage`, including missing coverage when no linked retrieval occurred. It never adds a Stop block or another model turn. An existing verification gate still takes precedence.
 
 Stop does not close an unfinished report: another hook may continue the turn, and Stop is not an independent assertion that all user work finished. Explicit finish/interruption records remain authoritative. Older Claude versions receive an unassociated coverage notice, never a report selected by time or recent task. Presentation opt-out silences both notices and cards; firmness off retains its existing disabled-hook semantics.
 
