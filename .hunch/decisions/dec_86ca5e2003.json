@@ -2,7 +2,7 @@
   "id": "dec_86ca5e2003",
   "title": "Maintain documentation in the private Hunch repository",
   "topic": null,
-  "status": "accepted",
+  "status": "superseded",
   "context": "The commit states that documentation is moving to a private repository; the reason for making it private is not provided. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.).",
   "decision": "Remove documentation files from this repository, ignore /docs/, and redirect README documentation links to hunch-private/projects/hunch/docs.",
   "consequences": [
@@ -53,11 +53,11 @@
     "docs/upgrade-1.33.md"
   ],
   "supersedes": null,
-  "superseded_by": null,
+  "superseded_by": "dec_8a7e371b0d",
   "caused_by_bug": null,
   "commit": "e7803fa",
   "valid_from": "2026-09-14T11:48:39+03:00",
-  "valid_to": null,
+  "valid_to": "2026-09-14T12:12:12.004Z",
   "retired": {
     "symbols": [],
     "deps": []
