@@ -1,13 +1,13 @@
 {
   "id": "fnd_99da2635c3",
   "title": "Task-report scope splits by drive-letter casing on Windows: hook and MCP server disagree, hunch_task returns task not found",
-  "observation": "Observed 2026-09-14 in the hunch repo on Windows 11. scopeOf(root) in src/core/taskReport.ts and promptTaskId/nativeHookCwd in src/core/taskReportHook.ts hash fs.realpathSync(root), which on Windows preserves the caller's drive-letter casing (c:\\Users\\... vs C:\\Users\\...), while realpathSync.native returns canonical on-disk casing. Claude Code spawned the prompt hook with cwd C:\\... and the MCP server with c:\\..., so the hook opened tasks under scope sha256:f0d5ed33... and the MCP server looked them up under sha256:f9e54103...: 8 tasks under one scope, 6 under the other in .hunch-cache/served.db. Passing cwd: C:\\... to hunch_task does not help because the MCP re-root check compares canonicalRootPath (native) and concludes the roots are equal, so root keeps its original casing and no re-home happens. Result: hunch_task start/finish failed with 'task not found in this repository/worktree' for 3 of 4 prompts in one session, no contribution card, and hunch task list / VS Code Contribution view / hunch task status (promptTaskId) each see only half the ledger. Other non-native realpath scope sites: src/taskReports.ts:23 (createTaskReporter), src/core/taskReportEvidence.ts:38. Fix direction: one canonical scope path (realpathSync.native with realpathSync fallback) shared by hook, MCP, CLI and reporter; readTask may additionally accept the legacy non-native hash so tasks open during upgrade survive. Secondary, dev-checkout only: hooks registered twice (.claude/settings.json runs npx tsx src; .claude/settings.local.json runs stale dist built 08:39 titled 'Claude task'), so every prompt receives two UserPromptSubmit blocks and the src hook falls into its legacy-title branch.",
+  "observation": "Observed 2026-09-14 on Windows 11. scopeOf(root) in src/core/taskReport.ts and promptTaskId/nativeHookCwd in src/core/taskReportHook.ts hash fs.realpathSync(root), which on Windows preserves the caller's drive-letter casing (lowercase vs uppercase drive letter), while realpathSync.native returns canonical on-disk casing. The host spawned the prompt hook with an uppercase-drive cwd and the MCP server with a lowercase-drive cwd, so the hook opened tasks under one scope hash and the MCP server looked them up under another: 8 tasks under one scope, 6 under the other in .hunch-cache/served.db for the same repository. Passing cwd to hunch_task does not help because the MCP re-root check compares canonicalRootPath (native) and concludes the roots are equal, so root keeps its original casing and no re-home happens. Result: hunch_task start/finish failed with 'task not found in this repository/worktree' for 3 of 4 prompts in one session, no contribution card, and hunch task list / VS Code Contribution view / hunch task status (promptTaskId) each see only half the ledger. Other non-native realpath scope sites: src/taskReports.ts createTaskReporter, src/core/taskReportEvidence.ts reportSourceSnapshot. Fix direction: one canonical scope path (realpathSync.native with realpathSync fallback) shared by hook, MCP, CLI and reporter; readTask may additionally accept the legacy non-native hash so tasks open during upgrade survive. Secondary, dev-checkout only: hooks registered twice (.claude/settings.json runs npx tsx src; .claude/settings.local.json runs a stale dist build titled 'Claude task'), so every prompt receives two UserPromptSubmit blocks and the src hook falls into its legacy-title branch.",
   "evidence": [
-    "realpath probe: realpathSync('c:\\\\Users\\\\davids\\\\github\\\\hunch') -> c:\\Users\\davids\\github\\hunch ; realpathSync.native(same) -> C:\\Users\\davids\\github\\hunch",
-    ".hunch-cache/served.db report_tasks grouped by scope (2026-09-14): f0d5ed33 count 8, f9e54103 count 6, same repository",
-    "hunch_task(action:start, task_id: htask_5ef324c6c4a6e34cd3b3fa1c | htask_35e463d4c1e26bc37abc3df4) -> 'task not found in this repository/worktree; use its exact task ID and working directory' with both cwd casings; htask_b2bbeffa1571fa62412965a3 (opened while cwd was lowercase) worked",
+    "realpath probe: realpathSync('<lowercase-drive>:\\\\<repo>') keeps the lowercase drive letter; realpathSync.native(same) returns the uppercase on-disk drive letter",
+    ".hunch-cache/served.db report_tasks grouped by scope (2026-09-14): scope f0d5ed33 count 8, scope f9e54103 count 6, same repository",
+    "hunch_task(action:start, task_id: htask_5ef324c6c4a6e34cd3b3fa1c | htask_35e463d4c1e26bc37abc3df4) -> 'task not found in this repository/worktree; use its exact task ID and working directory' with both cwd casings; htask_b2bbeffa1571fa62412965a3 (opened while both processes had the same casing) worked",
     "npx tsx src/cli/index.ts task list --json from PowerShell -> 8 rows (uppercase scope only)",
-    "src/core/taskReport.ts:228 scopeOf = reportHash(realpathSync(root)); src/mcp/roots.ts:21 canonicalRootPath = realpathSync.native(root)"
+    "src/core/taskReport.ts scopeOf = reportHash(realpathSync(root)); src/mcp/roots.ts canonicalRootPath = realpathSync.native(root)"
   ],
   "method": null,
   "severity": "high",
@@ -35,12 +35,12 @@
     "source": "agent_recorded",
     "confidence": 0.75,
     "evidence": [
-      "realpath probe: realpathSync('c:\\\\Users\\\\davids\\\\github\\\\hunch') -> c:\\Users\\davids\\github\\hunch ; realpathSync.native(same) -> C:\\Users\\davids\\github\\hunch",
-      ".hunch-cache/served.db report_tasks grouped by scope (2026-09-14): f0d5ed33 count 8, f9e54103 count 6, same repository",
-      "hunch_task(action:start, task_id: htask_5ef324c6c4a6e34cd3b3fa1c | htask_35e463d4c1e26bc37abc3df4) -> 'task not found in this repository/worktree; use its exact task ID and working directory' with both cwd casings; htask_b2bbeffa1571fa62412965a3 (opened while cwd was lowercase) worked",
+      "realpath probe: realpathSync('<lowercase-drive>:\\\\<repo>') keeps the lowercase drive letter; realpathSync.native(same) returns the uppercase on-disk drive letter",
+      ".hunch-cache/served.db report_tasks grouped by scope (2026-09-14): scope f0d5ed33 count 8, scope f9e54103 count 6, same repository",
+      "hunch_task(action:start, task_id: htask_5ef324c6c4a6e34cd3b3fa1c | htask_35e463d4c1e26bc37abc3df4) -> 'task not found in this repository/worktree; use its exact task ID and working directory' with both cwd casings; htask_b2bbeffa1571fa62412965a3 (opened while both processes had the same casing) worked",
       "npx tsx src/cli/index.ts task list --json from PowerShell -> 8 rows (uppercase scope only)",
-      "src/core/taskReport.ts:228 scopeOf = reportHash(realpathSync(root)); src/mcp/roots.ts:21 canonicalRootPath = realpathSync.native(root)"
+      "src/core/taskReport.ts scopeOf = reportHash(realpathSync(root)); src/mcp/roots.ts canonicalRootPath = realpathSync.native(root)"
     ],
-    "last_verified": "2026-09-14T12:56:33.575Z"
+    "last_verified": "2026-09-14T12:57:01.981Z"
   }
 }
