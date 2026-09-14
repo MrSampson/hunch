@@ -207,6 +207,39 @@ observations and generated report files, never durable project lessons. Recent o
 tasks remain available until explicitly closed or their retention period expires. Symlinked/hard-linked report paths
 are refused so reports do not cross repository/worktree boundaries.
 
+## Tasks in the graph
+
+A finished task with at least one observation becomes graph memory:
+`.hunch/tasks/<task_id>.json`, a bounded summary in the same JSON format as
+decisions and findings (title, delivered lesson revisions, agent-reported
+applications and whether Hunch's own rule check supported them, saves with their
+home and proven durability, observed checks, the files it touched, and the
+content hash of the full local report). It is written through the same capture
+path as every other record, so public/private homing, the one-home-per-record
+rule, auto-commit and team routing apply unchanged. A task that saved to the
+private overlay, or that received a lesson living only there, is homed private.
+Empty tasks stay ledger-only. Titles are the only prose kept; prompt text,
+transcripts, context payloads and denial reasons never leave the local ledger.
+
+`hunch task list` and the VS Code Contribution view show graph records next to
+local observations (`in graph (public|private)`), including tasks another
+machine or teammate finished. `hunch report <id>` prints the graph record when
+the local ledger no longer has the task. Graph tasks are indexed for
+`hunch_query`, and `hunch_why <file>` lists recent tasks that touched the file.
+Set `"taskRecords": false` in `.hunch/local.json` to keep tasks ledger-only.
+Set `"taskRecordsFlush": "batch"` to write records without their own commit;
+they ride the next capture commit (decision, finding, correction) instead.
+
+By default native tasks (Claude Code, Codex) carry the generic title
+"Assistant task" and no prompt text is retained anywhere. Set
+`"taskTitles": "prompt"` in `.hunch/local.json` to title them from the prompt's
+first line (72 characters, cut at a word). Credential-looking prompts keep the
+generic title. That title is then the only prompt-derived prose retained, and it
+travels into the task's graph record, so opt in only where the graph's home is
+acceptable for it.
+The files a task touched include the targets of its context deliveries when
+they name a path or symbol; task phrases are never recorded as files.
+
 ## Integration boundary
 
 CLI and MCP use the same local report service. CCC or another orchestrator can
@@ -228,7 +261,7 @@ references are presentation metadata alongside the report, outside its content h
 
 ## Native Claude lifecycle coverage
 
-Claude Code 2.1.196+ supplies an authoritative prompt identifier. Existing Hunch prompt hooks create an exact report from physical worktree, provider, session, prompt and optional agent identity; raw prompt text and host identifiers are not retained. Every prompt receives its ID and canonical worktree `cwd` even when ambient reminders are deduplicated. The model reuses both through MCP. The Stop hook emits a nonblocking `systemMessage`, including missing coverage when no linked retrieval occurred. It never adds a Stop block or another model turn. An existing verification gate still takes precedence.
+Claude Code 2.1.196+ supplies an authoritative prompt identifier. Existing Hunch prompt hooks create an exact report from physical worktree, provider, session, prompt and optional agent identity; raw prompt text and host identifiers are not retained (a repository that opts in with `taskTitles: "prompt"` keeps only a bounded first-line title). Every prompt receives its ID and canonical worktree `cwd` even when ambient reminders are deduplicated. The model reuses both through MCP. The Stop hook emits a nonblocking `systemMessage`, including missing coverage when no linked retrieval occurred. It never adds a Stop block or another model turn. An existing verification gate still takes precedence.
 
 Stop does not close an unfinished report: another hook may continue the turn, and Stop is not an independent assertion that all user work finished. Explicit finish/interruption records remain authoritative. Older Claude versions receive an unassociated coverage notice, never a report selected by time or recent task. Presentation opt-out silences both notices and cards; firmness off retains its existing disabled-hook semantics.
 
