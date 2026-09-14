@@ -1,0 +1,108 @@
+{
+  "id": "dec_2a4237b310",
+  "title": "Track field path components structurally from frame stack, not by re-deriving from flattened path string",
+  "topic": null,
+  "status": "accepted",
+  "context": "Kubernetes label keys legitimately contain dots (e.g., `app.kubernetes.io/instance`), which are indistinguishable from path nesting once folded into a dot-joined string. Trying to recover the original structure by slicing/counting dots in the joined path was unreliable, causing silent extraction failures and false-positive reference edges. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.).",
+  "decision": "Added `parentPath` and `key` fields to `FieldPathEntry`, computed structurally from the parser's frame stack at build time. Matching now uses exact `parentPath` comparison instead of deriving keys from the flattened path by string manipulation.",
+  "consequences": [
+    "Dotted label keys like `app.kubernetes.io/instance` now round-trip correctly instead of being silently dropped",
+    "Mixed selector/label pairs with differing dotted values (prod vs staging) are now correctly rejected for matching instead of collapsing to a false positive",
+    "All-dotted selectors (the `helm create` default convention) are now extracted instead of returning null",
+    "Frame stack becomes the authoritative source of path structure; the joined string is a derived display form only"
+  ],
+  "alternatives_rejected": [
+    "Trying to reverse-engineer keys by counting dots in the joined path — fundamentally unreliable when dots appear in both nesting and label keys",
+    "Using a different delimiter for path joining — same problem resurfaces with arbitrary label key content",
+    "Adding heuristic detection of 'real' vs 'label' dots — adds false-positive/negative risk without solving the underlying ambiguity"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Trying to reverse-engineer keys by counting dots in the joined path — fundamentally unreliable when dots appear in both nesting and label keys",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Using a different delimiter for path joining — same problem resurfaces with arbitrary label key content",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Adding heuristic detection of 'real' vs 'label' dots — adds false-positive/negative risk without solving the underlying ambiguity",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_a94a8fe5cc",
+    "cmp_e0ccfe26fe",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/extractors/indexer.ts",
+    "src/extractors/k8sManifest.ts",
+    "test/indexer.test.ts",
+    "test/k8sManifest.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "fbfe7e9e",
+  "valid_from": "2026-09-14T21:45:02+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:fbfe7e9e",
+      "synth:provider=claude-cli",
+      "branch:40-k8s-manifest-cross-resource-refs",
+      "src/extractors/indexer.ts",
+      "src/extractors/k8sManifest.ts",
+      "test/indexer.test.ts",
+      "test/k8sManifest.test.ts"
+    ],
+    "last_verified": "2026-09-14T19:45:22.045Z"
+  },
+  "date": "2026-09-14T21:45:02+02:00"
+}
