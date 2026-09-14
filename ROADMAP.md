@@ -53,14 +53,14 @@ release; the changelog records publication. Pilot evidence and policy authority 
 
 | Order | Deliverable | Current state |
 | --- | --- | --- |
-| 1 | Read-only operator view and exact field citations | Operator PR #214 and citations PR #215 qualified; awaiting release |
-| 2 | Per-record visibility | PR #216 qualified; visibility covers reads, retrieval, history, dependencies and conflicts |
-| 3 | Explicit user, team and organization conventions | PR #218 qualified; explicit records, human review, source currentness, bounded delivery and conflicts |
-| 4 | State CLI read, write, records and subscribe | PR #217 qualified; uses the existing client and contract |
-| 5 | Optional key-bound principal authentication | PR #219 qualified; DPoP key binding, live rotation/revocation and durable replay checks; no hardware-attestation claim |
-| 6 | Python client and state recall evaluation | Python client implemented; [fixture recall measured](docs/state-recall-evaluation.md), including the local model; production corpus and external Python adoption remain unmeasured |
+| 1 | Read-only operator view and exact field citations | Operator PR #214 and citations PR #215 merged; included in the 1.33 candidate |
+| 2 | Per-record visibility | PR #216 merged; visibility covers reads, retrieval, history, dependencies and conflicts |
+| 3 | Explicit user, team and organization conventions | PR #218 merged; explicit records, human review, source currentness, bounded delivery and conflicts |
+| 4 | State CLI read, write, records and subscribe | PR #217 merged; uses the existing client and contract |
+| 5 | Optional key-bound principal authentication | PR #219 merged; DPoP key binding, live rotation/revocation and durable replay checks; no hardware-attestation claim |
+| 6 | Python client and state recall evaluation | Python PR #220 and recall PR #221 merged; [fixture recall measured](docs/state-recall-evaluation.md), including the local model; production corpus and external Python adoption remain unmeasured |
 | 7 | Development loop preparation | One-task launcher, fixed draft-PR prompt and read-only outcome collection implemented; [usage and limits](docs/development-preparation.md). No schedule or authority promotion |
-| 8 | Release qualification and public content | Pending the completed implementations; retain explicit open acceptance gates |
+| 8 | Release qualification and public content | 1.33 candidate prepared; full release gate and publication pending. [Upgrade guide](docs/upgrade-1.33.md); explicit acceptance gates remain open |
 
 Real-user acceptance, the two-user pilot week, and human policy/promotion decisions remain open.
 Conditional load optimizations, deferred profile catalogs and excluded product directions are
@@ -111,11 +111,11 @@ copied claims:
 | Subject identity by external reference | two agents over one CRM record, thread or chat must land on one subject; 1.28.0 keyed subjects by CRM site | done, 1.30.0 — `externalKey` / `subjectOfRef` frozen in the contract; one active entity per external key per partition (`409`, incumbent named), a subject written as an entity's key refused with the entity id (`422`), reads resolve one explicit hop (`state.entity-identity`) |
 | Audited entity merge and split | the cases an external reference cannot settle; recorded as ledger events with provenance, never silent rewrites | done, 1.30.0 — `merged_into` on a retired entity, `retired` ledger event, reads resolve old id and keys to the survivor (chains, cycle-safe), new state refused under the old name; split is the explicit reverse |
 | Replay determinism as a check | fold a partition's ledger into the state it implies and compare it hash for hash (canonical bytes) to the stored records; publish the command, not the claim | done, 1.30.0 — `hunch serve replay`, typed divergences, exit 1; every farm run replays every partition (`state.replay-determinism`) |
-| Field-level provenance on derived state | a summary today cites its sources as a whole; per-field citation lets a reader see which source a sentence rests on | in development — exact scalar fields and Unicode text passages, source-bound hashes, shared read display; brought forward on 2026-09-13 |
-| Correction outranks later agent writes | prove, with a test, that a human correction on a record is not overridden by a subsequent agent write on the same field; a peer's reducer was observed to lose this | done, 1.30.0 — invariant `human-correction-outranks-agent-writes`, enforced at write time (`409 conflict`, `human-confirmed incumbent`), tested in `test/state-replay.test.ts`; per record, not per field (per-field provenance stays later) |
-| Attested principal identity | bearer keys today; key-thumbprint or hardware-attested principals for the organization partition when a second person holds a key | after Gate 5 |
-| Read-only operator view | a page over a served partition: current records, ledger, who wrote what; no editing | in development — brought forward on 2026-09-13; subject lookup, retained activity and source inspection over the existing API; no change to pilot acceptance status |
-| Typed clients beyond TypeScript | a Python client for the three verbs, generated from the contract | when a non-TypeScript orchestrator asks for it |
+| Field-level provenance on derived state | a summary today cites its sources as a whole; per-field citation lets a reader see which source a sentence rests on | implemented in the 1.33 candidate — exact scalar fields and Unicode text passages, source-bound hashes and shared read display |
+| Correction outranks later agent writes | prove, with a test, that a human correction on a record is not overridden by a subsequent agent write on the same field; a peer's reducer was observed to lose this | done, 1.30.0 — invariant `human-correction-outranks-agent-writes`, enforced at write time (`409 conflict`, `human-confirmed incumbent`), tested in `test/state-replay.test.ts`; per record, not per field; field citations in the 1.33 candidate do not change this correction boundary |
+| Key-bound principal identity | bind an optional bearer credential to a client-held signing key | implemented in the 1.33 candidate — Ed25519 DPoP, live rotation/revocation and durable replay checks; hardware attestation is not implemented |
+| Read-only operator view | a page over a served partition: current records, ledger, who wrote what; no editing | implemented in the 1.33 candidate — subject lookup, retained activity and source inspection over the existing API; pilot acceptance remains open |
+| Typed clients beyond TypeScript | a Python client generated from the contract | implemented in the 1.33 candidate — Python 3.11+, six state verbs and optional Ed25519 proof; available in the repository, not on PyPI; independent consumer acceptance remains open |
 
 Deliberately not borrowed: file ingestion and copies of external content. Hunch holds pointers and
 fingerprints to the systems of record and never fetches into the drawer (see Boundary below).
