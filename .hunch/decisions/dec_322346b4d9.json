@@ -1,0 +1,108 @@
+{
+  "id": "dec_322346b4d9",
+  "title": "Add quote-aware YAML comment stripping to prevent silent matching failures",
+  "topic": null,
+  "status": "accepted",
+  "context": "The indexer matches K8s resource names across files using a 'no match → no edge, never guess' strategy. When YAML values contain inline comments (e.g., `name: my-config  # app settings`), the comment was folded into the value text. This broke matching: the commented name never matched the same resource's uncommented reference elsewhere, producing a silent false negative (no edge) that is indistinguishable from correct conservatism—the worst failure mode. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.).",
+  "decision": "Implement `stripTrailingComment()` that removes trailing `#` comments only when they appear after whitespace at value boundaries, while preserving `#` inside quoted strings and Sprig template expressions (e.g., `{{ .x | default \"#fff\" }}`). Apply this before value classification in K8s manifest extraction.",
+  "consequences": [
+    "Values like `my-config  # note` now correctly normalize to `my-config` and match their uncommented references",
+    "The 'no match → no edge' guarantee is restored; silent matching failures are eliminated",
+    "Quote-aware stripping prevents loss of legitimate `#` characters in values",
+    "Matching becomes deterministic: the same resource seen with or without an inline comment produces identical identity"
+  ],
+  "alternatives_rejected": [
+    "Strip all `#` characters (would break quoted and templated values containing `#`)",
+    "Document the comment-matching issue as user responsibility (would leave silent failures unfixed)",
+    "Use regex-only stripping without quote state tracking (would produce false positives)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Strip all `#` characters (would break quoted and templated values containing `#`)",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Document the comment-matching issue as user responsibility (would leave silent failures unfixed)",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Use regex-only stripping without quote state tracking (would produce false positives)",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_a94a8fe5cc",
+    "cmp_e0ccfe26fe",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/extractors/indexer.ts",
+    "src/extractors/k8sManifest.ts",
+    "test/indexer.test.ts",
+    "test/k8sManifest.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "7a7d8c82",
+  "valid_from": "2026-09-14T19:25:48+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:7a7d8c82",
+      "synth:provider=claude-cli",
+      "branch:40-k8s-manifest-cross-resource-refs",
+      "src/extractors/indexer.ts",
+      "src/extractors/k8sManifest.ts",
+      "test/indexer.test.ts",
+      "test/k8sManifest.test.ts"
+    ],
+    "last_verified": "2026-09-14T17:26:17.262Z"
+  },
+  "date": "2026-09-14T19:25:48+02:00"
+}
