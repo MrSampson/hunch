@@ -207,6 +207,27 @@ observations and generated report files, never durable project lessons. Recent o
 tasks remain available until explicitly closed or their retention period expires. Symlinked/hard-linked report paths
 are refused so reports do not cross repository/worktree boundaries.
 
+## Tasks in the graph
+
+A finished task with at least one observation becomes graph memory:
+`.hunch/tasks/<task_id>.json`, a bounded summary in the same JSON format as
+decisions and findings (title, delivered lesson revisions, agent-reported
+applications and whether Hunch's own rule check supported them, saves with their
+home and proven durability, observed checks, the files it touched, and the
+content hash of the full local report). It is written through the same capture
+path as every other record, so public/private homing, the one-home-per-record
+rule, auto-commit and team routing apply unchanged. A task that saved to the
+private overlay, or that received a lesson living only there, is homed private.
+Empty tasks stay ledger-only. Titles are the only prose kept; prompt text,
+transcripts, context payloads and denial reasons never leave the local ledger.
+
+`hunch task list` and the VS Code Contribution view show graph records next to
+local observations (`in graph (public|private)`), including tasks another
+machine or teammate finished. `hunch report <id>` prints the graph record when
+the local ledger no longer has the task. Graph tasks are indexed for
+`hunch_query`, and `hunch_why <file>` lists recent tasks that touched the file.
+Set `"taskRecords": false` in `.hunch/local.json` to keep tasks ledger-only.
+
 ## Integration boundary
 
 CLI and MCP use the same local report service. CCC or another orchestrator can
