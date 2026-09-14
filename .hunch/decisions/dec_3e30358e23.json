@@ -1,0 +1,125 @@
+{
+  "id": "dec_3e30358e23",
+  "title": "Treat unparseable YAML shapes same as templates: taint entire container",
+  "topic": null,
+  "status": "accepted",
+  "context": "The scanner silently dropped lines it couldn't parse (quoted keys, merge keys) from label/selector maps. Dropping keys makes selectors MORE permissive, not less, creating false-positive edges between resources that don't actually match. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.).",
+  "decision": "Generalized the 'blockTemplated' taint mechanism to 'unresolvedContainers': any line KEY_LINE can't parse now marks its parent container as unresolved (null), not silently skipped. This treats template injection and unparseable YAML as equivalent failure modes: incomplete knowledge of a container's contents disqualifies it from matching.",
+  "consequences": [
+    "No false-positive selector/label edges from quoted keys or YAML merge keys",
+    "Windows CRLF line endings now work (combined with regex fix)",
+    "Simpler model: 'unresolved' has one meaning, not two parallel code paths",
+    "Removed redundant pendingBlockKey lookahead mechanism",
+    "ReplicaSet now wired into pod-spec and labels tables for completeness"
+  ],
+  "alternatives_rejected": [
+    "Extend KEY_LINE regex to match quoted keys — but new YAML shapes would still slip through silently",
+    "Continue silently dropping unparseable lines — already proven to create false positives",
+    "Error on any unparseable line — too strict for valid YAML the scanner doesn't handle",
+    "Keep separate mechanisms for templates vs. unrecognized lines — parallel logic hides bugs"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Extend KEY_LINE regex to match quoted keys — but new YAML shapes would still slip through silently",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Continue silently dropping unparseable lines — already proven to create false positives",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Error on any unparseable line — too strict for valid YAML the scanner doesn't handle",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Keep separate mechanisms for templates vs. unrecognized lines — parallel logic hides bugs",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_a94a8fe5cc",
+    "cmp_e0ccfe26fe",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/extractors/k8sManifest.ts",
+    "test/indexer.test.ts",
+    "test/k8sManifest.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "b5ded642",
+  "valid_from": "2026-09-14T23:05:12+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:b5ded642",
+      "synth:provider=claude-cli",
+      "branch:40-k8s-manifest-cross-resource-refs",
+      "src/extractors/k8sManifest.ts",
+      "test/indexer.test.ts",
+      "test/k8sManifest.test.ts"
+    ],
+    "last_verified": "2026-09-14T21:05:33.425Z"
+  },
+  "date": "2026-09-14T23:05:12+02:00"
+}
