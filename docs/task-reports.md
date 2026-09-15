@@ -21,7 +21,7 @@ The generated Hunch instructions ask the agent to:
 4. Before attributing an application, read `hunch_report(task_id)` and copy its
    exact `application_references`, adding the action actually taken.
 5. Finish with `hunch_task(action: "finish", task_id, applications?)` and include
-   the structured `contribution_card`, including its evidence link, in the final
+   the structured `contribution_card`, including its Evidence line, in the final
    response unless presentation is disabled.
 
 The first time a lesson revision reaches a task, the delivery carries one
