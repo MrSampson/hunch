@@ -123,7 +123,7 @@
   "supersedes": null,
   "superseded_by": null,
   "caused_by_bug": null,
-  "commit": "9d16f8d",
+  "commit": "0433b5e",
   "valid_from": "2026-09-14T16:21:09+03:00",
   "valid_to": null,
   "retired": {
@@ -134,7 +134,7 @@
     "source": "llm_draft+summary",
     "confidence": 0.5,
     "evidence": [
-      "commit:9d16f8d",
+      "commit:0433b5e",
       "synth:provider=claude-cli",
       "branch:feat/task-records",
       "CHANGELOG.md",
