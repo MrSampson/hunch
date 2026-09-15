@@ -234,6 +234,17 @@ recent task with a problem, then up to three relevant tasks with near-duplicates
 removed. Every line names its reasons ("same file", "shares con_x (3 tasks)",
 "RULE VIOLATED", "12 days ago"). The current task's own ledger is the query; no
 prompt text is read or stored.
+
+Whether that selection helps is measured, not assumed: `hunch task rank-eval`
+replays history leave-one-out (rank the older tasks with each task's own
+record as the query; did the records it evidently used land in the five
+slots?) and reports Hit@5 and MRR against "latest 3 on the file" with a paired
+bootstrap confidence interval; `hunch task stats` adds two proxies from task
+records alone, the re-verification rate (a later task re-ran an earlier task's
+check on the same file within 24 hours) and the repeat-violation rate. The
+pre-registered rule: if the ranked selection does not beat "latest 3" with a
+confidence interval that excludes zero once 200 tasks exist, delivery reverts
+to latest-only.
 `hunch task list` and the VS Code Contribution view show graph records next to
 local observations (`in graph (public|private)`), including tasks another
 machine or teammate finished. `hunch report <id>` prints the graph record when
