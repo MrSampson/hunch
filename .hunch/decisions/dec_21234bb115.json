@@ -1,0 +1,88 @@
+{
+  "id": "dec_21234bb115",
+  "title": "Mark flow collection values unresolved instead of partially parsing them",
+  "topic": null,
+  "status": "accepted",
+  "context": "A line-oriented YAML scanner reading `selector: {app: x,` followed by `tier: web` on later lines silently drops the `app` key (written on the opening line), leaving only `tier: web` — making Service-to-Deployment selector matching incorrectly permissive. The same pattern affects Helm-templated names when quoted vs. unquoted forms are classified differently before quote-stripping. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.).",
+  "decision": "When a key's value opens a flow collection (`{` or `[`, never `{{`), mark the entire container as unresolved rather than attempting to parse it piecemeal across lines. Separately, classify template expressions by their quote-stripped text, not raw value, so bare and quoted forms of the same template produce identical resolution keys.",
+  "consequences": [
+    "Fixes false-positive resource matches caused by silently-dropped selector keys",
+    "Makes partially-visible structures explicit (marked unresolved) rather than silently incomplete",
+    "Quoted and unquoted Helm template expressions now share resolution keys, fixing quote-wrapping-caused match failures",
+    "Single-line flow collections also marked unresolved (harmless: already correct, now explicit instead of incidental)"
+  ],
+  "alternatives_rejected": [
+    "Continue trying to partially parse flow collections across lines (leads to silent data loss)",
+    "Classify templates on raw value before quote-stripping (breaks quoted/unquoted matching)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Continue trying to partially parse flow collections across lines (leads to silent data loss)",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Classify templates on raw value before quote-stripping (breaks quoted/unquoted matching)",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_a94a8fe5cc",
+    "cmp_e0ccfe26fe",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/extractors/k8sManifest.ts",
+    "test/indexer.test.ts",
+    "test/k8sManifest.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "167db6fa",
+  "valid_from": "2026-09-15T10:29:49+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:167db6fa",
+      "synth:provider=claude-cli",
+      "branch:40-k8s-manifest-cross-resource-refs",
+      "src/extractors/k8sManifest.ts",
+      "test/indexer.test.ts",
+      "test/k8sManifest.test.ts"
+    ],
+    "last_verified": "2026-09-15T08:30:05.635Z"
+  },
+  "date": "2026-09-15T10:29:49+02:00"
+}
