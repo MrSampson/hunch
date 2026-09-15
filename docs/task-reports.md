@@ -233,7 +233,11 @@ this task already touched. Slots: the latest task on the exact file, the most
 recent task with a problem, then up to three relevant tasks with near-duplicates
 removed. Every line names its reasons ("same file", "shares con_x (3 tasks)",
 "RULE VIOLATED", "12 days ago"). The current task's own ledger is the query; no
-prompt text is read or stored.
+prompt text is read or stored. A task whose last check passed, with no rule
+violated, supersedes older tasks on the same file that share a record with it;
+superseded records stay in the graph but are not delivered. Recency counts
+from the later of a task's finish and its last delivery, so lines that keep
+being useful stay warm.
 
 Whether that selection helps is measured, not assumed: `hunch task rank-eval`
 replays history leave-one-out (rank the older tasks with each task's own
