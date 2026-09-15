@@ -1,0 +1,88 @@
+{
+  "id": "dec_fb0a8882f6",
+  "title": "Use text-scanning instead of tree-sitter for manifest reference extraction",
+  "topic": null,
+  "status": "accepted",
+  "context": "Hunch needed to extract Kubernetes cross-resource references (ConfigMap/Secret/PVC names, service selector matches, ownerReferences) from templated manifests. Tree-sitter-yaml was attempted first, but its error recovery collapses an entire document's remaining content into an unstructured ERROR node when encountering block-form template injections (`labels:\\n  {{- include ... }}`), which is the exact pattern real production Helm charts use early in resources — poisoning all downstream field paths. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.).",
+  "decision": "Implemented a line-oriented indentation-tracking text scanner that never interprets `{{ }}` as YAML syntax. Template expressions are preserved as literal text, so they don't trigger parser errors. Name matching accepts both literal string equality and exact raw template expression text equality (not evaluation), since real charts commonly use identical `{{ include \"chart.fullname\" . }}` calls in both resource names and their references.",
+  "consequences": [
+    "Immune to tree-sitter's error-recovery collapse on realistic templated manifests",
+    "Correctly handles nested block structure (e.g., spec.template.spec.containers[].env[].valueFrom) via indentation stack",
+    "Works with both same-line and block-form template injections",
+    "Enables template expression text matching, required because production charts repeat identical helper calls"
+  ],
+  "alternatives_rejected": [
+    "tree-sitter CST walk — fundamentally breaks on the block-form injections that appear early in real charts",
+    "flat regex scan — cannot reconstruct nested field-paths; lacks indentation context needed for block-structure scoping"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "tree-sitter CST walk — fundamentally breaks on the block-form injections that appear early in real charts",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [
+          "tree-sitter"
+        ],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "flat regex scan — cannot reconstruct nested field-paths; lacks indentation context needed for block-structure scoping",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_a94a8fe5cc",
+    "cmp_e0ccfe26fe",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/extractors/k8sManifest.ts",
+    "test/k8sManifest.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "3588088f",
+  "valid_from": "2026-09-14T16:04:10+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft+summary",
+    "confidence": 0.5,
+    "evidence": [
+      "commit:3588088f",
+      "synth:provider=claude-cli",
+      "branch:40-k8s-manifest-cross-resource-refs",
+      "src/extractors/k8sManifest.ts",
+      "test/k8sManifest.test.ts"
+    ],
+    "last_verified": "2026-09-14T14:04:27.619Z"
+  },
+  "date": "2026-09-14T16:04:10+02:00"
+}

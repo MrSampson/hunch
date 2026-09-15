@@ -1,0 +1,32 @@
+{
+  "id": "fnd_1aba356630",
+  "title": "Upstream rejected branch/path-derived capture identity for linked-worktree evidence (PR #173)",
+  "observation": "davesheffer/hunch PR #173 ('refuse a decision/correction/finding capture whose file evidence points at a linked worktree', branch worktree-misroute-guard) was closed by David Sheffer on 2026-09-14 rather than merged, with a specific rejection of its approach: deriving capture identity from branch name / file path causes a production regression — a decision's identity changes after a branch rename or merge, while unrelated clones on the same branch can still collide. The PR's filename/history heuristic also both rejects valid root captures and misses real worktree-only evidence; newline-bearing paths parse incorrectly; and the synchronous per-path git history scan can block the MCP server. Stated replacement direction (not yet landed in upstream/main as of this check): keep Hunch's existing semantic, clone-stable IDs and explicit cwd routing, carry the exact working directory through native prompt/subagent flows, and fail closed only when write provenance is genuinely ambiguous. Checked upstream/main at commit 30775928 (fetched 2026-09-14) — no decision, correction, or finding in .hunch/ records this rationale or a landed fix matching it; two superficially related commits (db21d3f4/dec_ad581587cf, c2203ab4/dec_c561c277db, both ~00:35 UTC same day) fix a different thing (comparing worktree roots by physical Git directory identity in tooling/development-run.mjs), not MCP capture-identity/cwd routing.",
+  "evidence": [
+    "gh pr view 173 --repo davesheffer/hunch: state CLOSED, close comment by davesheffer 2026-09-14T05:25:06Z quoted above",
+    "git fetch upstream main: 99402d67..30775928, then `git log --format='%h %ad %s' --date=short d859a039..upstream/main | grep -iE 'worktree|capture identity|misroute|provenance'` showed only db21d3f4/c2203ab4/46c79447/14a4cf84 (dev-tooling worktree-root comparison), none matching the MCP capture-identity rationale",
+    "grep of .hunch/decisions, .hunch/findings at upstream/main for worktree|capture.identity|clone.stable|branch rename found no matching node"
+  ],
+  "method": null,
+  "severity": "medium",
+  "triage": "open",
+  "affected_files": [
+    "src/mcp/server.ts",
+    "src/core/capturetoken.ts"
+  ],
+  "affected_symbols": [],
+  "violates_constraint": null,
+  "spawned_decision": null,
+  "observed_at": "2026-09-14T11:51:24.605Z",
+  "resolved_commit": null,
+  "provenance": {
+    "source": "human_confirmed",
+    "confidence": 0.95,
+    "evidence": [
+      "gh pr view 173 --repo davesheffer/hunch: state CLOSED, close comment by davesheffer 2026-09-14T05:25:06Z quoted above",
+      "git fetch upstream main: 99402d67..30775928, then `git log --format='%h %ad %s' --date=short d859a039..upstream/main | grep -iE 'worktree|capture identity|misroute|provenance'` showed only db21d3f4/c2203ab4/46c79447/14a4cf84 (dev-tooling worktree-root comparison), none matching the MCP capture-identity rationale",
+      "grep of .hunch/decisions, .hunch/findings at upstream/main for worktree|capture.identity|clone.stable|branch rename found no matching node"
+    ],
+    "last_verified": "2026-09-14T11:51:24.605Z"
+  }
+}

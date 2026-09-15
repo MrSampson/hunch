@@ -1,0 +1,88 @@
+{
+  "id": "dec_76f1984ebb",
+  "title": "Mark all open containers unresolved for template actions instead of popping by column",
+  "topic": null,
+  "status": "accepted",
+  "context": "Template action lines (`{{ }}`) have no structural indentation meaning—`{{-` chomps leading space, and `| indent N` requires column 0 while injecting at depth N. The scanner was incorrectly using the action's column to pop the frame stack like a normal YAML line, causing column-0 actions to destroy every open frame and reparent all subsequent lines to root, losing all field-path tracking. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.).",
+  "decision": "Introduced `markAllOpenContainersUnresolved()`: template actions now conservatively taint every currently-open container (root through innermost) instead of attempting to determine which ancestor the injection targets. Bare template lines no longer touch the real frame stack at all.",
+  "consequences": [
+    "Fixes stack annihilation bug where column-0 conditionals inside selectors left incomplete maps reading as fully literal, permissive ones",
+    "Fixes silent ConfigMap/Secret reference loss after template conditionals",
+    "Trades false negatives (over-marking containers as unresolved) for correctness—no more invisible destruction of field-paths",
+    "Conservative approach is justified: there is no way to know statically which ancestor a template injection targets"
+  ],
+  "alternatives_rejected": [
+    "Continue inferring target container from action column position (source of original bugs)",
+    "Attempt to parse Helm syntax to determine intended injection depth (too fragile, not maintainable)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Continue inferring target container from action column position (source of original bugs)",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Attempt to parse Helm syntax to determine intended injection depth (too fragile, not maintainable)",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_a94a8fe5cc",
+    "cmp_e0ccfe26fe",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/extractors/k8sManifest.ts",
+    "test/indexer.test.ts",
+    "test/k8sManifest.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "73493004",
+  "valid_from": "2026-09-15T00:14:55+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:73493004",
+      "synth:provider=claude-cli",
+      "branch:40-k8s-manifest-cross-resource-refs",
+      "src/extractors/k8sManifest.ts",
+      "test/indexer.test.ts",
+      "test/k8sManifest.test.ts"
+    ],
+    "last_verified": "2026-09-14T22:15:14.982Z"
+  },
+  "date": "2026-09-15T00:14:55+02:00"
+}
