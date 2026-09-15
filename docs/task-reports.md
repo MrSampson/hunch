@@ -246,9 +246,14 @@ slots?) and reports Hit@5 and MRR against "latest 3 on the file" with a paired
 bootstrap confidence interval; `hunch task stats` adds two proxies from task
 records alone, the re-verification rate (a later task re-ran an earlier task's
 check on the same file within 24 hours) and the repeat-violation rate. The
-pre-registered rule: if the ranked selection does not beat "latest 3" with a
-confidence interval that excludes zero once 200 tasks exist, delivery reverts
-to latest-only.
+pre-registered rule applies itself: the evaluation is recomputed whenever a
+task record is written (cached under `.hunch-cache/task-rank-eval.json`),
+delivery reads it, and once 200 task records exist a ranked selection that has
+lost to "latest 3" with a confidence interval excluding zero switches delivery
+to latest-only; the header says so, `hunch now` and `hunch task stats` print the
+current line, and a verdict change is recorded as a finding. Nobody has to run
+anything. `"taskRanking": "ranked" | "latest"` in `.hunch/local.json` pins the
+mode for a repository that wants to.
 `hunch task list` and the VS Code Contribution view show graph records next to
 local observations (`in graph (public|private)`), including tasks another
 machine or teammate finished. `hunch report <id>` prints the graph record when
