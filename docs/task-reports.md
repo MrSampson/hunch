@@ -221,6 +221,10 @@ private overlay, or that received a lesson living only there, is homed private.
 Empty tasks stay ledger-only. Titles are the only prose kept; prompt text,
 transcripts, context payloads and denial reasons never leave the local ledger.
 
+The three most recent graph tasks that touched a file are delivered as a
+"RECENT TASKS" supplement by `hunch_context`, the pre-edit hook and
+`hunch context` (advisory history sharing the brief's budget; withheld on
+time-travel), so the next agent builds on verified work instead of redoing it.
 `hunch task list` and the VS Code Contribution view show graph records next to
 local observations (`in graph (public|private)`), including tasks another
 machine or teammate finished. `hunch report <id>` prints the graph record when
