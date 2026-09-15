@@ -107,7 +107,7 @@
   "supersedes": null,
   "superseded_by": null,
   "caused_by_bug": null,
-  "commit": "7a13375",
+  "commit": "7fbfb9e",
   "valid_from": "2026-09-15T08:59:30+03:00",
   "valid_to": null,
   "retired": {
@@ -118,7 +118,7 @@
     "source": "llm_draft+summary",
     "confidence": 0.5,
     "evidence": [
-      "commit:7a13375",
+      "commit:7fbfb9e",
       "synth:provider=claude-cli",
       "branch:main",
       "CHANGELOG.md",
