@@ -1,0 +1,125 @@
+{
+  "id": "dec_49c7f7f974",
+  "title": "Taint parent containers on unresolvable selector values, never drop silently",
+  "topic": null,
+  "status": "accepted",
+  "context": "The scanner was silently dropping entries when it couldn't interpret them (block-scalar headers, nested maps, etc.), which made selector/labels maps more permissive than intended — a partial map matches more workloads than the user specified, creating false-positive references and universal-match risks. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.).",
+  "decision": "When a value in a selector/labels map is malformed or unresolvable, taint the entire parent container (return null) instead of silently omitting the entry. Apply this rule to: block-scalar headers (taint parent, skip the line), nested maps (detect descendants and taint), __proto__ keys (safe construction via Object.fromEntries), and bare list markers (explicit frame handling to preserve context).",
+  "consequences": [
+    "Resources with block-scalar names/references are now correctly unidentifiable instead of falsely colliding on the header token (e.g., '|-')",
+    "Invalid k8s structures (nested maps in selectors) are detected and rejected, not silently dropped",
+    "__proto__ keys are stored as real own properties, never swallowed into the prototype",
+    "References nested under bare list markers are now extracted instead of reparented/dropped",
+    "The scanner fails safely (returns null) rather than returning permissive partial matches that over-select workloads"
+  ],
+  "alternatives_rejected": [
+    "Returning partial maps with unresolved entries dropped — too permissive, causes false-positive matches",
+    "Skipping __proto__ guard as 'unreachable via valid k8s' — blast radius (matches every workload) warranted the one-line hardening",
+    "Using Object.create(null) for __proto__ safety — broke existing test suite's plain-object equality checks",
+    "Treating bare list markers as unrecognized lines — lost the sequence frame, reparenting children one level up"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Returning partial maps with unresolved entries dropped — too permissive, causes false-positive matches",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Skipping __proto__ guard as 'unreachable via valid k8s' — blast radius (matches every workload) warranted the one-line hardening",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Using Object.create(null) for __proto__ safety — broke existing test suite's plain-object equality checks",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Treating bare list markers as unrecognized lines — lost the sequence frame, reparenting children one level up",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_a94a8fe5cc",
+    "cmp_e0ccfe26fe",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/extractors/k8sManifest.ts",
+    "test/indexer.test.ts",
+    "test/k8sManifest.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "5978c38a",
+  "valid_from": "2026-09-15T13:01:21+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:5978c38a",
+      "synth:provider=claude-cli",
+      "branch:40-k8s-manifest-cross-resource-refs",
+      "src/extractors/k8sManifest.ts",
+      "test/indexer.test.ts",
+      "test/k8sManifest.test.ts"
+    ],
+    "last_verified": "2026-09-15T11:01:46.201Z"
+  },
+  "date": "2026-09-15T13:01:21+02:00"
+}
