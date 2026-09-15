@@ -50,7 +50,7 @@
   "supersedes": null,
   "superseded_by": null,
   "caused_by_bug": null,
-  "commit": "d44e847",
+  "commit": "d5ade4f",
   "valid_from": "2026-09-15T08:20:37+03:00",
   "valid_to": null,
   "retired": {
@@ -61,7 +61,7 @@
     "source": "llm_draft",
     "confidence": 0.4,
     "evidence": [
-      "commit:d44e847",
+      "commit:d5ade4f",
       "synth:provider=claude-cli",
       "branch:main",
       "CHANGELOG.md"
