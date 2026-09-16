@@ -1,5 +1,170 @@
 # Changelog
 
+## 1.38.0 — 2026-09-15
+
+- A verification whose runner died no longer freezes its task: a check-start with no result stops blocking completion after its own timeout plus a minute of grace; no result is invented and the report still discloses that none was retained.
+- One task record per episode: a prompt that follows another of the same session within 30 minutes continues its task, and the chain's graph record is written under the first task's id and refreshed as prompts finish. Follow-up prompts ("status", "next", "go") no longer leave empty rows; `hunch task list` shows what each prompt continues.
+- The lifecycle Stop hook closes the prompt's task as a host close and keeps its graph record, so a task with observations becomes memory even when the agent never called finish. A continuation reopens the task and the next Stop refreshes the record; an explicit agent finish overrides the host close. Pending verification keeps the task open.
+- Task records anchor to the files git saw change while the task was open (the user's commits in the window and fresh working-tree edits), so work done from a shell, a rebase or a release commit relates the task to later work on the same files.
+
+## 1.37.1 — 2026-09-15
+
+- The task-ranking kill rule applies itself: the leave-one-out evaluation is recomputed whenever a task record is written, delivery picks `ranked` or `latest` from it, `hunch now` and `hunch task stats` print the current verdict, and a verdict change is recorded as a finding. No command to run, nothing to configure; `taskRanking` in `.hunch/local.json` pins it if wanted.
+- Fix the `verification_argv` launcher returned by `hunch_task start` from a source checkout on Windows: `--import` now receives a file URL, so `hunch task verify` actually runs and cards show the check.
+
+## 1.37.0 — 2026-09-15
+
+- Task records carry `supersedes`: a verified later task on the same file hides the older ones it re-checked; delivered task lines are receipts, so recency follows last delivery rather than finish time alone.
+- Measure the RECENT TASKS selection: `hunch task rank-eval` replays task history leave-one-out and reports Hit@5/MRR against "latest 3 on the file" with a paired bootstrap interval; `hunch task stats` adds re-verification and repeat-violation rates computed from task records.
+- Choose the RECENT TASKS lines by relevance, not recency alone: candidates are gated by structure (same file, dependent, co-change, shared rule), scored by file relation, IDF-weighted shared records, outcome, phrase match, recency and the current task's working set, then slotted as latest / problem / relevant with near-duplicates removed; each line states its reasons.
+- Quieter commit output: Constitution policies that could not be evaluated for one shared reason render as one line at commit time (ids and receipts stay one `hunch policy evaluate` away), satisfied policies collapse to one line, and the repository's memory-hygiene constraint is scoped to the memory tree instead of every file, so it no longer prints on every commit.
+
+## 1.36.0 — 2026-09-15
+
+- Stop writing an HTML evidence file on every finished prompt. The graph record is the durable memory; the local evidence view is rendered on demand by `hunch report <id> --html`, `hunch_report(html: true)` or a click in the VS Code Contribution view. The card's Evidence line names that command.
+- Deliver the three most recent graph tasks that touched a file as a RECENT TASKS supplement in `hunch_context`, the pre-edit hook and `hunch context`, so an agent sees what earlier work did and verified there before touching it.
+- Run `hunch task verify` commands on Windows: `npm`/`npx` start as Node scripts and other `.cmd`/`.bat` launchers go through `cmd.exe`, so a check records a real exit code instead of a silent null; a command that cannot start now says so in the streamed output.
+
+## 1.35.0 — 2026-09-14
+
+- Keep finished tasks as graph memory. A task that delivered, saved, checked, applied or denied anything is written to `.hunch/tasks/<id>.json` through the same capture path as decisions and findings (public/private homing, one home per record, auto-commit, team routing). Empty tasks stay in the local ledger. Task records are searchable, `hunch_why` lists recent tasks that touched a file, and `hunch task list` and the VS Code Contribution view show graph tasks next to local observations, including tasks finished on another machine. Set `"taskRecords": false` in `.hunch/local.json` to opt out.
+- Fix task scoping on Windows: the prompt hook and the MCP server could hash the same checkout under different drive-letter casing, so `hunch_task` reported "task not found" and the Contribution view saw half the ledger. Scopes now use the on-disk path; rows written by earlier releases stay readable.
+- Opt in with `"taskTitles": "prompt"` in `.hunch/local.json` to title native tasks from the prompt's first line (72 characters; credential-looking prompts stay generic), so `hunch task list`, the Contribution view and graph records say what the task was. The default still retains no prompt text. A hook-opened task keeps its title when the model paraphrases it on `hunch_task start`.
+- Retain the target of each context delivery in the task report, and record path-like targets as files the task touched, so `hunch_why <file>` also lists read-only tasks.
+- Add `"taskRecordsFlush": "batch"` to `.hunch/local.json` for repositories that prefer one memory commit per real capture over one per prompt.
+
+## 1.34.0 — 2026-09-14
+
+- Show a quiet notice when a newer Hunch release is published. The check runs in a detached worker at most once per 24 hours, never delays a command, and is skipped for hooks, MCP, CI, servers, source checkouts and the documented opt-outs.
+- Describe a fresh clone with committed hooks but no machine-local MCP setup as untested rather than broken in the aggregate health check.
+- Route native task, context, report and capture calls to the exact worktree the prompt hook observed. A prompt in a linked worktree no longer lands a correctly followed capture on the primary checkout's branch; a foreign or malformed native `cwd` fails closed.
+- Give native Claude and Codex task reports a host-neutral title while preserving reports opened by older releases.
+- Return the product documentation (state contract, clients, upgrade guide, task reports, Project DNA, change proof) to this repository under `docs/`. Planning, pilot and competitive documents stay in the private overlay.
+
+This release was tagged but superseded before npm publication; every change above ships in 1.35.0.
+
+## 1.33.0 — 2026-09-14
+
+- Inspect shared state in the read-only `/operator` browser view: current records, commitments, completed work, activity and exact writer-supplied field citations.
+- Restrict individual records to explicit readers and writers, with owner-controlled audience changes and grants-first dependency and history checks. Protected partitions refuse older state readers; upgrade every server before enabling visibility.
+- Record sourced user, team and organization conventions. Explicit review, source currentness and conflict checks keep advisory preferences separate from policy authority.
+- Read, write, resolve records and subscribe through `hunch state`. Optional DPoP key-bound identities support live rotation, revocation and durable replay checks; all serving processes must be upgraded before enabling them.
+- Build the typed Python client from this repository, with optional request signing, generated contracts and real-server wheel tests. It is not yet published to PyPI.
+- Add a frozen state-recall evaluation and a pinned local-model measurement. Synthetic fixture results are separate from production accuracy and two-user pilot acceptance.
+- Prepare one-task development runs with bounded execution and read-only PR evidence. No schedule or authority promotion is installed. Policy recovery guidance now distinguishes cache repair from human-approved replacement.
+- Refuse reserved `__proto__` object keys in state hashing instead of silently omitting them; valid canonical encodings and string content remain unchanged.
+
+See [the upgrade guide](docs/upgrade-1.33.md) for mixed-version deployments, client setup and the acceptance gates that remain open.
+
+## 1.32.8 — 2026-09-13
+
+- Updates repair legacy npm launchers and malformed `hunch mcp hook` commands while preserving unrelated settings, comments, and intentionally disabled hooks. Repeated repairs leave aligned configuration unchanged.
+- Codex update instructions now explain renewed command trust through `/hooks` and starting a new session. Integration health distinguishes configuration checks from verified runtime delivery.
+- npm, repository, documentation, and website copy now explain the shared-record product in plain language, distinguish the shipped engineering memory and self-hosted state server from the pilot vision, and keep the five homepage languages aligned.
+
+## 1.32.7 — 2026-09-13
+
+- Codex native command hooks cover Bash and PowerShell, while integration health accepts failure capture only from explicit failed-tool evidence. Commit handoff waits through the owner marker's transient release window. MCP finding captures remain advisory `agent_recorded` testimony unless an authenticated human capture path exists.
+
+## 1.32.6 — 2026-09-13
+
+- Codex native command hooks now observe `Bash` and `PowerShell`. Integration health accepts failure capture only from an explicit failed-tool result, so success-only `PostToolUse` delivery stays unverified.
+
+This release was superseded before npm publication; its hook fixes are included in 1.32.7.
+
+## VS Code 0.18.2 — 2026-09-13
+
+- Include and require the Windows launcher's third-party license notice in both
+  VSIX publication checks. Version 0.18.1 stopped before publication because the
+  packaging allowlist rejected this required attribution file. ZIP-level
+  regressions now exercise both gates, including missing attribution and private
+  file rejection.
+
+## 1.32.5 — 2026-09-13
+
+- Concurrent memory updates now lock the actual shared store, refuse a busy
+  index instead of writing without its lock, and preserve complete atomic writes
+  and existing file permissions. Store artifacts reject unsafe links, special
+  files, and oversized input before reading them.
+- Integration updates preserve malformed user configuration instead of replacing
+  it. JSONC parsing handles token boundaries and line endings correctly; TOML
+  validation covers the whole existing file. Hook patch detection and managed
+  launcher matching no longer mistake unrelated user commands for Hunch.
+- VS Code extension 0.18.1 keeps views and actions attached to their originating
+  workspace, discards stale responses after a workspace switch, and refreshes
+  watchers as folders change. Windows CLI, streaming, and MCP launchers preserve
+  literal arguments through command shims.
+- Guard messages distinguish a scope requiring review from a demonstrated
+  invariant violation. Missing behavior-policy dependencies now name the correct
+  recovery command; restoring their reviewed evidence remains a separate step.
+
+## 1.32.4 — 2026-09-13
+
+- Tool calls no longer die silently around a release. `npm version` keeps
+  machine-local (git-ignored) hook and MCP pins on the last release npm can serve
+  until the new one publishes — a pin ahead of publication made every `npx`
+  launcher fail with ETARGET, so hooks injected nothing and the MCP server never
+  connected, which looked like the agent forgetting to call Hunch. `hunch doctor`
+  now names such a pin explicitly (`pin … npm cannot serve`) instead of reporting
+  it clean, and a pre-edit or session hook that fails inside Hunch emits one
+  "grounding unavailable" context line rather than nothing (still exit 0, never a
+  deny).
+- The MCP server sends `instructions` at initialize: the per-task contract
+  (`hunch_task` start, `hunch_context` first, `hunch_check_constraints` before
+  shared edits, `hunch_task` finish) reaches every client, including hosts with
+  no lifecycle hooks. AGENTS.md/CLAUDE.md now say which hosts get a prompt-hook
+  task ID (Claude Code) and which must start the task themselves (Codex, Windsurf).
+- The managed Codex block sets `startup_timeout_sec = 60`: a cold `npx` install
+  exceeded Codex's 10 s default and dropped Hunch from the tool catalog.
+- The contribution card has a home outside the Stop hook. `hunch task list [--json]`
+  summarizes recent tasks (lessons, applied, saved, denied, last check) from the
+  observation ledger; `hunch task status` renders one line for a terminal status
+  line, naming the exact prompt task when Claude Code's status-line JSON arrives
+  on stdin (`{"statusLine":{"type":"command","command":"hunch task status 2>/dev/null"}}`)
+  and staying silent for a prompt with nothing observed. The VS Code extension
+  (0.18.0) adds a **Contribution** view fed by `task list --json`, with the
+  evidence view opened in a webview. Claude Code's Stop notice now prints the
+  card only when a delivery, check, save, claim, or denial was observed; empty
+  task rows stay in the ledger so "never touched Hunch" remains countable.
+- Codex CLI has a native lifecycle adapter. `hunch init` writes `.codex/hooks.json`
+  (Codex 0.153+ hooks share Claude Code's event names, stdin payload, and stdout
+  contract): session orientation, a per-prompt task report from `turn_id`,
+  `apply_patch` pre-edit grounding with strict denial, PostToolUse observation,
+  compaction reset, and the Stop card. `hunch hook --provider codex` normalizes
+  `apply_patch` patches to their first touched file and shell argv arrays to one
+  command. Codex loads project-layer hooks only for a trusted project and asks
+  once to trust them (`/hooks`); `hunch integrations check --harness codex` now
+  reports the capabilities as configured (untested until a Codex-delivered event
+  is observed) instead of unsupported.
+- `hunch task stats [--days N] [--json]` reports adherence over a window from the
+  ledger: tasks reached by memory, checked, claimed, saved, denied, or untouched.
+- The MCP server exposes the everyday tool set by default. The seven `nuryel_*`
+  state-partition tools and the nine Constitution G2/G3 experiment tools are
+  registered only when the root stores nuryel state records or is served pinned
+  (`hunch mcp --root`), when
+  `.hunch/config.json` sets `mcp_tools` (`all`, `core`, or `core,nuryel`), or when
+  `HUNCH_MCP_TOOLS` says so; the startup log names what is hidden. Fifty-seven
+  tools with ~24 KB of descriptions were diluting tool choice on every host.
+
+## 1.32.3 — 2026-09-12
+
+- A subject holds one current derived statement per transform: a new current
+  statement beside one of the same transform must name it in `supersedes`, or the
+  write is refused `409 conflict` with the incumbent named
+  (`one-current-derived-per-subject-transform`). The same identity written again
+  updates or replays; a different transform is a different statement; observations
+  are untouched; the human-correction guard still decides who may supersede a human's
+  record. Found by the half-year agent farm: a writer that never named its
+  predecessor had left 58 current summaries on one subject.
+- A memory flush can no longer freeze a served write: every git call inside the
+  flush is bounded (`HUNCH_COMMIT_GIT_TIMEOUT_MS`, default 60 s; a stopped call
+  reports durability `local` and the next flush sweeps the same files up), commits
+  run with `gc.auto=0`, and any call slower than 5 s is logged. One served write per
+  long season had stalled the server for 8–15 minutes.
+- `tooling/agent-farm/season.mjs`: the season — ten agent styles, a conductor, monthly
+  compaction and restart, weekly audits, a replay of every partition; a 21-day
+  season is asserted in CI.
+
 ## 1.32.2 — 2026-09-12
 
 - The first time a lesson revision reaches a task, the delivery carries one line,

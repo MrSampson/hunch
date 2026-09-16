@@ -1,14 +1,42 @@
 # Deterministic organizational state
 
-Status: **architecture in force; the contract and the served state layer are shipped (1.25.0–1.30.0); the Sofia pilot is at Gate 5** — gate status lives in the [roadmap](../ROADMAP.md), updated 2026-09-12.
+Status: **engineering memory and the served state layer ship today, including the read-only shared state view in Hunch 1.33.0; wider organizational impact remains a pilot.** Reviewed 2026-09-14. The [roadmap](../ROADMAP.md) separates shipped capabilities from the remaining Sofia pilot gates.
 
-Hunch is evolving from repository-only engineering memory into a deterministic state layer for organizations that use many probabilistic agents.
+**A shared record for AI agents: what was decided, what happened, and what still needs doing.** Hunch keeps decisions, rules, action records and commitments with their sources, so another agent can check existing work before starting again.
+
+Engineering memory explains the reasons behind code. The served state layer extends the same approach to repository, user, team and organization records. Both are available today. The broader vision is for agents working across different tools to rely on the same current record.
 
 The thesis is simple:
 
 > **Agents are probabilistic. Organizations need deterministic state. Hunch is the state layer between them.**
 
-The current Hunch engine remains git-native and repository-local by default. The next product step is to extend that same evidence, provenance, currentness and deterministic-gate model across organization, team and user scopes without creating a second source of truth.
+Hunch calls this **deterministic state**: defined rules check record identity, conflicting current decisions, access, repeated writes and whether supporting evidence has changed. These checks do not establish that every statement an agent submits is true. Records retain their source and verification status.
+
+The engine is local-first and keeps its durable records in Git-backed files. You can use repository memory directly or run `hunch serve` for authorized partitions. Hunch does not operate a managed connector service; agents still use their own CRM, email, chat and code tools.
+
+## Start with the scope you need
+
+For a coding project, run `hunch init` in its Git repository and connect your assistant. To try a separate state partition locally:
+
+```sh
+hunch serve init --config ./hunch-serve.json --partition user:demo --root ./demo-state --principal assistant@demo
+hunch serve --config ./hunch-serve.json
+```
+
+Initialization prints the agent token once; keep it private. The server binds to `127.0.0.1`. Use a Git repository for the partition when you need committed history; write results distinguish local, committed and pushed records. The [state contract](nuryel-state-contract.md#served-partitions-hunch-serve) explains authenticated HTTP access, MCP and the typed client. The CLI manages the service; [hunch state](state-cli.md) reads and writes through the same HTTP contract.
+
+### Shared state view
+
+Shipped in Hunch 1.33.0 as a read-only browser client. It displays stored state and retained
+activity; it does not independently verify claims or provide a complete historical inventory.
+
+With the server running, open `http://127.0.0.1:7474/operator` (use your configured port). Connect with a server-issued token and choose an authorized workspace. The page keeps the token in this tab’s memory; reloading or disconnecting clears it.
+
+Enter an exact subject, such as `customer:c1`, or a decision topic. **Show state** displays current records, open commitments and rules, completed work, and a separate section for observations whose currentness is unverified. **Sources & record details** shows the author or source, evidence, dependencies and stored record. **Inspect record ID** also opens failed, cancelled or stale records that a current-subject view leaves out.
+
+Recent activity shows up to 50 retained changes and lets you open their subjects or inspect their latest stored records. It is not a full inventory or an archive of every revision: earlier history may have been compacted. Observation pages are bound to a snapshot; if records change between pages, restart the subject lookup. **Refresh** retrieves newer state; this page does not continuously poll.
+
+The view is read-only and uses the existing authenticated state API. The token retains its server permissions. Source references are displayed without fetching external systems, and a record’s status is not an independent check of its claims. No hosted account or separate database is needed.
 
 Naming is deliberately not the current deliverable. `Hunch` remains the product name until the state contract and Sofia pilot are validated. A possible hosted-platform name, **Nuryel**, is deferred (roadmap Gate 6); the contract name `nuryel.state/1` and the `nuryel_*` MCP tools already ship under it.
 
@@ -48,12 +76,12 @@ The `nuryel.state/1` contract is frozen as code since 1.25.0 (`src/core/stateCon
 Initial facets:
 
 - `decided` — a decision currently in force, with supersession and provenance;
-- `done` — an action or outcome that actually happened;
+- `done` — an action record, including its outcome and verification status;
 - `committed` — a commitment with owner, due state and lifecycle;
 - `changed` — a proven state/code change and its evidence;
 - `entity` — a durable non-code or code entity identity;
 - `relationship` — a durable relationship between entities;
-- `DNA` — repository, user, team or organization working conventions;
+- `DNA` — working conventions; repository Project DNA ships, while broader personal and organizational profiles remain part of the direction;
 - `current-with-dependencies` — derived state plus the exact evidence/version dependencies that keep it current.
 
 The verbs are:
@@ -63,7 +91,7 @@ The verbs are:
 3. **subscribe** — observe changes to state the principal is authorized to hold;
 4. **records** — a subject's records, grants-first (added 1.27.0).
 
-HTTP, MCP, CLI and typed clients are bindings of the same schema, not different integration models.
+HTTP, MCP and the typed client use the same state rules. CLI commands initialize, serve and inspect partitions; they are not a separate implementation of the read/write contract.
 
 ## Boundary: state, not gateway
 
@@ -204,4 +232,4 @@ The key question is mechanism, not marketing metrics:
 
 After Sofia and a second different agent use the same contract, if the incident -> decision -> change -> closure chain is still materially re-derived or contradicted despite the state being available and delivered, the broad system-of-record thesis is wrong or incomplete. The work should then narrow toward the enforcement/delivery edge instead of expanding the platform.
 
-If the chain is reproduced from held state without contradictory re-derivation, the pilot validates the next step: organization/team/user partitions, hosted state service, review/access controls and broader agent integration.
+The partition service already ships. The remaining pilot work tests whether it helps multiple people and different agents share real work over time. A successful pilot would support broader deployment and finer access controls; a small live trial or an emulated organization does not establish that wider outcome.

@@ -26,11 +26,13 @@ import { looksLikeCorrection, CORRECTION_NUDGE } from "../core/correction.js";
 import { HUNCH_VERSION } from "../core/version.js";
 import { registerIntegrationCommands } from "./integrations.js";
 import { registerTaskReportCommands } from "./taskReport.js";
+import { registerStateCommands } from "./state.js";
 import { registerServeCommands } from "./serve.js";
 import { registerUpdateCommand } from "./update.js";
 import { registerReviewMemoryCommands } from "./reviewMemory.js";
 import { detectInitiator, normalizeInitiator } from "../synthesis/initiator.js";
 import { inspectIntegrations, formatIntegrationHealth, integrationHealthFails, integrationSessionWarning } from "../integrations/health.js";
+import { publishedStatus, type PublishedStatus } from "../integrations/registry.js";
 import { HunchStore } from "../store/hunchStore.js";
 import { JsonStore } from "../store/jsonStore.js";
 import { selectEmbedder } from "../store/embedder.js";
@@ -38,12 +40,12 @@ import { assertCompleteRepoScan, indexRepo, scanRepo } from "../extractors/index
 import { syncCommit, recordFailure, captureTestRun } from "../synthesis/synthesize.js";
 import { parseTestReport } from "../extractors/testreport.js";
 import {
-  normalizeProviderName,
   readSynthesisPreference,
   resolveSynthesisProvider,
   selectProvider,
   SYNTH_PREFERENCES,
   writeSynthesisPreference,
+  normalizeProviderName,
   type SynthPreference,
 } from "../synthesis/provider.js";
 import { isGitRepo, isGitRepoRoot, sameGitPublication, sameRemoteUrl, canonicalRemoteUrl, repositoryUsesRemote, headSha, isolatedHeadSha, logSince, lastChangeDate, firstCommitForFile, stagedFiles, workingFiles, commitFiles, asOfDate, stagedDiff, workingDiff, commitDiff, rangeFiles, rangeDiff, rangeSubjects, revExists, revParse, commitAndPushHunch, pullHunchStatus, syncExistingHunch, gitUntrackCached, gitCommonDir, hooksDir, isLinkedWorktree, mainWorktreeRoot, gitMemoryLog, memoryMoveDiff, revertMemoryMove, pushCurrentBranch, commitChanges, commitRepairStatus, mergeRangeChanges, commitsExist, type HunchPullStatus } from "../extractors/git.js";
@@ -73,6 +75,9 @@ import { scaffoldProviders, regenerateGrounding, refreshExistingGrounding, refre
 import { healClaudeConfigCaseSplit } from "../integrations/claudeConfig.js";
 import { formatContext, formatSearchHit, formatStructure } from "../core/format.js";
 import { isStateKind, renderStateLine, stateSupplements, type StateRecord } from "../core/stateDelivery.js";
+import { taskSelectionSupplements } from "../core/taskDelivery.js";
+import { buildTaskRankingQuery } from "../core/taskQuery.js";
+import { rankingStatusLine, resolveTaskRankingMode } from "../core/taskRankingMode.js";
 import { diagnoseIssueCorrectionStage, formatCorrectionStageDiagnostic } from "../core/correctionStage.js";
 import { compileVerifiedEvidenceMap, formatVerifiedEvidenceMap } from "../core/evidenceMap.js";
 import { collectCorrectionStageSources } from "../extractors/correctionSources.js";
@@ -92,9 +97,10 @@ import { recordServed, servedSummary } from "../core/served.js";
 import { recordTaskDelivery, reportActivity, reportPresentationEnabled, unseenLessons } from "../core/taskReport.js";
 import { snapshotDeliveredRecords } from "../core/taskReportEvidence.js";
 import { renderRecalledLine } from "../core/taskReportRender.js";
-import { hookReportTaskId, startHookReport, stopHookReport, observeHookDenial } from "../core/taskReportHook.js";
+import { closeHookTask, hookReportTaskId, nativeHookCwd, startHookReport, stopHookReport, observeHookDenial } from "../core/taskReportHook.js";
+import { persistTaskRecord } from "../core/taskRecord.js";
 import { recordHookObservation } from "../core/hookObservations.js";
-import { contextHookOutput, denyHookOutput, hookProvider, normalizeHookEvent, stopHookOutput, type HookProvider } from "../core/agenthook.js";
+import { contextHookOutput, denyHookOutput, hookProvider, normalizeHookEvent, stopHookOutput, type HookProvider, type HunchHookEvent } from "../core/agenthook.js";
 import {
   PIPELINE_LOOP,
   armExecutionObligations,
@@ -164,7 +170,7 @@ import { ENTITY_KINDS } from "../core/types.js";
 import { planCompaction } from "../store/compact.js";
 import { repairDecisionReference } from "../core/refrepair.js";
 import { resolveInvocation, dim, synthesisStatusLines, maybeWarnOllamaContext } from "./invocation.js";
-import { checkForUpdate, formatUpdateNotice, shouldCheckForUpdate } from "../core/updatecheck.js";
+import { formatUpdateNotice, scheduleUpdateCheck, shouldCheckForUpdate } from "../core/updatecheck.js";
 
 const program = new Command();
 program.name("hunch").description("Hunch — engineering memory and a deterministic Change Gate for AI-assisted codebases.").version(HUNCH_VERSION);
@@ -191,6 +197,7 @@ registerIntegrationCommands(program, () => {
 });
 registerTaskReportCommands(program, () => { const { store, root } = storeFor(); return { store, root }; });
 registerServeCommands(program);
+registerStateCommands(program);
 registerUpdateCommand(program);
 registerReviewMemoryCommands(program, (records, repository, privateOnly) => {
   const { store, root } = storeFor();
@@ -222,26 +229,21 @@ registerReviewMemoryCommands(program, (records, repository, privateOnly) => {
     ? store.recs("constraints") : store.json.loadAll("constraints") };
 });
 
-// Fire-and-forget: never awaited, so a slow/unreachable registry never delays
-// the command's own work. See shouldCheckForUpdate for the full gate
-// (PLUMBING_COMMANDS, non-TTY, not-installed, CI/HUNCH_NO_UPDATE_CHECK).
+// Read an already-known update and schedule any registry refresh in a detached
+// worker. No network handle is opened in this command's process, so the
+// advisory cannot delay command completion or process exit.
 program.hook("preAction", (_thisCommand, actionCommand) => {
-  // Matches updatecheck.ts's own never-block posture (con_03a0b94b2e): the
-  // synchronous gate-evaluation half is provably total today, but a hook that
-  // could abort every command belongs behind the same guarantee the module
-  // itself claims, not an implicit "nothing here happens to throw."
   try {
+    const path = [actionCommand.name()];
+    for (let parent = actionCommand.parent; parent && parent !== program; parent = parent.parent) path.unshift(parent.name());
     const gate = {
-      commandName: actionCommand.name(),
+      commandName: path.join(" "),
       isTTY: process.stderr.isTTY === true,
       installed: resolveInvocation().installed,
     };
     if (!shouldCheckForUpdate(gate)) return;
-    void checkForUpdate()
-      .then((result) => {
-        if (result) console.error(dim(formatUpdateNotice(result)));
-      })
-      .catch(() => {});
+    const result = scheduleUpdateCheck();
+    if (result) console.error(dim(formatUpdateNotice(result)));
   } catch {
     // Never let the update-check advisory abort the command it's piggybacking on.
   }
@@ -3715,7 +3717,7 @@ program
         }
       } else {
         console.log("");
-        renderPolicyEvaluations(policyResults).forEach((line) => console.log(line));
+        renderPolicyEvaluations(policyResults, { compact: true }).forEach((line) => console.log(line));
       }
     }
 
@@ -4027,14 +4029,14 @@ program
       decisionCorpus: store.recs("decisions"),
       historical: !!asOf,
       profile: opts.profile as DeliveryProfile,
-      supplements: stateGrounding,
+      supplements: [...stateGrounding, ...(asOf ? [] : taskSelectionSupplements(store.selectTasksAuto(target, buildTaskRankingQuery(root, opts.task ?? null, target)), target))],
     });
     process.stdout.write(envelope.text);
     if (opts.task) {
       try {
         const records = asOf ? [] : snapshotDeliveredRecords(store, envelope);
         const recalled = renderRecalledLine(unseenLessons(root, opts.task, records));
-        const occurrence = recordTaskDelivery(root, opts.task, envelope, records);
+        const occurrence = recordTaskDelivery(root, opts.task, envelope, records, undefined, target);
         console.log(`\n${recalled ? `${recalled}\n` : ""}Task evidence: ${opts.task} · occurrence ${occurrence}`);
       } catch {
         console.error(`Task evidence could not be recorded for ${opts.task}; context remains available but report attribution is unverified.`);
@@ -4112,9 +4114,9 @@ program
   .action(async (value: string | undefined) => {
     const root = findRoot();
     if (value != null) {
-      const preference = normalizeProviderName(value.trim());
-      if (!preference || !(SYNTH_PREFERENCES as readonly string[]).includes(preference)) {
-        return fail(`provider must be one of: ${SYNTH_PREFERENCES.join(", ")} (or alias "ollama" for openai-compat)`);
+      const preference = normalizeProviderName(value.trim()) ?? value.trim();
+      if (!(SYNTH_PREFERENCES as readonly string[]).includes(preference)) {
+        return fail(`provider must be one of: ${SYNTH_PREFERENCES.join(", ")}`);
       }
       try {
         writeSynthesisPreference(root, preference as SynthPreference);
@@ -4283,17 +4285,23 @@ program
   .option("--provider <provider>", "hook event dialect: claude | vscode | cursor | windsurf | antigravity", "claude")
   .action(async (opts: { provider?: string }) => {
     // A hook MUST NEVER break the agent: on ANY error or unrecognized input we
-    // emit nothing and exit 0 (the action defers to Claude Code's normal flow).
+    // exit 0 and never deny (the action defers to the host's normal flow).
+    // Unrecognized input stays silent; an error after the event was recognized
+    // says "grounding unavailable" in one context line — see the catch below.
     let store: HunchStore | null = null;
+    // Hoisted so the fail-open catch below can still say which grounding was lost.
+    let provider: HookProvider | null = null;
+    let eventName: HunchHookEvent | null = null;
     try {
-      const provider = hookProvider(opts.provider);
+      provider = hookProvider(opts.provider);
       if (!provider) return;
       const evt = normalizeHookEvent(JSON.parse(await readStdin()), provider);
       if (!evt) return;
+      eventName = evt.hook_event_name;
       const root = findRoot();
       // The host delivered this event: runtime evidence for `hunch integrations check`,
       // recorded before any policy decision so firmness never hides delivery itself.
-      recordHookObservation(root, provider, evt.hook_event_name);
+      recordHookObservation(root, provider, evt.hook_event_name, evt.tool_outcome?.status);
       const paths = hunchPaths(root);
       const firmness = readConfig(paths).firmness;
       if (firmness === "off") return;
@@ -4339,6 +4347,12 @@ program
             return;
           }
         }
+        // The turn is over: close the prompt's task and keep its record, whether
+        // or not the agent called finish. Fail-open: the card below still renders.
+        try {
+          const closed = closeHookTask(root, provider, evt);
+          if (closed) { store ??= new HunchStore(paths); persistTaskRecord(root, store, closed); }
+        } catch { /* the ledger and the card remain authoritative; the next finish retries */ }
         const report = stopHookReport(root, provider, evt);
         if (report) console.log(JSON.stringify(report));
         return;
@@ -4395,6 +4409,11 @@ program
         // explorers get the indexed shape, planners get live decisions + what
         // was already rejected, everyone else gets the invariant digest. Public
         // store only; cheap reads.
+        const routedCwd = nativeHookCwd(root, provider, evt);
+        // A native host that supplied cwd made an explicit scope claim. If it is
+        // malformed or names another checkout, serving this process root's memory
+        // would cross worktrees; stay silent instead of guessing which side is right.
+        if ((provider === "claude" || provider === "codex") && evt.cwd !== undefined && !routedCwd) return;
         const s = new HunchStore(paths);
         try {
           const clip1 = (text: string, max: number): string => {
@@ -4404,10 +4423,15 @@ program
           const type = (evt.agent_type ?? "").toLowerCase();
           const L: string[] = [];
           const served: Array<{ kind: string; record_id: string; token_cost: number }> = [];
+          const route = routedCwd
+            ? `Worktree routing: call hunch_context first with cwd: ${JSON.stringify(routedCwd)}, and pass the same cwd to hunch_task, hunch_report, and every Hunch capture/write call in this delegated task.`
+            : null;
+          const activeProvider = provider;
+          const emitRouteOnly = (): void => { if (route) emitContext(activeProvider, "SubagentStart", route); };
           if (/explore|search|investigat/.test(type)) {
             // Orient from the graph, not grep rounds: the component map IS the shape.
             const components = s.advisoryRecs("components").filter((c) => c.status === "active");
-            if (!components.length) return;
+            if (!components.length) { emitRouteOnly(); return; }
             L.push(`🧠 Hunch — repo shape for a delegated explorer: ${components.length} component(s).`);
             for (const c of components.slice(0, 12)) {
               const line = `- ${c.name}${c.paths.length ? ` (${c.paths.slice(0, 2).join(", ")})` : ""}${c.responsibility ? ` — ${clip1(c.responsibility, 90)}` : ""}`;
@@ -4421,7 +4445,7 @@ program
             const decisions = s.advisoryRecs("decisions")
               .filter((d) => d.status === "accepted")
               .sort((a, b) => (a.date < b.date ? 1 : -1));
-            if (!decisions.length) return;
+            if (!decisions.length) { emitRouteOnly(); return; }
             L.push(`🧠 Hunch — live decisions for a delegated planner (${decisions.length} in force; plans must not re-propose the rejected).`);
             for (const d of decisions.slice(0, 6)) {
               const line = `- ${d.title} (${d.id})${d.alternatives_rejected.length ? ` — rejected: ${clip1(d.alternatives_rejected[0]!, 80)}` : ""}`;
@@ -4434,7 +4458,7 @@ program
             const constraints = s.advisoryRecs("constraints")
               .filter((c) => c.status === "active")
               .sort((a, b) => sevRank[a.severity] - sevRank[b.severity]);
-            if (!constraints.length) return;
+            if (!constraints.length) { emitRouteOnly(); return; }
             L.push(`🧠 Hunch — delegated agent grounding: ${constraints.length} invariant(s) in force in this repo.`);
             for (const c of constraints.slice(0, 8)) {
               const line = `- [${c.severity}] ${clip1(c.statement, 140)}${c.scope.length ? ` (scope: ${c.scope.slice(0, 3).join(", ")})` : ""}`;
@@ -4444,6 +4468,7 @@ program
             if (constraints.length > 8) L.push(`…and ${constraints.length - 8} more — hunch_check_constraints(scope) for your files.`);
             L.push("Before editing: hunch_check_constraints(scope) · hunch_why(target). Orient: hunch_context(task).");
           }
+          if (route) L.push(route);
           // No dedup here: the hook event carries the PARENT session id, but each
           // spawned agent is a fresh empty context — deduping would ground the
           // first Explore and silently starve every later one.
@@ -4578,15 +4603,16 @@ program
 
       // Pre-edit grounding must resolve the same advertised graph as every CLI
       // and MCP consumer. Any unavailable/mismatched team route falls through to
-      // the outer fail-open catch and emits nothing, preserving the hook's
-      // non-blocking invariant without false-passing against public/stale memory.
+      // the outer fail-open catch: one "grounding unavailable" line, never a deny,
+      // never grounding from public/stale memory (dec_77d99014e0).
       const opened = openTeamStore(root, { requireFreshTeamMemory: firmness === "strict" });
       store = opened.store;
       if (firmness === "strict" && opened.teamPullStatus
         && opened.teamPullStatus !== "updated" && opened.teamPullStatus !== "current") {
         // A strict deny is only trustworthy when it includes the latest team
         // rules. Offline/busy/unconfigured team memory is unavailable, so the
-        // non-blocking hook emits nothing instead of denying from stale state.
+        // non-blocking hook says so instead of denying from stale state.
+        emitContext(provider, "PreToolUse", `Hunch grounding unavailable for this edit; it proceeds ungrounded (team memory is ${opened.teamPullStatus}; strict mode never denies from stale rules). Run \`hunch doctor\`.`);
         return;
       }
 
@@ -4636,6 +4662,7 @@ program
       // from this file. No diff exists yet, so this is context — "don't re-add X" —
       // not a block; the commit-time `hunch check` does the actual gating.
       const retired = store.retiredForFile(target).filter((r) => r.symbols.length || r.deps.length);
+      const recentTasks = taskSelectionSupplements(store.selectTasksAuto(target, buildTaskRankingQuery(root, hookReportTaskId(root, provider, evt), target)), target);
       const hasContent =
         ctx.constraints.length ||
         ctx.decisions.length ||
@@ -4645,6 +4672,7 @@ program
         ctx.landscape?.resources.length ||
         ctx.landscape?.relationships.length ||
         retired.length ||
+        recentTasks.length ||
         docGround;
       if (!hasContent) return; // no noise on files Hunch hasn't learned yet
       const envelope = buildDeliveryEnvelope(ctx, {
@@ -4661,6 +4689,7 @@ program
             text: `⚠ Deliberately RETIRED from this file — do not re-introduce without cause: ${retired.map((r) => `${[...r.symbols, ...r.deps].join(", ")} (${r.decision})`).join("; ")}.`,
           }] : []),
           ...(docGround ? [{ id: "doc-grounding", kind: "doc-grounding", priority: 100, text: docGround }] : []),
+          ...recentTasks,
         ],
       });
       const text = envelope.text.trim();
@@ -4670,19 +4699,27 @@ program
       // Delivery receipts (dec_925f4bcaad): the ledger of what actually reached
       // an agent. A full injection is a serve; a delta one-liner attests the
       // earlier serve is still standing. Never throws, never blocks.
-      const receipts = (event: "served" | "refreshed") => recordServed(root, envelope.delivered.map((item) => ({
-        event,
-        kind: item.kind,
-        record_id: item.record_id,
-        target,
-        session_id: evt.session_id,
-        rank: item.rank,
-        delivery_reason: item.delivery_reason,
-        provenance_status: item.provenance_status,
-        token_cost: item.token_cost,
-        delivery_profile: envelope.profile,
-        ranking_policy: envelope.ranking_policy,
-      })));
+      const receipts = (event: "served" | "refreshed") => recordServed(root, [
+        ...envelope.delivered.map((item) => ({
+          event,
+          kind: item.kind,
+          record_id: item.record_id,
+          target,
+          session_id: evt.session_id,
+          rank: item.rank,
+          delivery_reason: item.delivery_reason,
+          provenance_status: item.provenance_status,
+          token_cost: item.token_cost,
+          delivery_profile: envelope.profile,
+          ranking_policy: envelope.ranking_policy,
+        })),
+        // Delivered task lines are receipts too: they feed access-based recency.
+        ...envelope.supplements.filter((s) => s.kind === "recent-task" && s.delivered).map((s) => ({
+          event, kind: "tasks", record_id: s.id, target, session_id: evt.session_id,
+          rank: s.rank, delivery_reason: "supplemental", token_cost: s.token_cost,
+          delivery_profile: envelope.profile, ranking_policy: envelope.ranking_policy,
+        })),
+      ]);
       const reportTaskId = hookReportTaskId(root, provider, evt);
       // A new authoritative prompt gets its own full delivery. An earlier
       // prompt's session-level delta cannot establish this task's receipt.
@@ -4704,13 +4741,20 @@ program
           // The first time a lesson reaches this prompt's task, tell the USER in one
           // line (systemMessage); repeats of the same revision stay silent.
           recalled = reportPresentationEnabled(root) ? renderRecalledLine(unseenLessons(root, reportTaskId, snapshots)) : null;
-          const occurrence = recordTaskDelivery(root, reportTaskId, envelope, snapshots);
+          const occurrence = recordTaskDelivery(root, reportTaskId, envelope, snapshots, undefined, target);
           reportNotice = `\n\nHunch task ${reportTaskId} · delivery ${occurrence}. Inspect exact application references with hunch_report(task_id).`;
         } catch { reportNotice = "\n\nTask report observation unavailable; this delivery's task contribution remains unverified."; recalled = null; }
       }
       emitContext(provider, "PreToolUse", text + reportNotice, recalled ?? undefined);
-    } catch {
-      // swallow — never block an edit on a hook failure
+    } catch (e) {
+      // Never block an edit on a hook failure — and never go silent either: an
+      // ungrounded edit that looks grounded gets diagnosed as model flakiness.
+      // One context line, exit 0 (the launcher itself failing stays out of reach).
+      const reason = e instanceof Error ? e.message.split("\n")[0] : "unknown error";
+      if (provider && (eventName === "PreToolUse" || eventName === "SessionStart" || eventName === "UserPromptSubmit")) {
+        const what = eventName === "PreToolUse" ? "for this edit; it proceeds ungrounded" : "for this session";
+        try { emitContext(provider, eventName, `Hunch grounding unavailable ${what} (${reason}). Run \`hunch doctor\`.`); } catch { /* stdout gone */ }
+      }
     } finally {
       store?.close();
     }
@@ -6090,6 +6134,8 @@ program
       if (!roadmap.length) console.log("  (empty — record what's next as a PROPOSED decision via /capture and it appears here)");
       for (const r of roadmap) console.log(`  • ${r.title}  (${r.id}${r.topic ? `, ${r.topic}` : ""}, since ${r.date})\n      ${r.note}`);
       if (pendingReview > 0) console.log(`\n  (${pendingReview} legacy un-vouched draft(s) — \`hunch adopt-drafts\` to auto-trust them as advisory)`);
+      // Task-record ranking: evaluated automatically on every task write; the kill rule applies itself.
+      try { console.log(`\n📊 ${rankingStatusLine(resolveTaskRankingMode(store.publicRoot, store))}`); } catch { /* no task records or no cache dir: nothing to say */ }
     } finally {
       store.close();
     }
@@ -6306,6 +6352,19 @@ program
   .action(async () => {
     const integrations = inspectIntegrations(findRoot());
     console.log(formatIntegrationHealth(integrations));
+    // A pin npm cannot serve kills every npx launcher (hooks and MCP) before Hunch
+    // runs, and the hosts report nothing. Name it here; bounded, offline-safe.
+    const published = new Map<string, PublishedStatus>();
+    for (const v of new Set([integrations.expectedVersion, ...integrations.pins.map(p => p.version)])) published.set(v, publishedStatus(v));
+    const expectedUnpublished = published.get(integrations.expectedVersion) === "unpublished";
+    for (const pin of integrations.pins) {
+      if (published.get(pin.version) !== "unpublished") continue;
+      console.log(`ERROR ${pin.file}: pins Hunch ${pin.version}, which npm cannot serve (ETARGET) — every hook run and MCP launch from this file fails before Hunch starts, silently. Run \`hunch integrations repair-pins\`${expectedUnpublished ? " once the release publishes" : ""}.`);
+      process.exitCode = 1;
+    }
+    if (expectedUnpublished && integrations.pins.every(p => p.version !== integrations.expectedVersion)) {
+      console.log(`note: package.json says ${integrations.expectedVersion}, which is not on npm yet; machine-local pins stay on the last published release until it is (then run \`hunch integrations repair-pins\`).`);
+    }
     // A shared-memory or CLI-only checkout may intentionally have no local
     // assistant config. The explicit integrations check still fails that case.
     if (integrations.harnesses.length > 0 && integrationHealthFails(integrations)) process.exitCode = 1;

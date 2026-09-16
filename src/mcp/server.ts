@@ -1,3 +1,6 @@
+import { conventionSupplements } from '../core/conventionDelivery.js';
+import { fieldCitationText } from "../core/fieldProvenance.js";
+import type { DerivedState } from "../core/stateRecords.js";
 /**
  * MCP server — the structured two-way API into the Hunch (DESIGN.md §7 / App. A).
  * Exposes read tools (query/why/bug_lineage/check_constraints/get_dependents) and
@@ -11,9 +14,11 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { RootsListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { hunchPaths, findRoot, toPosixTarget } from "../core/paths.js";
+import { resolveMcpToolset } from "./toolset.js";
+import { readConfig } from "../core/config.js";
 import { canonicalRootPath, resolveActiveRoot } from "./roots.js";
 import { HunchStore } from "../store/hunchStore.js";
-import { StateRefusal, SubscribeResponseSchema, capabilities, partitionOf, readState, recordsState, subscribeState, writeState } from "../store/stateBinding.js";
+import { StateRefusal, SubscribeResponseSchema, capabilities, partitionOf, readState, recordsState, stateHomeFor, subscribeState, writeState } from "../store/stateBinding.js";
 import { captureState, captureBatchState } from "../store/stateCapture.js";
 import { CaptureRequestSchema, CaptureBatchRequestSchema, CaptureBatchResultSchema, STATE_CAPTURE_VERSION, STATE_CAPTURE_BATCH_VERSION } from "../core/stateContract.js";
 import { ReadRequestSchema, ReadResponseSchema, WriteRequestSchema, WriteResultSchema, SubscribeRequestSchema, RecordsRequestSchema, RecordsResponseSchema, STATE_READ_VERSION, STATE_WRITE_VERSION, STATE_SUBSCRIBE_VERSION, STATE_RECORDS_VERSION, stateHash } from "../core/stateContract.js";
@@ -28,6 +33,8 @@ import { withWriteLock } from "../serve/writelock.js";
 import { advertisedTeamRemoteContract, ensureTeamOverlay, overlayMatchesTeamRemote, readTeamConfig, teamRemoteContract, teamSharedRef } from "../integrations/team.js";
 import { formatSearchHit, formatStructure } from "../core/format.js";
 import { isStateKind, stateSupplements } from "../core/stateDelivery.js";
+import { taskSelectionSupplements } from "../core/taskDelivery.js";
+import { buildTaskRankingQuery } from "../core/taskQuery.js";
 import { diagnoseIssueCorrectionStage, formatCorrectionStageDiagnostic } from "../core/correctionStage.js";
 import {
   compileVerifiedEvidenceMap,
@@ -800,19 +807,27 @@ function deliveredContext(
     const state = armExecutionObligations(loadPipelineState(sessionId), structuredContent.obligations, { replaceOrigin: "memory" });
     savePipelineState(sessionId, state);
   }
-  recordServed(root, structuredContent.delivered.map((item) => ({
-    event: "served",
-    kind: item.kind,
-    record_id: item.record_id,
-    target,
-    session_id: sessionId,
-    rank: item.rank,
-    delivery_reason: item.delivery_reason,
-    provenance_status: item.provenance_status,
-    token_cost: item.token_cost,
-    delivery_profile: structuredContent.profile,
-    ranking_policy: structuredContent.ranking_policy,
-  })));
+  recordServed(root, [
+    ...structuredContent.delivered.map((item) => ({
+      event: "served" as const,
+      kind: item.kind,
+      record_id: item.record_id,
+      target,
+      session_id: sessionId,
+      rank: item.rank,
+      delivery_reason: item.delivery_reason,
+      provenance_status: item.provenance_status,
+      token_cost: item.token_cost,
+      delivery_profile: structuredContent.profile,
+      ranking_policy: structuredContent.ranking_policy,
+    })),
+    // Delivered task lines are receipts too: they feed access-based recency.
+    ...envelope.supplements.filter((s) => s.kind === "recent-task" && s.delivered).map((s) => ({
+      event: "served" as const, kind: "tasks", record_id: s.id, target, session_id: sessionId,
+      rank: s.rank, delivery_reason: "supplemental", token_cost: s.token_cost,
+      delivery_profile: structuredContent.profile, ranking_policy: structuredContent.ranking_policy,
+    })),
+  ]);
   return {
     content: [{ type: "text", text: structuredContent.text }],
     structuredContent,
@@ -1017,6 +1032,16 @@ export interface RootControlOptions {
   pinned?: boolean;
 }
 
+/** Delivered to every MCP client at initialize — the one grounding channel that
+ * needs no host hook or instruction file. Host-neutral by design (con_e04226bd05);
+ * per-host prose (CLAUDE.md, AGENTS.md) and hooks add to it, never replace it. */
+export const MCP_INSTRUCTIONS = [
+  "Hunch is this repository's engineering memory: decisions, bug history, invariants, components, with provenance.",
+  "Per user task: (1) hunch_task(action:\"start\", title) once — unless the host's prompt hook already printed a task_id, then reuse it; (2) hunch_context(target, task_id) FIRST, before reading or editing, for the file, symbol, or task phrase; (3) hunch_check_constraints(scope) before editing shared code; (4) hunch_task(action:\"finish\", task_id) before the final response and show its contribution card.",
+  "Then by moment: hunch_why(target) for rationale and rejected alternatives, hunch_bug_lineage before fixing a failure, hunch_record_decision after a non-trivial choice, hunch_record_correction when a human corrects you.",
+  "Hosts without lifecycle hooks (Windsurf, Cursor, or Codex before its hooks are trusted) receive no automatic grounding: call these tools yourself.",
+].join("\n");
+
 export function buildServerWithRootControl(initialRoot: string, options: RootControlOptions = {}): RootControlledServer {
   const pinned = options.pinned === true;
   const explicitOverlay = !!process.env.HUNCH_PRIVATE_DIR?.trim();
@@ -1078,7 +1103,12 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
   // hunch_query and stays warm — and hybridSearch degrades to FTS until then.
   const embedderReady = selectEmbedder();
 
-  const server = new McpServer({ name: "hunch", version: HUNCH_VERSION });
+  // Everyday tools by default; specialist groups by evidence, config, or env
+  // (src/mcp/toolset.ts). Hidden tools are never registered, so tools/list is
+  // exactly what the host can call.
+  const toolset = resolveMcpToolset(root, { configSpec: readConfig(hunchPaths(root)).mcp_tools ?? null, pinned });
+  if (toolset.hidden.length) process.stderr.write(`[hunch-mcp] tool groups: ${toolset.groups.length ? toolset.groups.join(", ") : "core only"} (${toolset.source}); ${toolset.hidden.length} specialist tool(s) hidden — HUNCH_MCP_TOOLS=all or .hunch/config.json mcp_tools to expose\n`);
+  const server = new McpServer({ name: "hunch", version: HUNCH_VERSION }, { instructions: MCP_INSTRUCTIONS });
   let activeRequests = 0;
   let pendingRoot: string | null = null;
   let pendingScheduled = false;
@@ -1333,6 +1363,10 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         parts.push(`\nBUG HISTORY:\n${bugs.slice(0, WHY_CAP).map((b) => `  • ${b.id} [${b.status}/${b.severity}] ${b.title}\n      root cause: ${b.root_cause}${provLine(b)}`).join("\n")}${more(bugs.length, WHY_CAP)}`);
       if (w.components.length) parts.push(`\nCOMPONENTS: ${w.components.map((c) => `${c.name} (${c.id})`).join(", ")}`);
       if (w.symbols.length) parts.push(`\nSYMBOLS: ${w.symbols.slice(0, WHY_CAP * 2).map((s) => `${s.name} [fan-in ${s.metrics.fan_in}, churn ${s.metrics.churn_90d}]`).join(", ")}${more(w.symbols.length, WHY_CAP * 2)}`);
+      const recentTasks = store.tasksFor(target, 5);
+      if (recentTasks.length) {
+        parts.push(`\nRECENT TASKS (agent work that touched this):\n${recentTasks.map((t) => `  • ${t.id} ${t.finished_at.slice(0, 10)} ${t.title} — ${t.lessons.length} lesson(s), ${t.applied.length} applied, ${t.saved.length} saved${t.conformance.some((c) => c.outcome === "violated") ? ", rule VIOLATED" : ""}`).join("\n")}`);
+      }
       if (parts.length === 1) parts.push("\n(No recorded decisions/bugs/constraints yet for this target.)");
       return ok(parts.join("\n"));
     },
@@ -1616,7 +1650,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
             const records = as_of ? [] : snapshotDeliveredRecords(store, envelope);
             // First delivery of a revision in this task earns one line; repeats stay quiet.
             const recalled = renderRecalledLine(unseenLessons(root, task_id, records));
-            const occurrence = recordTaskDelivery(root, task_id, envelope, records);
+            const occurrence = recordTaskDelivery(root, task_id, envelope, records, undefined, target);
             result.content.push({ type: "text", text: `${recalled ? `${recalled}\n` : ""}Task evidence: ${task_id} · occurrence ${occurrence}.\n${records.slice(0, 20).map(r => `${r.record_id} @ ${r.content_hash}`).join("\n")}${records.length > 20 ? "\nMore record identities: hunch_report(task_id)." : ""}` });
           } catch {
             result.content.push({ type: "text", text: `Task evidence could not be recorded for ${task_id}. Context remains available; this delivery's report attribution is unverified. Check the task ID, working directory, and local ledger.` });
@@ -1639,6 +1673,9 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
       // latest receipts whose subject/text matches the target — bounded, ordered, sharing the
       // brief's budget as supplements. Withheld on time-travel: state records carry no as-of view.
       const stateGrounding = asOf ? [] : stateSupplements(store.stateSlice(target), target);
+      // Recent finished tasks that touched the target: what earlier agent work did
+      // here, from graph memory. Advisory history sharing the brief's budget.
+      const recentTasks = asOf ? [] : taskSelectionSupplements(store.selectTasksAuto(target, buildTaskRankingQuery(root, task_id ?? null, target)), target);
       const options = {
         root,
         symbols: store.recs("symbols"),
@@ -1646,7 +1683,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         decisionCorpus: store.recs("decisions"),
         historical: !!asOf,
         profile: profile ?? "builder",
-        supplements: [...(dnaSupplement ? [dnaSupplement] : []), ...stateGrounding],
+        supplements: [...(dnaSupplement ? [dnaSupplement] : []), ...stateGrounding, ...recentTasks, ...(asOf ? [] : conventionSupplements(store.recs("conventions")))],
       };
       // Task-phrase input ("improve retrieval ranking") resolves no file/symbol and
       // used to return an empty brief while the graph held the answer — fall back to
@@ -1675,6 +1712,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
             supplements: [
               ...(dnaSupplement ? [dnaSupplement] : []),
               ...stateGrounding,
+              ...recentTasks,
               ...hits
               // State hits are delivered through the State section above, not as raw search lines.
               .filter((hit) => !["constraints", "decisions", "bugs", "findings"].includes(hit.kind) && !isStateKind(hit.kind))
@@ -2386,7 +2424,11 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
           spawned_decision: finding.spawned_decision ?? existing?.spawned_decision ?? null,
           observed_at: existing?.observed_at ?? now, // first observation wins — updates re-verify, not re-date
           resolved_commit: finding.resolved_commit ?? existing?.resolved_commit ?? null,
-          provenance: { source: "human_confirmed", confidence: 0.95, evidence: finding.evidence ?? existing?.provenance.evidence ?? [], last_verified: now },
+          // Findings have no authenticated capture front door. Calling this MCP tool is
+          // agent testimony, even when the observation is updating a record that a human
+          // confirmed previously; only an explicit human-authored path may mint the
+          // human_confirmed tier.
+          provenance: { source: "agent_recorded", confidence: 0.75, evidence: finding.evidence ?? existing?.provenance.evidence ?? [], last_verified: now },
         };
         const stored = store.putCapture("findings", rec, !!finding.private);
         const observed = observeReportCapture(root, task_id, "findings", stored, home, !!existing, home === "private" ? store.privateDir ?? undefined : hunchPaths(root).hunch);
@@ -2425,6 +2467,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
   };
   const stateResult = (text: string, structured: Record<string, unknown>): ToolResult => ({ content: [{ type: "text", text }], structuredContent: structured });
 
+  if (toolset.enabled("nuryel")) {
   server.registerTool(
     "nuryel_capabilities",
     {
@@ -2460,7 +2503,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         const line = (label: string, ref: { facet: string; id: string }): string => {
           const r = (response.records ?? {})[ref.id] ?? {};
           const g = (k: string): string => { const v = r[k]; return typeof v === "string" ? v : v == null ? "" : JSON.stringify(v); };
-          if (ref.facet === "derived") return `- ${label} derived ${ref.id} · computed ${g("computed_at")} · ${(r.dependencies as unknown[] | undefined)?.length ?? 0} dependencies\n    ${g("content").slice(0, 1200)}`;
+          if (ref.facet === "derived") return `- ${label} derived ${ref.id} · computed ${g("computed_at")} · ${(r.dependencies as unknown[] | undefined)?.length ?? 0} dependencies\n    ${g("content").slice(0, 1200)}${fieldCitationText(r as DerivedState)}`;
           if (ref.facet === "commitments") return `- ${label} commitment ${ref.id} · ${g("status")} · due ${g("due")} · owner ${g("owner")}: ${g("title")}${r.closed_by ? ` · closed by ${g("closed_by")}` : ""}`;
           if (ref.facet === "receipts") {
             const t = (r.target ?? {}) as Record<string, unknown>;
@@ -2486,7 +2529,11 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
                : sor.observed_truncated ? ['- More observations exist; read this subject with observed_page:{} in one partition, then follow next_cursor.'] : []),
              ...(sor.invalidated_by.length ? [`- invalidated by: ${sor.invalidated_by.join(", ")}`] : [])].join("\n") || "(nothing on record for this subject)"
           : "";
-        return stateResult(`${response.receipt_id} · ${summary}${deniedNote}${stateText ? `\n\nState of record:\n${stateText}` : ""}\n\n${envelope.text}`, response);
+        const conventionText = response.conventions ? '\n\nExplicit conventions (advisory; no scope takes precedence):\n' + response.conventions.items.map(item => {
+          const record = response.records?.[item.ref.id];
+          return `- ${item.ref.scope.kind}/${item.ref.scope.id} · ${item.key} · ${record?.status}/${item.currentness}${item.conflict ? ' · CONFLICT' : ''}: ${String(record?.value ?? '').slice(0, 300)} (${item.ref.id})`;
+        }).join('\n') + (response.conventions.truncated ? '\nMore conventions exist; this view is incomplete.' : '') : '';
+        return stateResult(`${response.receipt_id} · ${summary}${deniedNote}${stateText ? `\n\nState of record:\n${stateText}` : ""}\n\n${envelope.text}${conventionText}`, response);
       } catch (e) {
         return stateRefusal(e);
       }
@@ -2498,7 +2545,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     {
       title: "nuryel.state/1 write — provenance + idempotency in, durability out",
       description:
-        "Write one record into a facet (receipts, commitments, derived, entities, relationships, or the legacy decisions/constraints/bugs/findings). The record must carry provenance; the request must carry an idempotency_key — a replay returns the original, a reused key with a different payload is refused. Ids are derived from the record's facts, never chosen. A second live decision on a topic is refused with the incumbent named; pass supersedes to replace it explicitly. organization/team/user partitions never ride a repository: they require an overlay. To show an existing captured observation under another subject without copying it, write a relationship type observation_about with from=observation id, to=subject, observation_hash, lifecycle=active, reason and hashed external evidence of the explicit association. Retire the relationship to unlink; reactivation requires expected_version.",
+        "Write one record into a facet (receipts, commitments, derived, entities, relationships, or the legacy decisions/constraints/bugs/findings). The record must carry provenance; the request must carry an idempotency_key — a replay returns the original, a reused key with a different payload is refused. Ids are derived from the record's facts, never chosen. A second live decision on a topic is refused with the incumbent named; pass supersedes to replace it explicitly. organization/team/user partitions never ride a repository: they require an overlay. To show an existing captured observation under another subject without copying it, write a relationship type observation_about with from=observation id, to=subject, observation_hash, lifecycle=active, reason and hashed external evidence of the explicit association. Retire the relationship to unlink; reactivation requires expected_version. With capability nuryel.field-provenance/1, a derived record may carry field_provenance: [{selector:{kind:json_pointer,path:/field} or {kind:text,start:0,end:10}, value_hash:stateHash(selected scalar or text), dependency_hashes:[stateHash(existing dependency)]}]. Text offsets count Unicode code points, end exclusive. Citations are writer-supplied traceability, not verified support; negotiate support in every shared reader before writing them. With nuryel.record-visibility/1, records may carry visibility:{owner:principal-id,readers:[ids],writers:[ids]}; the owner is implicit in both lists, and writers must be readers. Owner-only audience changes require expected_version, including supersession. Restricted records require a dedicated partition; local stdio principal assertions assume trusted callers.",
       inputSchema: { ...WriteRequestSchema.omit({ schema: true }).shape, cwd: cwdHintField },
       outputSchema: WriteResultSchema.shape,
     },
@@ -2506,7 +2553,8 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
       try {
         // Same cross-process lock `hunch serve` takes: a second agent writing over stdio must
         // not race the HTTP server between the ledger read and the record write.
-        const result = await withWriteLock(hunchPaths(root).hunch, () => writeState(store, { schema: STATE_WRITE_VERSION, ...input }, {
+        const { hunchDir } = stateHomeFor(store, input.scope);
+        const result = await withWriteLock(hunchDir, () => writeState(store, { schema: STATE_WRITE_VERSION, ...input }, {
           flush: (isPrivate, message) => flushCapture(store, hunchPaths(root).hunch, isPrivate, message, startupTeamRoute ?? undefined),
         }));
         return stateResult(`${result.outcome} ${result.record_id} (${result.durability}) ${result.record_hash}`, result);
@@ -2526,7 +2574,8 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     },
     async ({ cwd: _cwd, ...input }): Promise<ToolResult> => {
       try {
-        const result = await withWriteLock(hunchPaths(root).hunch, () => captureState(store, { schema: STATE_CAPTURE_VERSION, ...input }, {
+        const { hunchDir } = stateHomeFor(store, input.scope);
+        const result = await withWriteLock(hunchDir, () => captureState(store, { schema: STATE_CAPTURE_VERSION, ...input }, {
           flush: (isPrivate, message) => flushCapture(store, hunchPaths(root).hunch, isPrivate, message, startupTeamRoute ?? undefined),
         }));
         return stateResult(`${result.outcome} observation ${result.record_id} (${result.durability}); this does not assert currentness. ${result.record_hash}`, result);
@@ -2544,7 +2593,8 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     },
     async ({ cwd: _cwd, ...input }): Promise<ToolResult> => {
       try {
-        const result = await withWriteLock(hunchPaths(root).hunch, () => captureBatchState(store, { schema: STATE_CAPTURE_BATCH_VERSION, ...input }, {
+        const { hunchDir } = stateHomeFor(store, input.scope);
+        const result = await withWriteLock(hunchDir, () => captureBatchState(store, { schema: STATE_CAPTURE_BATCH_VERSION, ...input }, {
           flush: (isPrivate, message) => flushCapture(store, hunchPaths(root).hunch, isPrivate, message, startupTeamRoute ?? undefined),
         }));
         return stateResult(`Capture batch: ${result.results.filter(r => r.status === "saved").length} saved/replayed, ${result.results.filter(r => r.status === "refused").length} refused.${result.reviews ? ` Reviews: ${result.reviews.filter(r => r.status === "saved").length} withdrawn/replayed, ${result.reviews.filter(r => r.status === "refused").length} refused.` : ''} Inspect each indexed result.`, result);
@@ -2592,6 +2642,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
       }
     },
   );
+  } // toolset: nuryel
 
   // -- hunch_findings (read: the open-observations ledger) --------------------
   server.registerTool(
@@ -2728,7 +2779,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         const report = store.buildCheckReport(files, diff, { strict: true, lastChange: (f) => lastChangeDate(f, root) });
         const v = verdict(report);
         const head = v === "block"
-          ? "VERDICT: ⛔ BLOCK — this change breaks a recorded invariant or re-opens a known bug."
+          ? "VERDICT: ⛔ BLOCK — a recorded guard requires review; inspect the cited scope and evidence below before merge."
           : v === "warn"
             ? "VERDICT: ⚠ WARN — this change touches engineering memory; review the cited why below before merge."
             : "VERDICT: ✅ PASS — touches no recorded invariants and re-introduces nothing deliberately retired.";
@@ -3000,6 +3051,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     },
   );
 
+  if (toolset.enabled("constitution-experiments")) {
   server.registerTool(
     "hunch_constitution_g2_readiness",
     {
@@ -3096,6 +3148,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
       }
     },
   );
+  } // toolset: constitution-experiments
 
   // -- hunch_conformance ----------------------------------------------------
   server.registerTool(
@@ -3122,6 +3175,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     },
   );
 
+  if (toolset.enabled("constitution-experiments")) {
   server.registerTool(
     "hunch_constitution_g2_behavior_candidates",
     {
@@ -3241,6 +3295,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
       }
     },
   );
+  } // toolset: constitution-experiments
 
   return {
     server,
