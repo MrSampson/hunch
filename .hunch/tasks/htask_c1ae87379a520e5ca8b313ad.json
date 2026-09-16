@@ -3,7 +3,7 @@
   "title": "where does hunch fit in",
   "state": "completed",
   "started_at": "2026-09-16T11:57:57.494Z",
-  "finished_at": "2026-09-16T13:07:03.725Z",
+  "finished_at": "2026-09-16T13:09:14.524Z",
   "coverage": "delivered",
   "lessons": [
     {
@@ -20,7 +20,16 @@
     }
   ],
   "applied": [],
-  "saved": [],
+  "saved": [
+    {
+      "kind": "decisions",
+      "record_id": "dec_64f897a0f4",
+      "content_hash": "sha256:ae791b5ce7652c5dd38a21c89954b9550281a7a03d621b33df34123fe6c09743",
+      "home": "public",
+      "operation": "created",
+      "durability": "committed"
+    }
+  ],
   "checks": [],
   "conformance": [
     {
@@ -38,11 +47,17 @@
   ],
   "refusals": 0,
   "files": [
+    ".cursor/rules/hunch.mdc",
+    ".github/copilot-instructions.md",
+    ".windsurf/rules/hunch.md",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "ROADMAP.md",
     "src/serve/mcpHttp.ts"
   ],
   "supersedes": [],
   "source_snapshot": null,
-  "report_hash": "sha256:ab02c7d68ebaefc5bfc4146693707d3c085e3d50d79313a9f9787b56cb687431",
+  "report_hash": "sha256:c735336d6198f735c5e253cf8da361cd91c76b2647e6d1aeac9a5e5244d10962",
   "provenance": {
     "source": "task_report",
     "confidence": 1,
@@ -56,8 +71,9 @@
       "hunch report htask_84ac38c621749916125d6601",
       "hunch report htask_8f5cb0a85b14f10428fff1e5",
       "hunch report htask_8d7840f9e667497cfefede02",
-      "hunch report htask_57c168d1b74b37d74e0b4d85"
+      "hunch report htask_57c168d1b74b37d74e0b4d85",
+      "hunch report htask_54537aed71bd1943668f1ec0"
     ],
-    "last_verified": "2026-09-16T13:07:03.725Z"
+    "last_verified": "2026-09-16T13:09:14.524Z"
   }
 }
