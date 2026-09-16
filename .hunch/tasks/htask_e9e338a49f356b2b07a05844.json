@@ -3,9 +3,22 @@
   "title": "check the new 1.38 task changes is it working?",
   "state": "completed",
   "started_at": "2026-09-16T13:24:42.920Z",
-  "finished_at": "2026-09-16T13:51:39.019Z",
-  "coverage": "no-delivery-observed",
-  "lessons": [],
+  "finished_at": "2026-09-16T14:39:46.956Z",
+  "coverage": "delivered",
+  "lessons": [
+    {
+      "kind": "decisions",
+      "record_id": "dec_46128524fc",
+      "content_hash": "sha256:3995b92200eb67b42d88f1bcb2e10785c14f7d47db82d669f9cbc073bf0ca848",
+      "title": "Stop closes the prompt's task as a provisional host close; git-side work anchors task records"
+    },
+    {
+      "kind": "decisions",
+      "record_id": "dec_ecd73b7159",
+      "content_hash": "sha256:9019990c6182aa4403da4f904cc8ab196ebdc8029cc8a4211d96a8451c04386c",
+      "title": "Stop hook auto-closes tasks; agent finish overrides"
+    }
+  ],
   "applied": [],
   "saved": [
     {
@@ -46,9 +59,32 @@
       "label": "Verification command",
       "state": "passed",
       "exit_code": 0
+    },
+    {
+      "label": "Verification command",
+      "state": "failed",
+      "exit_code": 1
+    },
+    {
+      "label": "Verification command",
+      "state": "passed",
+      "exit_code": 0
     }
   ],
-  "conformance": [],
+  "conformance": [
+    {
+      "kind": "decisions",
+      "record_id": "dec_46128524fc",
+      "content_hash": "sha256:3995b92200eb67b42d88f1bcb2e10785c14f7d47db82d669f9cbc073bf0ca848",
+      "outcome": "unavailable"
+    },
+    {
+      "kind": "decisions",
+      "record_id": "dec_ecd73b7159",
+      "content_hash": "sha256:9019990c6182aa4403da4f904cc8ab196ebdc8029cc8a4211d96a8451c04386c",
+      "outcome": "unavailable"
+    }
+  ],
   "refusals": 0,
   "files": [
     ".cursor/rules/hunch.mdc",
@@ -65,8 +101,8 @@
     "test/serve.test.ts"
   ],
   "supersedes": [],
-  "source_snapshot": "sha256:07da54abf7bbcba1ca3fa0bf545e30909cdcf06b0a4d318532cec2a34392eaf8",
-  "report_hash": "sha256:15739a0c895e50f9b817872c8268a73beda52573ab1105c03075585edb779970",
+  "source_snapshot": "sha256:31e6f7ea6975b9178d3883d5fe0e3d466c099e58517077651f995938ea46cc71",
+  "report_hash": "sha256:a5acdfc0a0053836daa449a0d58cb8b50b69a3b20501c18a9f28f38f04ce6655",
   "provenance": {
     "source": "task_report",
     "confidence": 1,
@@ -75,8 +111,9 @@
       "hunch report htask_d5c68fd9983f83d2041953f7",
       "hunch report htask_c248b8b1e7a0b0deaf18b9fd",
       "hunch report htask_45604bce3c7492b9734c405f",
-      "hunch report htask_156f30551922ade1543bcef0"
+      "hunch report htask_156f30551922ade1543bcef0",
+      "hunch report htask_6279302e9f271aa31e1c4bfd"
     ],
-    "last_verified": "2026-09-16T13:51:39.019Z"
+    "last_verified": "2026-09-16T14:39:46.956Z"
   }
 }
