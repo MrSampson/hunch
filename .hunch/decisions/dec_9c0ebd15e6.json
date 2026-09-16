@@ -80,7 +80,7 @@
   "supersedes": null,
   "superseded_by": null,
   "caused_by_bug": null,
-  "commit": "61c8ee4",
+  "commit": "f65aac2",
   "valid_from": "2026-08-06T13:47:43+03:00",
   "valid_to": null,
   "retired": {
@@ -91,7 +91,7 @@
     "source": "llm_draft",
     "confidence": 0.65,
     "evidence": [
-      "commit:61c8ee4",
+      "commit:f65aac2",
       "synth:provider=claude-cli",
       "branch:fix/round3-high-severity",
       "test/gitignore.test.ts",

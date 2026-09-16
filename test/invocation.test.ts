@@ -13,7 +13,7 @@ test("classifyEntry: a compiled entry inside node_modules is installed", () => {
   );
 });
 
-test("classifyEntry: a compiled source-checkout entry is not installed", () => {
+test("classifyEntry: a compiled entry OUTSIDE node_modules (built dist run, npm link) is neither dev nor installed — this is the case round 2's isDev-only check missed, since 'npm install -g' is equally wrong advice here", () => {
   assert.deepEqual(classifyEntry("/repo/dist/cli/index.js"), { isDev: false, installed: false });
 });
 

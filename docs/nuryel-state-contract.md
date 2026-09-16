@@ -1,15 +1,11 @@
 # nuryel.state/1 — the state contract
 
-Status: **shipped in Hunch 1.33.0, bound to the store, MCP and HTTP (`hunch serve`).** Reviewed 2026-09-14. The capability notes below distinguish shipped additions from remaining limits. Broader deployment remains a pilot.
-
-This is the technical contract behind Hunch's shared record: decisions, actions, commitments and the evidence they depend on. It lets authorized agents read and update that record through the same rules. A stored action record preserves the writer's verification status; writing it is not independent proof that the external action happened.
-
-Verbs, canonical hashing,
+Status: **proposed, frozen as code, bound to the store, MCP and HTTP (`hunch serve`).** Verbs, canonical hashing,
 id derivation and invariants live in `src/core/stateContract.ts`; the record schemas (facets) in
 `src/core/stateRecords.ts`, a leaf module so the store's kind registry can reference them without
 an import cycle (`stateContract` re-exports them — one module to import). The ONE implementation
 of the verbs over a store is `src/store/stateBinding.ts`; the per-scope change ledger is
-`src/store/changeLedger.ts`; the MCP bindings include `nuryel_capabilities`, `nuryel_read`, `nuryel_write`, `nuryel_subscribe` and `nuryel_records` in `src/mcp/server.ts`.
+`src/store/changeLedger.ts`; the MCP binding is the four `nuryel_*` tools in `src/mcp/server.ts`.
 Tests: `test/state-contract.test.ts`, `test/state-kinds.test.ts`, `test/state-binding.test.ts`,
 `test/mcp-state.test.ts`.
 
@@ -19,15 +15,16 @@ path (store, overlay safety, private migrate, reindex, `dropAll`) picks them up 
 entities and relationships are index-file stored like resources because their ids are not safe
 file names, and the gitignore writer whitelists the new directories. The verbs **are** wired
 into the store (`readState` / `writeState` / `subscribeState`), exposed over MCP
-(`nuryel_capabilities`, `nuryel_read`, `nuryel_write`, `nuryel_subscribe`, `nuryel_records`) when state tools are enabled, and over HTTP by
-`hunch serve` with a typed client. Every transport calls the shared store binding — a transport
+(`nuryel_capabilities`, `nuryel_read`, `nuryel_write`, `nuryel_subscribe`) and over HTTP by
+`hunch serve` with a typed client. Every transport calls the same three functions — a transport
 that re-implements a rule is a bug.
 
-The product name is **Hunch**. `nuryel.state/1` and `nuryel_*` are existing contract and tool identifiers; they do not name a separate product.
+> Agents are probabilistic. Organizations need deterministic state. Nuryel is the state layer
+> between them.
 
-An integrated orchestrator or agent — Sofia, Codex, Claude Code or another client — can use this
-contract. Each owns the mapping from its source tools to Hunch records. Hunch does not fetch or
-change CRM, email or chat data on the client's behalf.
+Every orchestrator and agent — Sofia, Codex, Claude Code, whatever comes next — speaks this one
+contract to one state graph. Protocols are bindings of it, never separate integrations. No
+adapters live in Nuryel: the orchestrator owns the mapping from its world to the contract.
 
 ## Scope model
 
@@ -51,7 +48,7 @@ is decided against grants *before* retrieval; the read assertion checks it again
 | changed | what moved in an external system | `ExternalRef` — credential-free version pointer | **new** |
 | current | what is true now, and on what it rests | `nuryel.derived/1` — `DerivedState` with mandatory dependencies | **new** |
 | entity / relationship | who and what, and how they connect | `nuryel.entity/1`, `nuryel.relationship/1` (Landscape-shaped ids) | **new** |
-| DNA | observed working conventions, distinct from decisions and rules | `hunch.project-dna/1` | repository profiles ship; broader scope profiles are a direction |
+| DNA | how this user / team / organization works | `hunch.project-dna/1` profiles keyed by scope | profile exists; scope keying new |
 
 Each new facet is lifted from a record Sofia already keeps:
 
@@ -231,12 +228,6 @@ schemas minus `schema` and `principal`), plus `GET /nuryel/v1/health`. Errors ar
 a `StateRefusal` maps to 403 outside-grants, 409 conflict / idempotency, 422 identity, 400
 malformed / unsupported, 404 no-partition-home.
 
-**Shared state view (shipped in 1.33.0).** `/operator` serves a static, read-only browser client for the
-existing capabilities, read, records and subscribe endpoints. It introduces no state verb or
-storage format. The public HTML and assets contain no workspace data; reads use the token's
-existing grants. The view retains its token only in memory and renders sources as text without
-external fetches. See the [operator walkthrough](deterministic-state.md#shared-state-view).
-
 A **served partition is a directory whose `.hunch/partition.json` names the scope it IS** — so
 user, team and organization state need no overlay: the partition is the store, and
 `partitionOf(store)` (formerly `repositoryScope`) tells the binding to home writes there. The
@@ -337,7 +328,6 @@ reverse — re-key or retire the survivor, then write the entity active again wi
 | `one-entity-per-external-ref` | one external record is one entity per partition; a subject written as an entity's external key is refused with the entity id named; merge/split are ledger events, never silent rewrites | `assertExternalIdentity` in `writeState` (`409 conflict` / `422 identity`), `subjectAliases` on read; `test/state-entity-identity.test.ts` |
 | `human-correction-outranks-agent-writes` | what a human confirmed, an agent or service principal never overwrites or supersedes: it may replay it, write derived state back `stale` with the external cause that moved, or close a commitment with a receipt on record — each keeping the human's provenance; changing what the human said takes a human | `writeState` guard (`409 conflict`, reason `human-confirmed incumbent`, the differing fields named); `test/state-replay.test.ts` |
 | `derived-state-writer-owns-currentness` | the writer of a current derived statement revalidates its sources and writes it back `stale` when they move; other agents may save [source-backed observations](agent-observations.md) as `unknown`, never as current facts | `WriteRequest.cause`, the `invalidated` change, `nuryel_capture`, `state_of_record.observed` |
-| `one-current-derived-per-subject-transform` | a subject holds at most one current derived statement per transform; a new one must name the incumbent in `supersedes` (`409 conflict`, incumbent named), the same identity written again updates or replays it; a different transform is a different statement | `writeState` guard; `test/state-current-derived.test.ts`; found by the half-year farm (a writer that never named its predecessor left up to 58 current summaries on one subject) |
 
 ## Replay determinism (`nuryel.replay/1`)
 
@@ -388,40 +378,24 @@ Additive capabilities specified beside this contract, each with its own schema n
 [observation links](observation-links.md) (`nuryel.observation-links/1`),
 [observation review](observation-review.md) (`nuryel.observation-review/1`),
 [observation pages](observation-pages.md) (`nuryel.observation-pages/1`) and
-[ledger read reuse](ledger-read-reuse.md). Hunch 1.33.0 adds optional
-[field citations](field-provenance.md) (`nuryel.field-provenance/1`); upgrade every shared
-reader before writing annotated records.
+[ledger read reuse](ledger-read-reuse.md).
 
-## Capabilities and remaining limits
+## Not decided here
 
-- **Record visibility** ships in 1.33.0 for dedicated partitions: [owner, reader and writer
-  permissions](record-visibility.md), with an old-reader upgrade gate. Partition grants still
-  apply. Shared/private overlay support is explicitly excluded from restricted writes.
+- **Per-record visibility** inside a scope. Partition-level grants are the v1 permission model
+  (GitHub's repo-level model); finer visibility is the first security primitive to add before a
+  second team shares an organization partition.
 - **Semantic (embedding) recall over state records.** They ride the FTS index and the bounded
   liveness prior (see Delivery above); the optional embedding stream indexes them like any other
-  search doc. [State-specific fixture recall](state-recall-evaluation.md) is now measured for
-  keywords and a pinned local model; a production corpus remains unmeasured.
+  search doc, but no state-specific recall has been measured.
 - **What else of Hunch Memory folds in.** `serve` carries its bind-loopback, bearer, problem+json,
   body-limit and write-lock decisions. Its per-store concurrency gate, context-consistency
   watermarks and the usefulness / Project DNA intake routes are not ported; they return only if a
   served partition needs them.
-- **Per-field authority/currentness.** Optional field citations ship in 1.33.0, but
-  human-correction protection and invalidation continue to apply to the whole record.
+- **Per-field provenance on derived state.** A summary cites its sources as a whole; the
+  human-correction guard therefore works per record, not per field.
 - **Repository-scope private content.** The contract has no `private` flag: scope decides the
   home. Sensitive repository-scope state goes through the existing `hunch_record_*` tools
   with `private:true`, or into a user/team partition.
-- **State CLI and Python client** ship in 1.33.0: [Python usage](python-state-client.md)
-  covers the generated contract types and repository-installable HTTP client (not yet published
-  to PyPI; independent-consumer adoption remains unverified); [terminal bindings](state-cli.md) for `read`, `write`,
-  `records` and `subscribe` use the existing authenticated HTTP client. State-specific semantic
-  recall has a [repeatable fixture benchmark](state-recall-evaluation.md); production accuracy
-  still needs pilot evidence.
+- **A CLI binding** for `read` / `write` / `subscribe` (`hunch serve init` and `hunch serve replay` exist; the verbs themselves are HTTP, MCP and the typed client), and FTS / delivery ranking of the new kinds.
 - **Naming** — engine `hunch` / platform Nuryel, or one name for both.
-
-### Explicit conventions
-
-Shipped in 1.33.0: `nuryel.convention/1` adds user/team/organization/repository conventions as an advisory facet with reviewable sources, explicit supersession and conflict flags. See [Scoped conventions](scoped-conventions.md). These records never activate policy authority or replace Git-derived Project DNA.
-
-### Optional key-bound HTTP credentials
-
-Shipped in 1.33.0: the HTTP binding advertises `nuryel.auth.dpop/1`. Optional [key-bound credentials](key-bound-principals.md) add a signing-key proof to the existing token-to-principal mapping. Upgrade every serving process before enabling them. Facet schemas and grants remain the same; this is not hardware attestation or policy authority.

@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { tempStore } from "./helpers.js";
-import { scaffoldProviders, writeCursorMcp, writeVscodeMcp, writeCodexConfig, writeCodexHooks, writeCursorHooks, writeWindsurfMcp, writeAntigravityWorkspaceMcp, writeAntigravityHooks } from "../src/integrations/providers.js";
+import { scaffoldProviders, writeCursorMcp, writeVscodeMcp, writeCodexConfig, writeWindsurfMcp, writeAntigravityWorkspaceMcp } from "../src/integrations/providers.js";
 import { writeSlashCommands } from "../src/integrations/scaffold.js";
 import { publishedMcpInvocation } from "../src/cli/invocation.js";
 
@@ -26,7 +26,6 @@ test("scaffoldProviders writes MCP config + grounding for every assistant", () =
     assert.match(codex, /\[mcp_servers\.hunch\]/);
     assert.match(codex, /command = '.*node\.exe'/); // literal string, backslashes unescaped
     assert.match(codex, /'mcp'/);
-    assert.match(codex, /^startup_timeout_sec = 60$/m, "cold npx installs outlive Codex's 10 s default");
 
     const agents = readFileSync(join(root, "AGENTS.md"), "utf8");
     assert.match(agents, /Hunch/);
@@ -57,12 +56,6 @@ test("scaffoldProviders writes MCP config + grounding for every assistant", () =
     assert.match(wrule, /hunch_check_constraints/);
     const windsurfHooks = JSON.parse(readFileSync(join(root, ".windsurf/hooks.json"), "utf8"));
     assert.match(windsurfHooks.hooks.pre_write_code[0].command, /hook.*--provider.*windsurf/);
-
-    const codexHooks = JSON.parse(readFileSync(join(root, ".codex/hooks.json"), "utf8"));
-    assert.match(codexHooks.hooks.PreToolUse[0].hooks[0].command, /hook.*--provider.*codex/);
-    assert.equal(codexHooks.hooks.PreToolUse[0].matcher, "apply_patch", "Codex edits through apply_patch");
-    assert.equal(codexHooks.hooks.PostToolUse[0].matcher, "apply_patch|Bash|PowerShell|shell|local_shell", "Codex captures native command tools");
-    for (const event of ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "PreCompact", "SubagentStart"]) assert.ok(codexHooks.hooks[event]?.length, event);
 
     const antigravity = JSON.parse(readFileSync(join(root, ".agents/mcp_config.json"), "utf8"));
     assert.equal(antigravity.mcpServers.hunch.command, inv.command);
@@ -257,51 +250,12 @@ test("writeVscodeMcp REFUSES to overwrite an unparseable config (no data loss)",
   } finally { cleanup(); }
 });
 
-test("MCP and hook writers refuse malformed nested arrays without changing user bytes", () => {
-  const { root, cleanup } = tempStore();
-  try {
-    const cases: Array<{ file: string; value: unknown; write: () => string }> = [
-      { file: ".cursor/mcp.json", value: { mcpServers: [] }, write: () => writeCursorMcp(root, inv) },
-      { file: ".vscode/mcp.json", value: { servers: [] }, write: () => writeVscodeMcp(root, inv) },
-      { file: ".windsurf/mcp_config.json", value: { mcpServers: [] }, write: () => writeWindsurfMcp(root, inv) },
-      { file: ".agents/mcp_config.json", value: { mcpServers: [] }, write: () => writeAntigravityWorkspaceMcp(root, inv) },
-      { file: ".agents/hooks.json", value: { hunch: [] }, write: () => writeAntigravityHooks(root, inv) },
-      { file: ".agents/hooks.json", value: { hunch: { PreToolUse: {} } }, write: () => writeAntigravityHooks(root, inv) },
-      { file: ".cursor/hooks.json", value: { hooks: [] }, write: () => writeCursorHooks(root, inv) },
-    ];
-    for (const { file, value, write } of cases) {
-      mkdirSync(dirname(join(root, file)), { recursive: true });
-      const before = JSON.stringify(value);
-      writeFileSync(join(root, file), before);
-      assert.throws(write, /configuration|object|shape|refusing/i, file);
-      assert.equal(readFileSync(join(root, file), "utf8"), before, `${file} left untouched`);
-    }
-  } finally { cleanup(); }
-});
-
 test("writeCodexConfig refuses to create a duplicate [mcp_servers.hunch] table", () => {
   const { root, cleanup } = tempStore();
   try {
     mkdirSync(join(root, ".codex"), { recursive: true });
     writeFileSync(join(root, ".codex/config.toml"), "[mcp_servers.hunch]\ncommand = 'old'\n");
     assert.throws(() => writeCodexConfig(root, inv), /already defines \[mcp_servers\.hunch\]/);
-  } finally { cleanup(); }
-});
-
-test("writeCodexConfig refuses malformed user TOML before appending its block", () => {
-  const { root, cleanup } = tempStore();
-  try {
-    mkdirSync(join(root, ".codex"), { recursive: true });
-    const file = join(root, ".codex/config.toml");
-    for (const broken of [
-      "invalid = [unterminated\n",
-      "mcp_servers = 42\n",
-      "# >>> hunch mcp (managed) >>>\n[mcp_servers.hunch]\nargs = [unquoted]\n# <<< hunch mcp <<<\n",
-    ]) {
-      writeFileSync(file, broken);
-      assert.throws(() => writeCodexConfig(root, inv), /TOML|parse|refusing/i);
-      assert.equal(readFileSync(file, "utf8"), broken, "incompatible TOML left untouched");
-    }
   } finally { cleanup(); }
 });
 
@@ -333,21 +287,5 @@ test("scaffolders are idempotent — re-running adds no duplicates", () => {
 
     const agents = readFileSync(join(root, "AGENTS.md"), "utf8");
     assert.equal((agents.match(/HUNCH:START/g) ?? []).length, 1, "one grounding section");
-  } finally { cleanup(); }
-});
-
-test("writeCodexHooks merges idempotently and leaves foreign Codex hooks in place", () => {
-  const { root, cleanup } = tempStore();
-  try {
-    mkdirSync(join(root, ".codex"), { recursive: true });
-    writeFileSync(join(root, ".codex/hooks.json"), JSON.stringify({ hooks: { PreToolUse: [{ matcher: "shell", hooks: [{ type: "command", command: "node ./hook/index.js audit" }] }] } }));
-    const inv = publishedMcpInvocation();
-    writeCodexHooks(root, inv);
-    writeCodexHooks(root, inv);
-    const json = JSON.parse(readFileSync(join(root, ".codex/hooks.json"), "utf8"));
-    assert.equal(json.hooks.PreToolUse.length, 2, "foreign entry kept, one Hunch entry after two runs");
-    assert.equal(json.hooks.PreToolUse[0].hooks[0].command, "node ./hook/index.js audit");
-    assert.match(json.hooks.PreToolUse[1].hooks[0].command, /hunch hook --provider codex$/);
-    assert.doesNotMatch(json.hooks.PreToolUse[1].hooks[0].command, /"/, "unquoted published tokens");
   } finally { cleanup(); }
 });

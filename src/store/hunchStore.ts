@@ -13,7 +13,7 @@
 import { resolve, join, dirname, isAbsolute, relative } from "node:path";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { toPosixTarget, hunchPathsForDir, type HunchPaths } from "../core/paths.js";
-import { ENTITY_KINDS, type Component, type Constraint, type Bug, type Decision, type Symbol, type Edge, type Finding, type RejectedTripwire, type EntityKind, type EntityFor, type TaskRecord } from "../core/types.js";
+import { ENTITY_KINDS, type Component, type Constraint, type Bug, type Decision, type Symbol, type Edge, type Finding, type RejectedTripwire, type EntityKind, type EntityFor } from "../core/types.js";
 import { openDb, withTx, type DB } from "./db.js";
 import { RESET_SQL, embedHash } from "./schema.js";
 import { selectEmbedder, type Embedder } from "./embedder.js";
@@ -26,10 +26,6 @@ import {
   scopedLastChangeDates,
 } from "../extractors/git.js";
 import { pathMatchesGlob, pathsRelated } from "../core/glob.js";
-import { cochangeFor } from "../core/cochange.js";
-import { withServedDatabase } from "../core/served.js";
-import { normalizePath, rankTaskRecords, recordIdsOf, selectLatestTasks, selectTaskSlots, type RankingContext, type RankingQuery, type RankingWeights, type SlotOptions, type TaskSelection } from "../core/taskRanking.js";
-import { resolveTaskRankingMode } from "../core/taskRankingMode.js";
 import { currentForTopic, isInForce } from "../core/topics.js";
 import { edgeId } from "../core/ids.js";
 import { isStrictBlocker, isVetoBlocker, type VetoTier } from "../core/strictgate.js";
@@ -601,16 +597,6 @@ export class HunchStore {
       }
       counts.findings = fnds.length;
 
-      // Tasks (finished agent work as graph memory): same FTS-only ride. Title +
-      // the lesson/save/application record ids and touched files, so "what did
-      // an agent do around X" and a record id both hit.
-      const tasks = this.recs("tasks");
-      for (const t of tasks) {
-        fts(t.id, "tasks", t.title,
-          `${t.lessons.map((l) => `${l.record_id} ${l.title}`).join(" ")} ${t.applied.map((a) => a.record_id).join(" ")} ${t.saved.map((s) => s.record_id).join(" ")} ${t.files.join(" ")} ${t.state} ${t.coverage}`);
-      }
-      counts.tasks = tasks.length;
-
       // nuryel.state/1 kinds (receipts, commitments, derived, entities, relationships):
       // advisory records on the same FTS-only ride as runbooks/findings — no dedicated
       // SQL table. kind = the store kind; title = the subject key; body = the human words
@@ -640,20 +626,20 @@ export class HunchStore {
    *  relevance ordering (liveness/provenance/recency + topic-chain promotion)
    *  go through hybridSearch/searchScoped, where rerankByPriors applies.
    *  Falls back to LIKE if the query has no FTS-tokenizable terms. */
-  search(query: string, limit = 12, allowedIds?: readonly string[]): SearchHit[] {
+  search(query: string, limit = 12): SearchHit[] {
     const match = toFtsQuery(query);
     // No FTS-tokenizable terms (e.g. a CJK-only query) — degrade to LIKE rather
     // than silently returning nothing (the documented fallback).
-    if (!match) return this.likeSearch(query, limit, undefined, allowedIds);
+    if (!match) return this.likeSearch(query, limit);
     try {
       const rows = this.db.prepare(
         `SELECT ref, kind, title, snippet(search, 3, '[', ']', '…', 12) AS snip, bm25(search) AS score
-         FROM search WHERE search MATCH ? ${allowedIds ? 'AND ref IN (SELECT value FROM json_each(?))' : ''} ORDER BY score LIMIT ?`,
-      ).all(...(allowedIds ? [match, JSON.stringify(allowedIds), limit] : [match, limit])) as Array<{ ref: string; kind: string; title: string; snip: string; score: number }>;
+         FROM search WHERE search MATCH ? ORDER BY score LIMIT ?`,
+      ).all(match, limit) as Array<{ ref: string; kind: string; title: string; snip: string; score: number }>;
       return this.demoteHistoricalState(rows.map((r) => ({ ref: r.ref, kind: r.kind, title: r.title, snippet: r.snip, score: r.score })));
     } catch {
       // Malformed FTS expression — degrade to a LIKE scan over titles/bodies.
-      return this.likeSearch(query, limit, undefined, allowedIds);
+      return this.likeSearch(query, limit);
     }
   }
 
@@ -752,7 +738,7 @@ export class HunchStore {
    * `hunchrecorddecision` and matched nothing — on precisely the runtimes with no FTS5,
    * where this fallback is the only search there is. Escaping keeps the term literal;
    * leaving `_` unescaped would silently over-match instead. */
-  private likeSearch(query: string, limit: number, kind?: string, allowedIds?: readonly string[]): SearchHit[] {
+  private likeSearch(query: string, limit: number, kind?: string): SearchHit[] {
     const terms = (query.toLowerCase().match(/[\p{L}\p{N}_]+/gu)
       ?? [query.toLowerCase().trim()].filter(Boolean)).slice(0, 32);
     if (!terms.length) return [];
@@ -761,7 +747,8 @@ export class HunchStore {
       const like = `%${term.replace(/[\\%_]/g, "\\$&")}%`;
       return [like, like];
     });
-    const where = (kind ? `kind = ? AND (${predicates})` : `(${predicates})`) + (allowedIds ? " AND ref IN (SELECT value FROM json_each(?))" : "");
+    const where = kind ? `kind = ? AND (${predicates})` : `(${predicates})`;
+    const params: Array<string | number> = kind ? [kind, ...likes, limit] : [...likes, limit];
     // Ordered so a TRUNCATING limit drops the least relevant row rather than an
     // arbitrary one: a title hit outranks a body-only hit, then shortest title
     // (a constraint's one-line statement beats a long decision body that merely
@@ -774,7 +761,7 @@ export class HunchStore {
        WHERE ${where}
        ORDER BY CASE WHEN ${titleLikes} THEN 0 ELSE 1 END, length(title), ref
        LIMIT ?`,
-    ).all(...[...(kind ? [kind] : []), ...likes, ...(allowedIds ? [JSON.stringify(allowedIds)] : []), ...titleParams, limit]) as Array<{ ref: string; kind: string; title: string; snip: string }>;
+    ).all(...(kind ? [kind, ...likes, ...titleParams, limit] : [...likes, ...titleParams, limit])) as Array<{ ref: string; kind: string; title: string; snip: string }>;
     return this.demoteHistoricalState(rows.map((r) => ({ ref: r.ref, kind: r.kind, title: r.title, snippet: r.snip, score: 0 })));
   }
 
@@ -1286,13 +1273,13 @@ export class HunchStore {
    *  return only decisions/constraints whose valid-time window contained that
    *  instant — "what did we believe as of commit X?". Omit `asOf` for the full,
    *  history-inclusive view (backward-compatible default). */
-  why(target: string, opts: { asOf?: string; canRead?: (record: unknown) => boolean } = {}): WhyResult {
+  why(target: string, opts: { asOf?: string } = {}): WhyResult {
     target = toPosixTarget(target);
-    const decisions = this.recs("decisions").filter(opts.canRead ?? (() => true));
-    const bugs = this.recs("bugs").filter(opts.canRead ?? (() => true));
-    const constraints = this.recs("constraints").filter(opts.canRead ?? (() => true));
-    const symbols = this.recs("symbols").filter(opts.canRead ?? (() => true));
-    const components = this.recs("components").filter(opts.canRead ?? (() => true));
+    const decisions = this.recs("decisions");
+    const bugs = this.recs("bugs");
+    const constraints = this.recs("constraints");
+    const symbols = this.recs("symbols");
+    const components = this.recs("components");
     const asOf = opts.asOf;
 
     // pathsRelated, not bare endsWith: "scenario.ts".endsWith("io.ts") is true,
@@ -1571,112 +1558,6 @@ export class HunchStore {
         f.affected_files.some((af) => pathMatchesGlob(t, af) || pathMatchesGlob(af, t) || pathsRelated(toPosixTarget(af), t))
         || f.affected_symbols.some((s) => s === scope))
       .sort((a, b) => (SEV_FINDING[b.severity] ?? 0) - (SEV_FINDING[a.severity] ?? 0) || a.id.localeCompare(b.id));
-  }
-
-  /** Finished agent tasks that touched a file or glob (rule-checked changes and
-   *  denied edits), newest first. Graph memory, so it spans machines and survives
-   *  the local ledger's retention window. */
-  tasksFor(scope: string, limit = 8): TaskRecord[] {
-    const t = toPosixTarget(scope);
-    return this.recs("tasks")
-      .filter((r) => r.files.some((f) => pathMatchesGlob(t, f) || pathMatchesGlob(f, t) || pathsRelated(toPosixTarget(f), t)))
-      .sort((a, b) => b.finished_at.localeCompare(a.finished_at) || a.id.localeCompare(b.id))
-      .slice(0, Math.max(1, limit));
-  }
-
-  /** Every task record that could matter for `target` under the ranking gate:
-   *  same file (exact or glob), a dependent's file, a co-changed file, or a
-   *  record sharing one of the current task's own record ids. Bounded; the
-   *  ranker does the gating and scoring. */
-  taskCandidates(target: string, query: RankingQuery, ctx: RankingContext): TaskRecord[] {
-    const t = normalizePath(toPosixTarget(target));
-    const out = new Map<string, TaskRecord>();
-    for (const r of this.tasksFor(t, 200)) out.set(r.id, r);
-    if (ctx.dependents.size || ctx.cochange.size || query.recordIds.size) {
-      for (const r of this.recs("tasks")) {
-        if (out.has(r.id)) continue;
-        const files = r.files.map(normalizePath);
-        if (files.some((f) => ctx.dependents.has(f) || ctx.cochange.has(f))) { out.set(r.id, r); continue; }
-        if (query.recordIds.size) {
-          const ids = recordIdsOf(r);
-          for (const id of query.recordIds) if (ids.has(id)) { out.set(r.id, r); break; }
-        }
-      }
-    }
-    return [...out.values()];
-  }
-
-  /** Every task id some later record verified over. */
-  supersededTaskIds(): Set<string> {
-    const out = new Set<string>();
-    for (const r of this.recs("tasks")) for (const id of r.supersedes) out.add(id);
-    return out;
-  }
-
-  /** Last delivery time per task record from the local receipt ledger, if any. */
-  taskLastDelivered(): Map<string, number> {
-    const out = new Map<string, number>();
-    try {
-      withServedDatabase(this.paths.root, (db) => {
-        const rows = db.prepare("SELECT record_id, MAX(at) AS at FROM served WHERE kind = 'tasks' GROUP BY record_id").all() as Array<{ record_id: string; at: string }>;
-        for (const row of rows) { const t = Date.parse(row.at); if (Number.isFinite(t)) out.set(row.record_id, t); }
-      });
-    } catch { /* no ledger on this machine: recency falls back to finished_at */ }
-    return out;
-  }
-
-  /** bm25 of a phrase over task titles and lesson titles, normalized to the top hit. */
-  taskLexicalScores(phrase: string | null, limit = 50): Map<string, number> {
-    const scores = new Map<string, number>();
-    if (!phrase || !phrase.trim()) return scores;
-    const hits = this.scopedFts(phrase, "tasks", limit).filter((h) => Number.isFinite(h.score));
-    if (!hits.length) return scores;
-    // bm25 from FTS5 is negative, lower is better; normalize magnitude to the best hit.
-    const best = Math.max(...hits.map((h) => Math.abs(h.score)));
-    if (!(best > 0)) return scores;
-    for (const h of hits) scores.set(h.ref, Math.max(0, Math.min(1, Math.abs(h.score) / best)));
-    return scores;
-  }
-
-  /** Corpus inputs for ranking: dependents' files via the symbol graph, co-change
-   *  from git history (bounded, cached), record-id document frequencies across
-   *  task records, lexical scores, and which anchors still exist. */
-  taskRankingContext(target: string, query: RankingQuery): RankingContext {
-    const t = normalizePath(toPosixTarget(target));
-    const dependents = new Set<string>();
-    try {
-      const symbolFile = new Map(this.recs("symbols").map((s) => [s.id, normalizePath(s.file)]));
-      for (const sym of this.why(t).symbols) {
-        for (const d of this.getDependents(sym.id)) { const f = symbolFile.get(d.id); if (f && f !== t) dependents.add(f); }
-      }
-    } catch { /* no symbol graph: the dependents term is simply absent */ }
-    const cochange = /[./]/.test(t) && !/\s/.test(t) ? cochangeFor(this.paths.root, t) : new Map();
-    const tasks = this.recs("tasks");
-    const df = new Map<string, number>();
-    for (const r of tasks) for (const id of recordIdsOf(r)) df.set(id, (df.get(id) ?? 0) + 1);
-    const n = Math.max(1, tasks.length);
-    const ruleStats = (id: string) => { const d = df.get(id) ?? 0; return { df: d, idf: Math.log((n + 1) / (d + 1)) + 1e-6 }; };
-    const lexical = this.taskLexicalScores(query.phrase);
-    const anchorsAlive = (r: TaskRecord) => r.files.length ? r.files.filter((f) => existsSync(join(this.paths.root, normalizePath(f)))).length / r.files.length : 1;
-    const superseded = this.supersededTaskIds();
-    const delivered = this.taskLastDelivered();
-    return { dependents, cochange, ruleStats, lexical, anchorsAlive, superseded, lastDelivered: (id) => delivered.get(id) ?? null };
-  }
-
-  /** Gate → score → slots for one target and the current task's query (dec_66925aa0ee). */
-  selectTasksFor(target: string, query: RankingQuery, options: SlotOptions & { weights?: Readonly<RankingWeights>; mode?: "ranked" | "latest" } = {}): TaskSelection {
-    const ctx = this.taskRankingContext(target, query);
-    const candidates = this.taskCandidates(target, query, ctx);
-    if (options.mode === "latest") return selectLatestTasks(candidates, query, ctx);
-    const ranked = rankTaskRecords(candidates, query, ctx, options.weights);
-    return selectTaskSlots(ranked, options);
-  }
-
-  /** What delivery uses: the mode comes from the automatic evaluation (or a
-   *  local pin), never from a flag the caller has to remember. */
-  selectTasksAuto(target: string, query: RankingQuery): TaskSelection {
-    const resolved = resolveTaskRankingMode(this.paths.root, this);
-    return this.selectTasksFor(target, query, { mode: resolved.mode });
   }
 
   /** The causal chain behind a constraint — the WHY a diff-only reviewer can't see.
@@ -2030,14 +1911,14 @@ export class HunchStore {
   }
 
   /** Bugs matching a symptom (FTS over bugs) or a symbol, with lineage (hunch_bug_lineage). */
-  bugLineage(symptomOrSymbol: string, canRead?: (record: unknown) => boolean): Bug[] {
-    const bugs = this.recs("bugs").filter(canRead ?? (() => true));
+  bugLineage(symptomOrSymbol: string): Bug[] {
+    const bugs = this.recs("bugs");
     const direct = bugs.filter(
       (b) => b.affected_symbols.includes(symptomOrSymbol) || b.affected_files.includes(symptomOrSymbol),
     );
     if (direct.length) return direct;
     // fall back to fts over bug titles/symptoms
-    const hits = this.search(symptomOrSymbol, 12, canRead ? bugs.map(b => b.id) : undefined).filter((h) => h.kind === "bugs").map((h) => h.ref);
+    const hits = this.search(symptomOrSymbol).filter((h) => h.kind === "bugs").map((h) => h.ref);
     const byHit = bugs.filter((b) => hits.includes(b.id));
     if (byHit.length) return byHit;
     // last resort: naive substring over symptom/root_cause
@@ -2116,7 +1997,7 @@ export class HunchStore {
   /** The Context Assembler (DESIGN §2.1/§6): the MINIMAL relevant Hunch slice for
    *  a task on `target`, ordered by what matters most — invariants first, then the
    *  why, then blast radius and bug history — trimmed to a rough token budget. */
-  assembleContext(target: string, budget = 1500, opts: { asOf?: string; canRead?: (record: unknown) => boolean } = {}): AssembledContext {
+  assembleContext(target: string, budget = 1500, opts: { asOf?: string } = {}): AssembledContext {
     target = toPosixTarget(target);
     const w = this.why(target, opts);
     const symIds = w.symbols.map((s) => s.id);
@@ -2127,7 +2008,7 @@ export class HunchStore {
         if (!prev || d.depth < prev.depth) blast.set(d.id, d); // keep the MIN depth across start symbols
       }
     }
-    const bugs = w.bugs.length ? w.bugs : this.bugLineage(target, opts.canRead);
+    const bugs = w.bugs.length ? w.bugs : this.bugLineage(target);
 
     const ctx: AssembledContext = {
       target,
@@ -2136,13 +2017,13 @@ export class HunchStore {
       bugs,
       blast_radius: [...blast.values()].sort((a, b) => a.depth - b.depth).slice(0, 12),
       components: w.components,
-      findings: this.liveFindingsFor(target).filter(opts.canRead ?? (() => true)).slice(0, 8),
+      findings: this.liveFindingsFor(target).slice(0, 8),
       // Landscape records do not yet carry a valid-time window. A historical
       // query therefore withholds them instead of mixing current graph state
       // into an as-of memory envelope.
       landscape: opts.asOf
         ? undefined
-        : selectReviewedLandscape(this.recs("resources").filter(opts.canRead ?? (() => true)), this.recs("edges").filter(opts.canRead ?? (() => true)), target),
+        : selectReviewedLandscape(this.recs("resources"), this.recs("edges"), target),
       budget_tokens: budget,
     };
     return ctx;

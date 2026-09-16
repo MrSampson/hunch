@@ -53,48 +53,6 @@ test("normalizes successful and failed tool outcomes without persisting raw prov
     error: "Command exited with non-zero status code 1",
   }, "claude");
   assert.deepEqual(failure?.tool_outcome, { status: "failure", output: "Command exited with non-zero status code 1" });
-
-  const codexFailure = normalizeHookEvent({
-    hook_event_name: "PostToolUse",
-    session_id: "s1",
-    tool_name: "Bash",
-    tool_input: { command: "sh -c 'exit 7'" },
-    tool_response: { exit_code: 7, output: "" },
-  }, "codex");
-  assert.equal(codexFailure?.tool_outcome?.status, "failure", "an explicit nonzero result in PostToolUse is failure evidence");
-
-  const contradictory = normalizeHookEvent({
-    hook_event_name: "PostToolUse",
-    session_id: "s1",
-    tool_name: "Bash",
-    tool_response: { success: true, exit_code: 7 },
-  }, "codex");
-  assert.equal(contradictory?.tool_outcome?.status, "failure", "a nonzero result outranks a contradictory success flag");
-
-  const nonfinite = normalizeHookEvent({
-    hook_event_name: "PostToolUse",
-    session_id: "s1",
-    tool_name: "Bash",
-    tool_response: { exit_code: Number.POSITIVE_INFINITY },
-  }, "codex");
-  assert.equal(nonfinite?.tool_outcome?.status, "unknown", "nonfinite result codes are not failure evidence");
-
-  const httpResponse = normalizeHookEvent({
-    hook_event_name: "PostToolUse",
-    session_id: "s1",
-    tool_name: "Bash",
-    tool_response: { status_code: 200, code: 200 },
-  }, "codex");
-  assert.equal(httpResponse?.tool_outcome?.status, "unknown", "generic status fields are not process exit evidence");
-
-  const codexUnknown = normalizeHookEvent({
-    hook_event_name: "PostToolUse",
-    session_id: "s1",
-    tool_name: "Bash",
-    tool_input: { command: "sh -c 'exit 7'" },
-    tool_response: "",
-  }, "codex");
-  assert.equal(codexUnknown?.tool_outcome?.status, "unknown", "an empty PostToolUse result cannot prove failure or success");
 });
 
 test("normalizes Cursor's lower-camel hook event and snake payload", () => {
@@ -156,40 +114,4 @@ test("each native dialect gets its native deny/context/stop response", () => {
   assert.deepEqual(stopHookOutput("vscode", "verify"), { continue: false, stopReason: "verify" });
   assert.deepEqual(stopHookOutput("cursor", "verify"), { followup_message: "verify" });
   assert.deepEqual(stopHookOutput("antigravity", "verify"), { decision: "continue", reason: "verify" });
-});
-
-test("normalizes Codex hooks: apply_patch targets the first patched file, turn_id is the prompt identity, shell argv joins", () => {
-  const patch = "*** Begin Patch\n*** Update File: src/app.ts\n@@\n-old\n+new\n*** End Patch\n";
-  const edit = normalizeHookEvent({
-    hook_event_name: "PreToolUse", session_id: "thread-1", turn_id: "turn-7", cwd: "/repo",
-    tool_name: "apply_patch", tool_input: { input: patch },
-  }, "codex");
-  assert.equal(edit?.hook_event_name, "PreToolUse");
-  assert.equal(edit?.tool_name, "Edit", "a patch with a file path is an edit for policy purposes");
-  assert.equal(edit?.tool_input?.file_path, "src/app.ts");
-  assert.equal(edit?.tool_input?.content, patch);
-  assert.equal(edit?.prompt_id, "turn-7");
-  assert.equal(edit?.cwd, "/repo");
-  const shell = normalizeHookEvent({ hook_event_name: "PostToolUse", session_id: "thread-1", turn_id: "turn-7", tool_name: "local_shell", tool_input: { command: ["bash", "-lc", "npm test"] }, tool_response: { output: "ok" } }, "codex");
-  assert.equal(shell?.tool_name, "Bash");
-  assert.equal(shell?.tool_input?.command, "bash -lc npm test");
-  assert.equal(shell?.tool_outcome?.status, "success");
-  const prompt = normalizeHookEvent({ hook_event_name: "UserPromptSubmit", session_id: "thread-1", turn_id: "turn-8", prompt: "fix it" }, "codex");
-  assert.equal(prompt?.prompt_id, "turn-8");
-  assert.deepEqual(contextHookOutput("codex", "PreToolUse", "ctx"), { hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: "ctx" } }, "Codex reads Claude Code's stdout contract");
-  assert.deepEqual(denyHookOutput("codex", "no").output, { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "no" } });
-  assert.equal(normalizeHookEvent({ hook_event_name: "PreToolUse", session_id: "t", tool_name: "apply_patch", tool_input: { input: "not a patch" } }, "codex")?.tool_input, undefined, "a non-patch input is not a file edit");
-});
-
-test("does not retarget a normal write whose content contains patch markers", () => {
-  const write = normalizeHookEvent({
-    hook_event_name: "PreToolUse",
-    tool_name: "Write",
-    tool_input: {
-      file_path: "src/actual.md",
-      content: "Example patch syntax:\n*** Begin Patch\n*** Update File: src/other.ts\n*** End Patch\n",
-    },
-  }, "claude");
-  assert.equal(write?.tool_name, "Write");
-  assert.equal(write?.tool_input?.file_path, "src/actual.md");
 });

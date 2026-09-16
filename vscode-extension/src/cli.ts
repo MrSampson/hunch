@@ -6,9 +6,10 @@
  * writes (con: "Delegate all writes to CLI; extension is a pure JSON reader").
  */
 import * as vscode from "vscode";
+import * as cp from "node:child_process";
 import * as fs from "node:fs";
 import * as nodePath from "node:path";
-import { runHunchWith, spawnHunchWith, type CliResult } from "./spawnCore.js";
+import { runHunchWith, winQuote, type CliResult } from "./spawnCore.js";
 
 export { winQuote, type CliResult } from "./spawnCore.js";
 
@@ -49,7 +50,11 @@ export interface HunchProc { result: Promise<CliResult>; kill(): void; }
  *  process handle so the caller can cancel; `result` resolves (never rejects)
  *  with the full buffered output once the process exits.
  *
- *  Uses the same Windows shim/native argv launcher as buffered and MCP calls. */
+ *  Windows: same npm `.cmd` shim problem as `runHunch` — we can't spawn the shim via
+ *  argv without a shell (Node ≥18.20 CVE-2024-27980 hardening). So on Windows we build
+ *  the command line ourselves (each arg winQuote'd) and spawn it as a single string
+ *  under `shell:true`; passing NO separate args array avoids the DEP0190 warning that
+ *  `shell:true` + args triggers. Elsewhere the shell-free argv form is used. */
 export function spawnHunchProc(
   root: string,
   args: string[],
@@ -58,7 +63,9 @@ export function spawnHunchProc(
 ): HunchProc {
   let kill: () => void = () => { /* not started yet */ };
   const result = new Promise<CliResult>((resolve) => {
-    const child = spawnHunchWith(cliCommand(), root, args);
+    const child = process.platform === "win32"
+      ? cp.spawn([cliCommand(), ...args].map(winQuote).join(" "), { cwd: root, shell: true })
+      : cp.spawn(cliCommand(), args, { cwd: root });
     kill = () => { try { child.kill(); } catch { /* already gone */ } };
 
     let out = "", err = "", buf = "", settled = false;

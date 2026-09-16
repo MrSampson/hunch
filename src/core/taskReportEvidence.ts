@@ -1,8 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
-import { canonicalReportRoot } from "./taskReportPaths.js";
-import { resolveSpawnCommand } from "./spawnCommand.js";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { HunchStore } from "../store/hunchStore.js";
 import { analyzeDiff } from "../extractors/diff.js";
@@ -37,7 +35,7 @@ export interface ReportSnapshot { hash: string | null; limitations: string[] }
 export function reportSourceSnapshot(root: string): ReportSnapshot {
   const limitations = ["Git-ignored files, Hunch memory/cache, and external dependencies are outside this source snapshot."];
   try {
-    const base = canonicalReportRoot(root);
+    const base = realpathSync(root);
     const env: NodeJS.ProcessEnv = { ...process.env, GIT_OPTIONAL_LOCKS: "0" };
     for (const key of Object.keys(env)) if (key.startsWith("GIT_") && key !== "GIT_OPTIONAL_LOCKS") delete env[key];
     const paths = execFileSync("git", ["-C", base, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { env, timeout: 5_000, maxBuffer: 4_000_000 }).toString("utf8").split("\0").filter(Boolean);
@@ -79,7 +77,7 @@ export function reportSourceSnapshot(root: string): ReportSnapshot {
  * `not-exercised` or `unavailable` — never "satisfied" by file overlap. */
 export function runReportConformance(root: string, store: HunchStore, taskId: string): ReportConformance[] {
   const report = readTaskReport(root, taskId);
-  if (report.task.state !== "open" && report.task.closed_by !== "host") throw new Error("cannot evaluate rules for a closed task");
+  if (report.task.state !== "open") throw new Error("cannot evaluate rules for a closed task");
   const delivered = [...new Map(report.deliveries.flatMap(d => d.records).filter(r => r.kind === "constraints" || r.kind === "decisions").map(r => [`${r.kind}:${r.record_id}:${r.content_hash}`, r])).values()];
   if (!delivered.length) return [];
   const before = reportSourceSnapshot(root).hash;
@@ -151,17 +149,13 @@ export async function runReportCheck(root: string, taskId: string, command: stri
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_CHECK_TIMEOUT_MS) throw new Error(`verification timeout must be between 1 and ${MAX_CHECK_TIMEOUT_MS} ms`);
   options.signal?.throwIfAborted();
   const task = readTaskReport(root, taskId).task;
-  if (task.state !== "open" && task.closed_by !== "host") throw new Error("cannot verify a closed task");
+  if (task.state !== "open") throw new Error("cannot verify a closed task");
   const before = reportSourceSnapshot(root);
   // Validate sensitive arguments before executing or writing anything.
   ReportCheckSchema.parse({ label, command, exit_code: null, output_hash: reportHash(""), before_snapshot: before.hash, after_snapshot: null, snapshot_limitations: before.limitations, timed_out: false, source: "local-command-runner" });
-  const checkId = beginReportCheck(root, taskId, label, timeoutMs);
+  const checkId = beginReportCheck(root, taskId, label);
   const result = await new Promise<{ code: number | null; timedOut: boolean; cancelled: boolean; hash: string }>((resolveResult) => {
-    // Windows launchers (npx.cmd, npm.cmd, other .cmd/.bat shims) cannot be spawned
-    // without a shell; resolve them first so a check actually runs instead of
-    // silently recording exit_code null (fnd: every Windows card said "no result").
-    const resolved = resolveSpawnCommand(command);
-    const child = spawn(resolved.file, resolved.args, { cwd: root, shell: false, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, detached: process.platform !== "win32", windowsVerbatimArguments: resolved.windowsVerbatimArguments === true });
+    const child = spawn(command[0]!, command.slice(1), { cwd: root, shell: false, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, detached: process.platform !== "win32" });
     const stdout = createHash("sha256"), stderr = createHash("sha256");
     let timedOut = false, cancelled = false, settled = false;
     let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
@@ -192,13 +186,7 @@ export async function runReportCheck(root: string, taskId: string, command: stri
     // Separate streaming digests are stable across stdout/stderr chunk ordering.
     child.stdout.on("data", chunk => { if (!settled) { stdout.update(chunk); options.onStdout?.(chunk); } });
     child.stderr.on("data", chunk => { if (!settled) { stderr.update(chunk); options.onStderr?.(chunk); } });
-    child.once("error", (error) => {
-      // A launch failure is a result the user must see (ENOENT is the common
-      // one); it is hashed like any other stderr and streamed to the caller.
-      const message = Buffer.from(`hunch: could not start ${JSON.stringify(command[0])}: ${error.message}\n`);
-      if (!settled) { stderr.update(message); options.onStderr?.(message); }
-      settle(null);
-    });
+    child.once("error", () => settle(null));
     child.once("close", code => settle(code));
     options.signal?.addEventListener("abort", cancel, { once: true });
     if (options.signal?.aborted) cancel();

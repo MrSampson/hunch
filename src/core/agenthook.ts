@@ -5,7 +5,7 @@
  * fields or tools. Keep that variability here so the policy engine receives
  * the same small, fail-open shape regardless of the assistant that emitted it.
  */
-export const HOOK_PROVIDERS = ["claude", "codex", "vscode", "windsurf", "antigravity", "cursor"] as const;
+export const HOOK_PROVIDERS = ["claude", "vscode", "windsurf", "antigravity", "cursor"] as const;
 export type HookProvider = (typeof HOOK_PROVIDERS)[number];
 
 export type HunchHookEvent = "PreToolUse" | "PostToolUse" | "PostToolUseFailure" | "UserPromptSubmit" | "SessionStart" | "SubagentStart" | "PreCompact" | "Stop";
@@ -85,26 +85,9 @@ function edits(value: unknown): Array<{ new_string?: string }> | undefined {
   return normalized.length ? normalized : undefined;
 }
 
-/** Codex edits files through `apply_patch`, whose input is the patch text itself
- * (`*** Update File: path`). The first touched path becomes the edit target so the
- * per-file pre-edit gate applies; the whole patch stands in for the new content. */
-const PATCH_FILE = /^\*\*\* (?:Update|Add|Delete) File: (.+?)\s*$/m;
-function applyPatchInput(raw: JsonObject): HunchToolInput | undefined {
-  const patch = [raw.input, raw.patch, raw.content].find((v): v is string => typeof v === "string" && /\*\*\* Begin Patch/.test(v));
-  if (!patch) return undefined;
-  const file = PATCH_FILE.exec(patch)?.[1];
-  return file ? { file_path: file, content: patch } : undefined;
-}
-
-function normalizeToolInput(value: unknown, allowPatch = false): HunchToolInput | undefined {
+function normalizeToolInput(value: unknown): HunchToolInput | undefined {
   const raw = obj(value);
   if (!raw) return undefined;
-  // Only Codex's apply_patch tool carries patch text in a generic `input`,
-  // `patch`, or `content` field. A normal Write can contain documentation or
-  // examples with these markers; interpreting those as a patch would retarget
-  // policy to the first file named in the prose.
-  const patched = allowPatch ? applyPatchInput(raw) : undefined;
-  if (patched) return patched;
   const replacementChunks = Array.isArray(raw.ReplacementChunks) ? raw.ReplacementChunks : raw.replacementChunks;
   const chunkEdits = Array.isArray(replacementChunks)
     ? replacementChunks.map((chunk) => obj(chunk)).filter((chunk): chunk is JsonObject => !!chunk)
@@ -115,9 +98,7 @@ function normalizeToolInput(value: unknown, allowPatch = false): HunchToolInput 
     new_string: stringAt(raw, "new_string", "newString", "ReplacementContent", "replacementContent", "TargetContent", "targetContent"),
     content: stringAt(raw, "content", "contents", "CodeContent", "codeContent"),
     edits: edits(raw.edits) ?? edits(raw.files) ?? chunkEdits,
-    // Codex's shell tools carry argv arrays (["bash", "-lc", "…"]); policies read one string.
-    command: stringAt(raw, "command", "commandLine", "CommandLine", "cmd")
-      ?? (Array.isArray(raw.command) && raw.command.every(p => typeof p === "string") ? (raw.command as string[]).join(" ") : undefined),
+    command: stringAt(raw, "command", "commandLine", "CommandLine", "cmd"),
     skill: stringAt(raw, "skill", "skillName", "name"),
   };
   return Object.values(out).some((v) => v !== undefined) ? out : undefined;
@@ -141,38 +122,17 @@ function toolOutput(value: unknown): string {
   }
 }
 
-function explicitToolOutcome(response: unknown): HunchToolOutcome["status"] {
-  const raw = obj(response);
-  if (!raw) return typeof response === "string" && response.trim() ? "success" : "unknown";
-  if (raw.success === false || raw.is_error === true || raw.isError === true || (raw.error !== undefined && raw.error !== null)) return "failure";
-  const status = raw.status;
-  if (typeof status === "string") {
-    if (/^(?:failure|failed|error|errored)$/i.test(status.trim())) return "failure";
-  }
-  let explicitSuccess = raw.success === true || raw.is_error === false || raw.isError === false;
-  for (const key of ["exit_code", "exitCode", "return_code", "returnCode"]) {
-    const value = raw[key];
-    const numeric = typeof value === "number" ? value : typeof value === "string" && /^-?\d+$/.test(value.trim()) ? Number(value) : undefined;
-    if (numeric === undefined || !Number.isFinite(numeric)) continue;
-    if (numeric !== 0) return "failure";
-    explicitSuccess = true;
-  }
-  if (typeof status === "string" && /^(?:success|succeeded|ok|completed)$/i.test(status.trim())) explicitSuccess = true;
-  if (explicitSuccess) return "success";
-  // Common successful tool-result shapes carry output fields even when the
-  // output is empty. An unstructured empty string (Codex's native failure
-  // payload) remains unknown until the host supplies an explicit status.
-  if (["stdout", "stderr", "output", "content"].some(key => Object.prototype.hasOwnProperty.call(raw, key))) return "success";
-  return "unknown";
-}
-
 function normalizeToolOutcome(input: JsonObject, event: HunchHookEvent): HunchToolOutcome | undefined {
   if (event !== "PostToolUse" && event !== "PostToolUseFailure") return undefined;
   const response = input.tool_response ?? input.toolResponse ?? input.tool_result ?? input.toolResult;
   return {
     // Claude Code splits successful and failed calls into separate lifecycle
     // events. Providers without that split may expose an explicit result flag.
-    status: event === "PostToolUseFailure" ? "failure" : explicitToolOutcome(response),
+    status: event === "PostToolUseFailure"
+      ? "failure"
+      : obj(response)?.success === false || obj(response)?.is_error === true || obj(response)?.isError === true
+        ? "failure"
+        : "success",
     output: event === "PostToolUseFailure"
       ? toolOutput(input.error ?? response)
       : toolOutput(response),
@@ -256,18 +216,13 @@ export function normalizeHookEvent(raw: unknown, provider: HookProvider): HunchH
 
   const event = eventName(input.hook_event_name ?? input.hookEventName ?? input.event, provider);
   if (!event) return null;
-  const rawToolName = stringAt(input, "tool_name", "toolName");
-  const toolInput = normalizeToolInput(input.tool_input ?? input.toolInput,
-    provider === "codex" && /^(?:apply_patch|patch)$/i.test(rawToolName ?? ""));
+  const toolInput = normalizeToolInput(input.tool_input ?? input.toolInput);
   const toolOutcome = normalizeToolOutcome(input, event);
   return {
     hook_event_name: event,
     session_id: stringAt(input, "session_id", "sessionId", "conversation_id", "conversationId"),
-    // Codex delivers the same lifecycle payload with `turn_id` where Claude Code
-    // says `prompt_id`; both are native per-prompt identities, never synthesized.
-    ...(provider === "codex" && input.prompt_id === undefined && input.turn_id !== undefined ? { prompt_id: typeof input.turn_id === "string" ? input.turn_id : "" } : {}),
-    ...(provider === "claude" || provider === "codex" ? Object.fromEntries(["prompt_id", "cwd", "agent_id"].filter(key => input[key] !== undefined).map(key => [key, typeof input[key] === "string" ? input[key] : ""])) : {}),
-    tool_name: hunchToolName(rawToolName, toolInput ?? {}),
+    ...(provider === "claude" ? Object.fromEntries(["prompt_id", "cwd", "agent_id"].filter(key => input[key] !== undefined).map(key => [key, typeof input[key] === "string" ? input[key] : ""])) : {}),
+    tool_name: hunchToolName(stringAt(input, "tool_name", "toolName"), toolInput ?? {}),
     tool_input: toolInput,
     ...(toolOutcome ? { tool_outcome: toolOutcome } : {}),
     prompt: stringAt(input, "prompt", "user_prompt", "userPrompt"),

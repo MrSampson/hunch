@@ -31,11 +31,7 @@ export function writeMcpJson(root: string, inv: Invocation): string {
       }
     }
   }
-  const servers = json.mcpServers;
-  if (servers !== undefined && (!servers || typeof servers !== "object" || Array.isArray(servers))) {
-    throw new Error(`refusing to edit ${file}: mcpServers must be a JSON object when present; fix it, then re-run.`);
-  }
-  json.mcpServers = servers as Record<string, unknown> | undefined ?? {};
+  json.mcpServers = json.mcpServers ?? {};
   json.mcpServers.hunch = { command: inv.command, args: [...inv.args, "mcp"] };
   // Atomic: .mcp.json holds the user's other servers — a torn write would leave
   // it unparseable, which this writer then refuses to touch (issue #43).
@@ -138,7 +134,7 @@ function isHunchHook(entry: HookEntry): boolean {
   return !!entry.hooks?.some((h) => {
     if (typeof h.command !== "string") return false;
     const command = h.command;
-    const nativeOrSource = /(?:dist|src)[\\/]+cli[\\/]+index\.(js|ts)"?\s+hook\s*$/.test(command);
+    const nativeOrSource = /[\\/]index\.(js|ts)"?\s+hook\s*$/.test(command);
     const publishedNpx = /^\s*"?npx(?:\.cmd)?"?\s+/i.test(command)
       && /--package=(?:hunch-exact@npm:)?@davesheffer\/hunch(?:@[^"\s]+)?/.test(command)
       && /\s"?hunch"?\s+"?hook"?\s*$/.test(command);
@@ -174,17 +170,7 @@ export function installClaudeHooks(root: string, hookCmd: string): ClaudeHookIns
       }
     }
   }
-  const hooks = json.hooks;
-  if (hooks !== undefined && (!hooks || typeof hooks !== "object" || Array.isArray(hooks))) {
-    throw new Error(`refusing to edit ${file}: hooks must be a JSON object when present; fix it, then re-run.`);
-  }
-  json.hooks = hooks as Record<string, HookEntry[]> | undefined ?? {};
-  for (const event of ["PreToolUse", "UserPromptSubmit", "SessionStart", "SubagentStart", "PreCompact", "PostToolUse", "PostToolUseFailure", "Stop"]) {
-    const existing = json.hooks[event];
-    if (existing !== undefined && !Array.isArray(existing)) {
-      throw new Error(`refusing to edit ${file}: hooks.${event} must be an array when present; fix it, then re-run.`);
-    }
-  }
+  json.hooks = json.hooks ?? {};
   const keep = (arr?: HookEntry[]) => (Array.isArray(arr) ? arr.filter((e) => !isHunchHook(e)) : []);
 
   json.hooks.PreToolUse = [

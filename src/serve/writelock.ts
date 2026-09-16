@@ -56,13 +56,7 @@ function pidAlive(pid: number): boolean {
 function stealable(path: string, owner: LockOwner | undefined, now: number): boolean {
   let ageMs: number;
   try { ageMs = now - statSync(path).mtimeMs; } catch { return false; }
-  // A same-host live PID is authoritative even when a long-running write has
-  // exceeded the stale-age heuristic. Age alone cannot distinguish a slow
-  // writer from a dead one; stealing here would let two writers interleave
-  // their record and ledger updates. The age fallback is only safe when the
-  // owner is from another host (whose PID we cannot probe) or its metadata is
-  // unreadable.
-  if (owner && owner.host === hostname()) return !pidAlive(owner.pid);
+  if (owner && owner.host === hostname() && !pidAlive(owner.pid)) return true;
   return ageMs > STALE_AFTER_MS;
 }
 

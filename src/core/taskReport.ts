@@ -7,7 +7,7 @@ import { z } from "zod";
 import { assertDeliveryEnvelope, type DeliveryEnvelope } from "./delivery.js";
 import { isCredentialFreeText } from "./types.js";
 import { withServedDatabase } from "./served.js";
-import { assertReportPath, canonicalReportRoot } from "./taskReportPaths.js";
+import { assertReportPath } from "./taskReportPaths.js";
 
 export const TASK_REPORT_SCHEMA = "hunch.task-report/1" as const;
 export const TaskIdSchema = z.string().regex(/^htask_[a-f0-9]{24}$/);
@@ -92,27 +92,11 @@ const TaskSchema = z.object({
   task_id: TaskIdSchema, scope: hashSchema, title: safeText(200),
   started_at: z.string().datetime(), finished_at: z.string().datetime().nullable(),
   state: z.enum(["open", "completed", "interrupted"]),
-  /** Who closed the task. "host": the lifecycle hook at Stop, a provisional
-   * close that a continuation reopens and an explicit agent finish overrides.
-   * Absent on rows written before this field existed (agent closes). */
-  closed_by: z.enum(["agent", "host"]).optional(),
-  /** Continuity across the prompts of one host session. `session_key` is a hash
-   * of (root, provider, session, agent), never the identifier itself; `continues`
-   * names the previous prompt's task when this prompt followed it within the
-   * continuation window; `episode` names the first task of that chain, the id
-   * the chain's graph record is written under. Absent on older rows and on
-   * tasks started without a host session (one task, one episode). */
-  session_key: hashSchema.optional(),
-  continues: TaskIdSchema.optional(),
-  episode: TaskIdSchema.optional(),
 }).strict();
 export type ReportTask = z.infer<typeof TaskSchema>;
 export interface TaskDelivery {
   occurrence_id: string; at: string; receipt_id: string;
   envelope_hash: string; envelope: DeliveryEnvelope; records: ReportRecord[];
-  /** What the caller asked context for (a file, symbol or task phrase); null for
-   * deliveries recorded by releases that did not retain it. */
-  target: string | null;
 }
 export interface TaskReport {
   schema: typeof TASK_REPORT_SCHEMA;
@@ -223,9 +207,9 @@ export function readLessonHistory(root: string, reference: LessonReference, opti
       const rows = db.prepare(`SELECT e.rowid AS seq, e.event_id, e.kind, e.at, e.body, e.content_hash, t.body AS task
         FROM report_record_links l JOIN report_events e ON e.event_id = l.event_id
         JOIN report_tasks t ON t.task_id = e.task_id
-        WHERE t.scope IN (?, ?, ?) AND l.kind = ? AND l.record_id = ?
+        WHERE t.scope = ? AND l.kind = ? AND l.record_id = ?
           AND (? IS NULL OR l.content_hash = ?) AND e.rowid < ?
-        ORDER BY e.rowid DESC LIMIT ?`).all(...scopePair(root), ref.kind, ref.record_id, ref.content_hash ?? null, ref.content_hash ?? null, before ?? Number.MAX_SAFE_INTEGER, limit + 1) as Array<{ seq: number; event_id: string; kind: string; at: string; body: string; content_hash: string; task: string }>;
+        ORDER BY e.rowid DESC LIMIT ?`).all(scopeOf(root), ref.kind, ref.record_id, ref.content_hash ?? null, ref.content_hash ?? null, before ?? Number.MAX_SAFE_INTEGER, limit + 1) as Array<{ seq: number; event_id: string; kind: string; at: string; body: string; content_hash: string; task: string }>;
       return { more, rows };
     }, true);
     const entries = rows.slice(0, limit).map(row => {
@@ -241,21 +225,10 @@ export function readLessonHistory(root: string, reference: LessonReference, opti
     return { schema: "hunch.lesson-history/1", reference: ref, entries, index_complete: !more, truncated: rows.length > limit, next_before: !more && rows.length > limit ? rows[limit - 1]!.seq : null };
   });
 }
-/** Task scope = the physical repository root. Rows written by releases that hashed
- * the caller-cased realpath stay readable until they expire: the caller's own
- * spelling plus, on Windows, the other drive-letter case (a hook and an MCP
- * server spawned by the same host commonly disagree on exactly that). */
-function scopeOf(root: string): string { return reportHash(canonicalReportRoot(root)); }
-function scopePair(root: string): [string, string, string] {
-  const legacy = realpathSync(root);
-  const swapped = /^[A-Za-z]:/.test(legacy)
-    ? (legacy.charAt(0) === legacy.charAt(0).toLowerCase() ? legacy.charAt(0).toUpperCase() : legacy.charAt(0).toLowerCase()) + legacy.slice(1)
-    : legacy;
-  return [scopeOf(root), reportHash(legacy), reportHash(swapped)];
-}
+function scopeOf(root: string): string { return reportHash(realpathSync(root)); }
 function readTask(db: Database, root: string, id: string): ReportTask {
   TaskIdSchema.parse(id);
-  const row = db.prepare("SELECT body FROM report_tasks WHERE task_id = ? AND scope IN (?, ?, ?)").get(id, ...scopePair(root)) as { body: string } | undefined;
+  const row = db.prepare("SELECT body FROM report_tasks WHERE task_id = ? AND scope = ?").get(id, scopeOf(root)) as { body: string } | undefined;
   if (!row) throw new Error("task not found in this repository/worktree; use its exact task ID and working directory");
   return TaskSchema.parse(JSON.parse(row.body));
 }
@@ -264,10 +237,9 @@ function transaction<T>(db: Database, run: () => T, readOnly = false): T {
   try { const result = run(); db.exec("COMMIT"); return result; }
   catch (error) { db.exec("ROLLBACK"); throw error; }
 }
-export interface TaskLinks { session_key?: string; continues?: string; episode?: string }
-export function startReportTask(root: string, title: string, taskId?: string, links: TaskLinks = {}): ReportTask {
+export function startReportTask(root: string, title: string, taskId?: string): ReportTask {
   const task = TaskSchema.parse({ task_id: taskId ?? `htask_${randomBytes(12).toString("hex")}`,
-    scope: scopeOf(root), title, started_at: new Date().toISOString(), finished_at: null, state: "open", ...links });
+    scope: scopeOf(root), title, started_at: new Date().toISOString(), finished_at: null, state: "open" });
   // Local observations have a bounded lifetime; durable project memory is untouched.
   pruneReportHistory(root);
   return taskDb(root, db => transaction(db, () => {
@@ -280,30 +252,6 @@ export function startReportTask(root: string, title: string, taskId?: string, li
     db.prepare("INSERT INTO report_tasks VALUES (?, ?, ?)").run(task.task_id, task.scope, JSON.stringify(task));
     return task;
   }));
-}
-
-/** A prompt that follows another in the same session within this window is the
- * same work: its task continues the previous one and shares its episode. */
-export const CONTINUATION_WINDOW_MS = 30 * 60_000;
-/** The links a new prompt's task takes from the latest task of its session, or
- * null when that task is too old (measured from its close, or its start when it
- * was never closed) to be the same work. */
-export function continuationLinks(previous: ReportTask | null, nowMs = Date.now()): { continues: string; episode: string } | null {
-  if (!previous) return null;
-  const reference = Date.parse(previous.finished_at ?? previous.started_at);
-  if (!Number.isFinite(reference) || nowMs - reference > CONTINUATION_WINDOW_MS) return null;
-  return { continues: previous.task_id, episode: previous.episode ?? previous.task_id };
-}
-/** The most recent task of a session in this worktree, or null. */
-export function latestSessionTask(root: string, sessionKey: string): ReportTask | null {
-  return taskDb(root, db => {
-    const row = db.prepare("SELECT body FROM report_tasks WHERE scope IN (?, ?, ?) AND json_extract(body, '$.session_key') = ? ORDER BY rowid DESC LIMIT 1").get(...scopePair(root), sessionKey) as { body: string } | undefined;
-    return row ? TaskSchema.parse(JSON.parse(row.body)) : null;
-  });
-}
-/** Every task of an episode, oldest first: the head and the prompts that continued it. */
-export function episodeTasks(root: string, headId: string): ReportTask[] {
-  return taskDb(root, db => (db.prepare("SELECT body FROM report_tasks WHERE task_id = ? OR json_extract(body, '$.episode') = ? ORDER BY rowid").all(headId, headId) as Array<{ body: string }>).map(r => TaskSchema.parse(JSON.parse(r.body))));
 }
 
 function appendEvent(root: string, taskId: string, kind: string, body: unknown, eventId?: string): string {
@@ -319,20 +267,14 @@ function appendEvent(root: string, taskId: string, kind: string, body: unknown, 
       if (prior.task_id !== taskId || prior.kind !== kind || prior.content_hash !== contentHash) throw new Error("report event identity conflicts with existing evidence");
       return id;
     }
-    if (task.state !== "open" && !(kind === "check" && task.state === "interrupted")) {
-      if (task.closed_by !== "host") throw new Error("task is already closed; start a new task for new work");
-      // The host closed this task at Stop, but the turn went on (another hook's
-      // block, a resumed prompt). Reopen it for the new observation; the next
-      // Stop closes it again and the graph record is refreshed from the report.
-      db.prepare("UPDATE report_tasks SET body = ? WHERE task_id = ?").run(JSON.stringify(TaskSchema.parse({ ...task, state: "open", finished_at: null, closed_by: undefined })), taskId);
-    }
+    if (task.state !== "open" && !(kind === "check" && task.state === "interrupted")) throw new Error("task is already closed; start a new task for new work");
     if (kind === "check") {
       const check = ReportCheckSchema.parse(body);
       if (!check.check_id || !db.prepare("SELECT event_id FROM report_events WHERE event_id = ? AND task_id = ? AND kind = 'check-start'").get(check.check_id, taskId)) throw new Error("verification result has no matching start in this task");
     }
     const { total, bytes, pending } = db.prepare(`SELECT COUNT(*) AS total,
       COALESCE(SUM(length(CAST(body AS BLOB))), 0) AS bytes,
-      SUM(CASE WHEN kind = 'check-start' AND (julianday('now') - julianday(at)) * 86400000 < COALESCE(json_extract(body, '$.timeout_ms'), ${MAX_PENDING_CHECK_MS}) + ${CHECK_RESULT_GRACE_MS} THEN 1 WHEN kind = 'check' AND json_extract(body, '$.check_id') IS NOT NULL THEN -1 ELSE 0 END) AS pending
+      SUM(CASE WHEN kind = 'check-start' THEN 1 WHEN kind = 'check' AND json_extract(body, '$.check_id') IS NOT NULL THEN -1 ELSE 0 END) AS pending
       FROM report_events WHERE task_id = ?`).get(taskId) as { total: number; bytes: number; pending: number | null };
     const reserved = Math.max(0, (pending ?? 0) + (kind === "check-start" ? 1 : kind === "check" ? -1 : 0));
     if (total + 1 + reserved > MAX_EVENTS || bytes + Buffer.byteLength(encoded) + reserved * MAX_EVENT_BYTES > MAX_TASK_BYTES) throw new Error("task observation limit reached; start a new task");
@@ -369,7 +311,7 @@ export function unseenLessons(root: string, taskId: string, records: readonly Re
 }
 /** Strict operation for explicit callers. Passive integrations catch failure
  * and disclose it without blocking context delivery. Empty envelopes count. */
-export function recordTaskDelivery(root: string, taskId: string, envelope: DeliveryEnvelope, records: ReportRecord[], occurrenceId = `hocc_${randomBytes(12).toString("hex")}`, target?: string): string {
+export function recordTaskDelivery(root: string, taskId: string, envelope: DeliveryEnvelope, records: ReportRecord[], occurrenceId = `hocc_${randomBytes(12).toString("hex")}`): string {
   assertDeliveryEnvelope(envelope);
   const snapshots = z.array(ReportRecordSchema).max(512).parse(records);
   const seen = new Set<string>();
@@ -378,10 +320,7 @@ export function recordTaskDelivery(root: string, taskId: string, envelope: Deliv
     if (seen.has(key) || !envelope.delivered.some(r => r.record_id === record.record_id && r.kind === record.kind)) throw new Error("snapshot is duplicated or was not delivered");
     seen.add(key);
   }
-  // The target is optional so envelopes recorded without one keep their exact
-  // event hash; it is bounded like any other retained text.
-  const retainedTarget = typeof target === "string" && target.trim() && target.length <= 1024 && isCredentialFreeText(target) ? target : undefined;
-  return appendEvent(root, taskId, "delivery", { envelope, records: snapshots, ...(retainedTarget ? { target: retainedTarget } : {}) }, occurrenceId);
+  return appendEvent(root, taskId, "delivery", { envelope, records: snapshots }, occurrenceId);
 }
 export function recordReportClaim(root: string, taskId: string, claim: ReportClaim): string {
   const value = ReportClaimSchema.parse(claim);
@@ -417,172 +356,34 @@ export function recordReportCheck(root: string, taskId: string, check: ReportChe
   if (!value.check_id) throw new Error("verification result requires a reserved check identity");
   return appendEvent(root, taskId, "check", value, `hev_${reportHash({ taskId, check: value.check_id }).slice(7, 31)}`);
 }
-/** A start without a result blocks completion only while the runner could still
- * deliver one: its own timeout plus a minute of grace. After that the runner is
- * gone (a killed process, a closed laptop) and the report's unknowns already say
- * the result was not retained; freezing the task forever would add nothing.
- * Starts recorded before the timeout was retained use the verification ceiling. */
-export const CHECK_RESULT_GRACE_MS = 60_000;
-export const MAX_PENDING_CHECK_MS = 6 * 60 * 60_000;
-export function beginReportCheck(root: string, taskId: string, label: string, timeoutMs?: number): string {
-  const timeout = Number.isInteger(timeoutMs) && (timeoutMs as number) > 0 ? { timeout_ms: timeoutMs } : {};
-  return appendEvent(root, taskId, "check-start", { label: safeText(200).parse(label), ...timeout });
+export function beginReportCheck(root: string, taskId: string, label: string): string {
+  return appendEvent(root, taskId, "check-start", { label: safeText(200).parse(label) });
 }
-/** `by: "host"` is the lifecycle hook closing the prompt's task at Stop. It is
- * provisional: a later observation reopens the task (see appendEvent) and an
- * explicit agent finish, with any outcome, replaces it. Pending verification
- * keeps the task open for either closer. */
-export function finishReportTask(root: string, taskId: string, state: "completed" | "interrupted" = "completed", options: { by?: "agent" | "host" } = {}): ReportTask {
-  const by = options.by ?? "agent";
+export function finishReportTask(root: string, taskId: string, state: "completed" | "interrupted" = "completed"): ReportTask {
   return taskDb(root, db => transaction(db, () => {
     const task = readTask(db, root, taskId);
     if (task.state !== "open") {
-      if (task.closed_by === "host" && by === "agent") {
-        const confirmed = TaskSchema.parse({ ...task, state, finished_at: task.state === state ? task.finished_at : new Date().toISOString(), closed_by: "agent" });
-        db.prepare("UPDATE report_tasks SET body = ? WHERE task_id = ?").run(JSON.stringify(confirmed), taskId);
-        return confirmed;
-      }
       if (task.state !== state) throw new Error("task already closed with a different outcome");
       return task;
     }
     if (state === "completed") {
-      const { pending } = db.prepare(`SELECT SUM(CASE WHEN kind = 'check-start' AND (julianday('now') - julianday(at)) * 86400000 < COALESCE(json_extract(body, '$.timeout_ms'), ${MAX_PENDING_CHECK_MS}) + ${CHECK_RESULT_GRACE_MS} THEN 1 WHEN kind = 'check' AND json_extract(body, '$.check_id') IS NOT NULL THEN -1 ELSE 0 END) AS pending FROM report_events WHERE task_id = ?`).get(taskId) as { pending: number | null };
+      const { pending } = db.prepare(`SELECT SUM(CASE WHEN kind = 'check-start' THEN 1 WHEN kind = 'check' AND json_extract(body, '$.check_id') IS NOT NULL THEN -1 ELSE 0 END) AS pending FROM report_events WHERE task_id = ?`).get(taskId) as { pending: number | null };
       if ((pending ?? 0) > 0) throw new Error("verification is still running or was interrupted; wait for its result or close the task as interrupted");
     }
-    const finished = TaskSchema.parse({ ...task, state, finished_at: new Date().toISOString(), closed_by: by });
+    const finished = TaskSchema.parse({ ...task, state, finished_at: new Date().toISOString() });
     db.prepare("UPDATE report_tasks SET body = ? WHERE task_id = ?").run(JSON.stringify(finished), taskId);
     return finished;
   }));
 }
-/** A report with no observation of any kind. Presentation surfaces may stay
- * silent for it; the task row itself is retained so "never touched Hunch" is
- * still countable (hunch report / the VS Code view / task list). */
-export function isEmptyTaskReport(report: Pick<TaskReport, "deliveries" | "claims" | "checks" | "conformance" | "saves" | "refusals">): boolean {
-  return !report.deliveries.length && !report.claims.length && !report.checks.length && !report.conformance.length && !report.saves.length && !report.refusals.length;
-}
-
-export interface TaskSummary {
-  task: ReportTask;
-  deliveries: number;
-  lessons: number;
-  claims: number;
-  saves: number;
-  refusals: number;
-  /** Standing of the last recorded check, or null when none ran. */
-  check: { label: string; state: "passed" | "failed" | "timed out" | "cancelled"; current: boolean } | null;
-  /** Any delivered rule evaluated as violated on the changed files. */
-  violated: boolean;
-  coverage: TaskReport["coverage"];
-  empty: boolean;
-  /** Generated evidence view, when one has been written for this task. */
-  report_html: string | null;
-  /** Set when the observation ledger could not be read for this task. */
-  error: string | null;
-  /** Set when the task has a graph record (.hunch/tasks/), and where it lives. */
-  durable?: { home: "public" | "private" } | null;
-}
-
-/** One bounded summary per recent task for status lines and host views; the
- * card and evidence view remain the authoritative renderings. */
-export function summarizeTaskReport(root: string, taskId: string, currentSnapshot: string | null = null): TaskSummary {
-  const html = join(root, ".hunch-cache", "reports", `${taskId}.html`);
-  try {
-    const report = readTaskReport(root, taskId, currentSnapshot);
-    const last = report.checks.at(-1);
-    const standing = new Map(report.conformance.map(r => [`${r.kind}:${r.record_id}:${r.content_hash}`, r]));
-    return {
-      task: report.task,
-      deliveries: report.deliveries.length,
-      lessons: new Set(report.deliveries.flatMap(d => d.records).map(r => `${r.kind}:${r.record_id}`)).size,
-      claims: report.claims.length,
-      saves: report.saves.length,
-      refusals: report.refusals.length,
-      check: last ? { label: last.label, state: last.cancelled ? "cancelled" : last.timed_out ? "timed out" : last.exit_code === 0 ? "passed" : "failed", current: last.current } : null,
-      violated: [...standing.values()].some(r => r.outcome === "violated"),
-      coverage: report.coverage,
-      empty: isEmptyTaskReport(report),
-      report_html: existsSync(html) ? html : null,
-      error: null,
-    };
-  } catch (e) {
-    return taskDb(root, db => {
-      const row = db.prepare("SELECT body FROM report_tasks WHERE task_id = ?").get(taskId) as { body: string } | undefined;
-      if (!row) throw e;
-      return { task: TaskSchema.parse(JSON.parse(row.body)), deliveries: 0, lessons: 0, claims: 0, saves: 0, refusals: 0, check: null, violated: false, coverage: "no-delivery-observed" as const, empty: true, report_html: existsSync(html) ? html : null, error: (e as Error).message };
-    });
-  }
-}
-
-export function listTaskSummaries(root: string, limit = 30, currentSnapshot: string | null = null): TaskSummary[] {
-  if (!existsSync(join(root, ".hunch-cache", "served.db"))) return [];
-  return listReportTasks(root).slice(0, Math.max(1, Math.min(limit, 30))).map(task => summarizeTaskReport(root, task.task_id, currentSnapshot));
-}
-
-/** One line for a terminal status line. Empty string when nothing was observed
- * for the task, so a bare prompt shows no Hunch noise at all. */
-export function renderTaskStatusLine(summary: TaskSummary | null): string {
-  if (!summary || summary.empty) return "";
-  const parts = [`Hunch`];
-  parts.push(summary.lessons ? `${summary.lessons} lesson${summary.lessons === 1 ? "" : "s"} recalled` : summary.deliveries ? "memory delivered" : "no delivery");
-  if (summary.violated) parts.push("rule violated");
-  else if (summary.claims) parts.push(`${summary.claims} applied`);
-  if (summary.saves) parts.push(`${summary.saves} saved`);
-  if (summary.refusals) parts.push("edit denied");
-  if (summary.check) parts.push(`${summary.check.label}: ${summary.check.state}${summary.check.current ? "" : " (source changed)"}`);
-  else parts.push("no check recorded");
-  return parts.join(" · ");
-}
-
-export interface TaskReportStats {
-  since: string;
-  tasks: number;
-  completed: number;
-  with_delivery: number;
-  with_check: number;
-  with_claim: number;
-  with_save: number;
-  with_refusal: number;
-  empty: number;
-  /** with_delivery / tasks, the adherence number worth watching; null when no tasks. */
-  delivery_rate: number | null;
-}
-
-/** Adherence over a window: how many prompts Hunch actually reached. Counts
- * come from the ledger, never from agent claims; a claim is counted as a claim. */
-export function taskReportStats(root: string, days = 7): TaskReportStats {
-  const since = new Date(Date.now() - Math.max(1, days) * 86_400_000).toISOString();
-  const empty: TaskReportStats = { since, tasks: 0, completed: 0, with_delivery: 0, with_check: 0, with_claim: 0, with_save: 0, with_refusal: 0, empty: 0, delivery_rate: null };
-  if (!existsSync(join(root, ".hunch-cache", "served.db"))) return empty;
-  return taskDb(root, db => {
-    const tasks = (db.prepare("SELECT body FROM report_tasks WHERE scope IN (?, ?, ?) AND json_extract(body, '$.started_at') >= ?").all(...scopePair(root), since) as Array<{ body: string }>)
-      .map(r => TaskSchema.parse(JSON.parse(r.body)));
-    if (!tasks.length) return empty;
-    const kinds = (taskId: string) => new Set((db.prepare("SELECT DISTINCT kind FROM report_events WHERE task_id = ?").all(taskId) as Array<{ kind: string }>).map(r => r.kind));
-    const stats = { ...empty, tasks: tasks.length };
-    for (const task of tasks) {
-      const k = kinds(task.task_id);
-      if (task.state === "completed") stats.completed++;
-      if (k.has("delivery")) stats.with_delivery++;
-      if (k.has("check") || k.has("check-start")) stats.with_check++;
-      if (k.has("claim")) stats.with_claim++;
-      if (k.has("save")) stats.with_save++;
-      if (k.has("refusal")) stats.with_refusal++;
-      if (!k.size) stats.empty++;
-    }
-    stats.delivery_rate = stats.with_delivery / stats.tasks;
-    return stats;
-  });
-}
-
 export function listReportTasks(root: string): ReportTask[] {
-  return taskDb(root, db => (db.prepare("SELECT body FROM report_tasks WHERE scope IN (?, ?, ?) ORDER BY rowid DESC LIMIT 30").all(...scopePair(root)) as Array<{ body: string }>).map(r => TaskSchema.parse(JSON.parse(r.body))));
+  return taskDb(root, db => (db.prepare("SELECT body FROM report_tasks WHERE scope = ? ORDER BY rowid DESC LIMIT 30").all(scopeOf(root)) as Array<{ body: string }>).map(r => TaskSchema.parse(JSON.parse(r.body))));
 }
 export function reportActivity(root: string): string {
   if (!existsSync(join(root, ".hunch-cache", "served.db"))) return "Task reporting: no task activity observed yet. Reconnect the agent after updating; inspect with `hunch report`.";
   try {
     return taskDb(root, db => {
-      const row = db.prepare(`SELECT COUNT(*) AS total, SUM(CASE WHEN json_extract(body, '$.state') = 'completed' THEN 1 ELSE 0 END) AS completed FROM report_tasks WHERE scope IN (?, ?, ?)`).get(...scopePair(root)) as { total: number; completed: number | null };
-      const { deliveries } = db.prepare("SELECT COUNT(*) AS deliveries FROM report_events WHERE kind = 'delivery' AND task_id IN (SELECT task_id FROM report_tasks WHERE scope IN (?, ?, ?))").get(...scopePair(root)) as { deliveries: number };
+      const row = db.prepare(`SELECT COUNT(*) AS total, SUM(CASE WHEN json_extract(body, '$.state') = 'completed' THEN 1 ELSE 0 END) AS completed FROM report_tasks WHERE scope = ?`).get(scopeOf(root)) as { total: number; completed: number | null };
+      const { deliveries } = db.prepare("SELECT COUNT(*) AS deliveries FROM report_events WHERE kind = 'delivery' AND task_id IN (SELECT task_id FROM report_tasks WHERE scope = ?)").get(scopeOf(root)) as { deliveries: number };
       return `Task reporting: ${row.total} observed task(s), ${row.completed ?? 0} completed report(s), ${deliveries} linked context delivery(s). Activity alone does not prove contribution; inspect with \`hunch report\`.`;
     });
   } catch { return "Task reporting: observation ledger unavailable; activity and contribution are unverified."; }
@@ -606,9 +407,9 @@ export function pruneReportHistory(root: string, olderThanDays = 90): number {
   const cutoff = new Date(Date.now() - olderThanDays * 86_400_000).toISOString();
   return taskDb(root, db => transaction(db, () => {
     const expired = db.prepare(`SELECT task_id FROM report_tasks
-      WHERE scope IN (?, ?, ?) AND ((json_extract(body, '$.state') != 'open' AND json_extract(body, '$.finished_at') < ?)
+      WHERE scope = ? AND ((json_extract(body, '$.state') != 'open' AND json_extract(body, '$.finished_at') < ?)
         OR (json_extract(body, '$.state') = 'open' AND json_extract(body, '$.started_at') < ?)) LIMIT 1000`)
-      .all(...scopePair(root), cutoff, cutoff) as Array<{ task_id: string }>;
+      .all(scopeOf(root), cutoff, cutoff) as Array<{ task_id: string }>;
     for (const task of expired) {
       // Serialize expiry with concurrent starts/results. Discard abandoned
       // evidence without inventing a completion or interruption observation.
@@ -644,7 +445,7 @@ export function readTaskReport(root: string, taskId: string, currentSnapshot: st
       if (reportHash(value) !== event.content_hash) throw new Error("report evidence hash mismatch");
       if (event.kind === "delivery") {
         assertDeliveryEnvelope(value.envelope);
-        deliveries.push({ occurrence_id: event.event_id, at: event.at, receipt_id: value.envelope.receipt_id, envelope_hash: reportHash(value.envelope), envelope: value.envelope, records: z.array(ReportRecordSchema).parse(value.records), target: typeof value.target === "string" ? value.target : null });
+        deliveries.push({ occurrence_id: event.event_id, at: event.at, receipt_id: value.envelope.receipt_id, envelope_hash: reportHash(value.envelope), envelope: value.envelope, records: z.array(ReportRecordSchema).parse(value.records) });
       } else if (event.kind === "claim") claims.push({ ...ReportClaimSchema.parse(value), at: event.at, attribution: "agent-reported", supported_by: null });
       else if (event.kind === "conformance") {
         const rule = ReportConformanceSchema.parse(value);

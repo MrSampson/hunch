@@ -1,4 +1,3 @@
-import { RecordVisibilitySchema } from "./recordVisibility.js";
 /**
  * nuryel.state/1 — the RECORD schemas (the facets that are new record kinds in the store).
  *
@@ -14,7 +13,6 @@ import { RecordVisibilitySchema } from "./recordVisibility.js";
 import { z } from "zod";
 import { edgeId, resourceId } from "./ids.js";
 import { ProvenanceSchema, isCredentialFreeValue } from "./provenance.js";
-import { assertFieldProvenance } from "./fieldProvenance.js";
 
 export const RECEIPT_SCHEMA_VERSION = "nuryel.receipt/1" as const;
 export const COMMITMENT_SCHEMA_VERSION = "nuryel.commitment/1" as const;
@@ -91,7 +89,6 @@ export type DependencyRef = z.infer<typeof DependencyRefSchema>;
 
 /** done — a side effect that happened. Never replayable as a read; idempotency is explicit. */
 export const ActionReceiptSchema = z.object({
-  visibility: RecordVisibilitySchema.optional(),
   schema: z.literal(RECEIPT_SCHEMA_VERSION),
   id: z.string().regex(/^nrc_[a-f0-9]{24}$/),
   scope: ScopeSchema,
@@ -117,7 +114,6 @@ export type ActionReceipt = z.infer<typeof ActionReceiptSchema>;
 
 /** committed — an obligation with a due date and an in-force window. */
 export const CommitmentSchema = z.object({
-  visibility: RecordVisibilitySchema.optional(),
   schema: z.literal(COMMITMENT_SCHEMA_VERSION),
   id: z.string().regex(/^ncm_[a-f0-9]{24}$/),
   scope: ScopeSchema,
@@ -137,24 +133,9 @@ export const CommitmentSchema = z.object({
 }).strict();
 export type Commitment = z.infer<typeof CommitmentSchema>;
 
-export const FieldSelectorSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("json_pointer"), path: z.string().max(2048).regex(/^(?:\/(?:[^~/]|~[01])*)*$/) }).strict(),
-  z.object({ kind: z.literal("text"), start: z.number().int().min(0).max(20_000), end: z.number().int().min(1).max(20_000) }).strict(),
-]);
-export type FieldSelector = z.infer<typeof FieldSelectorSchema>;
-
-/** Hash references stay attached to the same sources if dependencies are reordered. */
-export const FieldProvenanceSchema = z.object({
-  selector: FieldSelectorSchema,
-  value_hash: z.string().regex(SHA256),
-  dependency_hashes: z.array(z.string().regex(SHA256)).min(1).max(256),
-}).strict();
-export type FieldProvenance = z.infer<typeof FieldProvenanceSchema>;
-
 /** current — a statement that is true now, and on what it rests. Dependencies are mandatory:
  *  a derived statement without them cannot be invalidated and therefore cannot be trusted. */
 export const DerivedStateSchema = z.object({
-  visibility: RecordVisibilitySchema.optional(),
   schema: z.literal(DERIVED_SCHEMA_VERSION),
   id: z.string().regex(/^nds_[a-f0-9]{24}$/),
   scope: ScopeSchema,
@@ -162,8 +143,6 @@ export const DerivedStateSchema = z.object({
   content: z.string().min(1).max(20_000),
   content_hash: z.string().regex(SHA256),
   dependencies: z.array(DependencyRefSchema).min(1).max(256),
-  /** Optional exact field/text citations; absence means no field-level mapping is recorded. */
-  field_provenance: z.array(FieldProvenanceSchema).min(1).max(128).optional(),
   transform_version: z.string().max(128),
   computed_at: z.string().regex(ISO),
   valid_to: z.string().regex(ISO).nullable().default(null),
@@ -176,7 +155,6 @@ export const DerivedStateSchema = z.object({
   provenance: ProvenanceSchema,
 }).strict().superRefine((record, ctx) => {
   if (record.review && record.state !== 'stale') ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['review'], message: 'withdrawal review belongs only to a stale observation' });
-  try { assertFieldProvenance(record); } catch (error) { ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['field_provenance'], message: (error as Error).message }); }
 });
 export type DerivedState = z.infer<typeof DerivedStateSchema>;
 
@@ -186,7 +164,6 @@ const AttributeValue = z.union([z.string().max(2048), z.number().finite(), z.boo
  *  id, lifecycle, provenance), with provenance pointers instead of mirrored content. Stored in
  *  an index file, like resources, because kind-qualified ids are not safe file names. */
 export const ExternalEntitySchema = z.object({
-  visibility: RecordVisibilitySchema.optional(),
   schema: z.literal(ENTITY_SCHEMA_VERSION),
   id: z.string().min(3).max(2048),
   kind: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
@@ -220,7 +197,6 @@ export type ExternalEntity = z.infer<typeof ExternalEntitySchema>;
 
 /** relationship — rides the same identity rule as the graph's edges. Index-file stored. */
 export const StateRelationshipSchema = z.object({
-  visibility: RecordVisibilitySchema.optional(),
   schema: z.literal(RELATIONSHIP_SCHEMA_VERSION),
   id: z.string().regex(/^edge_[a-f0-9]+$/),
   from: z.string().min(1).max(2048),
@@ -250,29 +226,3 @@ export const DnaFacetRefSchema = z.object({
 
 export const entityId = resourceId;
 export const relationshipId = edgeId;
-
-
-export const CONVENTION_SCHEMA_VERSION = "nuryel.convention/1" as const;
-/** Explicit conventions are advisory records. Acceptance records human review, never policy authority. */
-export const ConventionSchema = z.object({
-  schema: z.literal(CONVENTION_SCHEMA_VERSION),
-  id: z.string().regex(/^ncv_[a-f0-9]{24}$/),
-  scope: ScopeSchema,
-  key: z.string().regex(/^[a-z][a-z0-9._-]{0,127}$/),
-  value: z.string().trim().min(1).max(1200),
-  status: z.enum(["proposed", "accepted", "stale", "withdrawn"]),
-  sources: z.array(DependencyRefSchema).min(1).max(8),
-  valid_from: z.string().regex(ISO),
-  valid_to: z.string().regex(ISO).nullable().default(null),
-  review_by: z.string().regex(ISO),
-  provenance: ProvenanceSchema,
-  visibility: RecordVisibilitySchema.optional(),
-}).strict().superRefine((record, ctx) => {
-  if (!Number.isFinite(Date.parse(record.valid_from)) || !Number.isFinite(Date.parse(record.review_by)) || Date.parse(record.review_by) <= Date.parse(record.valid_from))
-    ctx.addIssue({ code: 'custom', message: 'review_by must be a valid instant after valid_from' });
-  if (record.sources.some(source => source.kind === 'schema' || (source.kind === 'external' && !source.ref.version && !source.ref.content_hash)))
-    ctx.addIssue({ code: 'custom', path: ['sources'], message: 'conventions require exact record hashes or versioned/hashed external sources' });
-  if (record.status === 'accepted' && !record.provenance.source.split('+').includes('human_confirmed'))
-    ctx.addIssue({ code: 'custom', path: ['status'], message: 'accepted conventions require human-confirmed provenance' });
-});
-export type Convention = z.infer<typeof ConventionSchema>;

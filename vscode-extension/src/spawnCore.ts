@@ -9,49 +9,13 @@
  * progress UI). Behavior here must stay byte-compatible with what the panel runs.
  */
 import * as cp from "node:child_process";
-import { normalize } from "node:path";
 
 export interface CliResult { ok: boolean; stdout: string; stderr: string; code: number | null; }
 
-// Escaping adapted from cross-spawn 7.0.6 (MIT).
-// Copyright (c) 2018 Made With MOXY Lda; see THIRD_PARTY_NOTICES.md.
-const CMD_META = /([()\][%!^"\x60<>&|;, *?])/g;
-
-function escapeWinCommand(value: string): string {
-  // The command is parsed once by cmd.exe. Arguments passed to a .cmd shim
-  // are parsed again by the shim, which is why winQuote() double-escapes its
-  // metacharacters. The command itself needs only the first pass.
-  return String(value).replace(CMD_META, "^$1");
-}
-
-function escapeWinArgument(value: string): string {
-  let arg = String(value);
-  arg = arg.replace(/(?=(\\+?)?)\1"/g, "$1$1\\\"");
-  arg = arg.replace(/(?=(\\+?)?)\1$/g, "$1$1");
-  // Escape twice: the npm cmd shim invokes Node through a second cmd parser.
-  return ('"' + arg + '"').replace(CMD_META, "^$1").replace(CMD_META, "^$1");
-}
-
-/** Quote one arg for cmd.exe. The argument is always protected with the
- *  cross-spawn caret algorithm because double quotes do not stop percent
- *  expansion. The npm cmd shim needs the meta characters escaped twice. */
+/** Quote one arg for cmd.exe. Bare when safe; else wrap in double quotes and escape
+ *  embedded quotes (\"), matching the existing record-* command quoting. */
 export function winQuote(a: string): string {
-  return escapeWinArgument(a);
-}
-
-/** One launcher for buffered, streaming and MCP clients. Native executable
- * argv bypasses the shell; npm shims use the same protected command line. */
-function invocation(command: string, args: string[]): { command: string; args: string[]; windowsVerbatimArguments: boolean } {
-  if (process.platform !== "win32" || /\.(?:exe|com)$/i.test(command)) {
-    return { command, args, windowsVerbatimArguments: false };
-  }
-  const shellCommand = [escapeWinCommand(normalize(command)), ...args.map(winQuote)].join(" ");
-  return { command: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/v:off", "/c", `"${shellCommand}"`], windowsVerbatimArguments: true };
-}
-
-export function spawnHunchWith(command: string, root: string, args: string[]): cp.ChildProcessWithoutNullStreams {
-  const launch = invocation(command, args);
-  return cp.spawn(launch.command, launch.args, { cwd: root, windowsVerbatimArguments: launch.windowsVerbatimArguments });
+  return /[\s"&|<>^()%!,;]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a;
 }
 
 /** Run `<command> <args...>` in `root`. Resolves (never rejects) so callers branch
@@ -69,7 +33,10 @@ export function runHunchWith(command: string, root: string, args: string[], time
     resolve({ ok: !err, stdout: stdout ?? "", stderr: stderr ?? "", code });
   };
   return new Promise((resolve) => {
-    const launch = invocation(command, args);
-    cp.execFile(launch.command, launch.args, { ...opts, windowsVerbatimArguments: launch.windowsVerbatimArguments }, settle(resolve));
+    if (process.platform === "win32") {
+      cp.exec([command, ...args].map(winQuote).join(" "), opts, settle(resolve));
+    } else {
+      cp.execFile(command, args, opts, settle(resolve));
+    }
   });
 }

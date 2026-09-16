@@ -17,7 +17,11 @@ export interface ResolvedInvocation {
   /** Structured command/args for .mcp.json (subcommand appended by the writer). */
   mcp: Invocation;
   /** True only when running from an installed/published copy (global, local,
-   * or npx cache), never from a source checkout. */
+   *  or npx cache) — false for EVERY source-checkout shape, including a `.ts`
+   *  run via tsx and a built `dist/` run via `node`/`npm link`. Callers use
+   *  this to skip behavior that only makes sense for an installed package
+   *  (e.g. recommending `npm install -g` to someone hacking on the source
+   *  tree, whichever way they're currently running it). */
   installed: boolean;
 }
 
@@ -95,9 +99,15 @@ export async function maybeWarnOllamaContext(providerName: string, env: NodeJS.P
   return probeOllamaNumCtx(env.HUNCH_SYNTH_BASE_URL ?? "", env.HUNCH_SYNTH_MODEL ?? "");
 }
 
-/** Classify the entry path without faking import.meta.url in tests. */
+/** Classify an entry-point path into the three mutually exclusive invocation
+ *  shapes `resolveInvocation` branches on. Pulled out as a pure function so
+ *  this classification — the exact logic two prior bugs came from
+ *  (recommending `npm install -g` to a dev-checkout or dist/npm-link run) —
+ *  is directly unit testable without faking `import.meta.url`. */
 export function classifyEntry(entry: string): { isDev: boolean; installed: boolean } {
   const isDev = entry.endsWith(".ts");
+  // Running from an installed copy (global, local, or npx cache — i.e. NOT a
+  // source checkout we're hacking on).
   const installed = !isDev && entry.replace(/\\/g, "/").includes("/node_modules/");
   return { isDev, installed };
 }

@@ -9,7 +9,6 @@ import type { AddressInfo } from "node:net";
 import { hunchPaths, findRoot } from "../src/core/paths.js";
 import { HunchStore } from "../src/store/hunchStore.js";
 import { syncCommit } from "../src/synthesis/synthesize.js";
-import { withInitiator } from "../src/synthesis/initiator.js";
 import { decisionId } from "../src/core/ids.js";
 import { headSha, revParse } from "../src/extractors/git.js";
 import { __resetAvailabilityCacheForTests } from "../src/synthesis/provider.js";
@@ -383,10 +382,7 @@ test("syncCommit drives synthesis through the openai-compat provider end-to-end 
   process.env.HUNCH_SYNTH_MODEL = "local-test-model";
   __resetAvailabilityCacheForTests();
   try {
-    const r = await withInitiator(
-      { provider: "openai-compat", source: "explicit" },
-      () => syncCommit(store, root),
-    );
+    const r = await syncCommit(store, root);
     assert.equal(r.status, "written", `expected written, got skipped: ${r.reason}`);
     assert.equal(r.provider, "openai-compat", "this is exactly what backfill's 'via LLM' count keys off");
     assert.equal(r.decision!.decision, "Added function b to a.ts");
@@ -434,10 +430,7 @@ test("syncCommit reports the ACTUAL (fallback) provider when the openai-compat c
   process.env.HUNCH_SYNTH_MODEL = "local-test-model";
   __resetAvailabilityCacheForTests();
   try {
-    const r = await withInitiator(
-      { provider: "openai-compat", source: "explicit" },
-      () => syncCommit(store, root),
-    );
+    const r = await syncCommit(store, root);
     assert.equal(r.status, "written", `expected written, got skipped: ${r.reason}`);
     assert.equal(
       r.provider,

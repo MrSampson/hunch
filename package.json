@@ -1,10 +1,10 @@
 {
   "name": "@davesheffer/hunch",
-  "version": "1.38.0",
+  "version": "1.32.2",
   "mcpName": "io.github.davesheffer/hunch",
   "license": "Apache-2.0",
   "author": "Dave Sheffer <dave.sheffer1@gmail.com>",
-  "description": "A shared record for AI agents: decisions, completed work, and commitments, with sources. Git-native engineering memory and a self-hosted state server.",
+  "description": "Deterministic state for organizations that run many probabilistic agents: decisions, receipts, commitments, constraints and bug lineage held in git, refused when they contradict, and delivered to every MCP assistant before it answers or edits code.",
   "homepage": "https://www.hunchmemory.com",
   "repository": {
     "type": "git",
@@ -27,10 +27,6 @@
       "default": "./dist/projectDna.js"
     },
     "./state": "./dist/client/state.js",
-    "./state-proof": {
-      "types": "./dist/client/stateProof.d.ts",
-      "default": "./dist/client/stateProof.js"
-    },
     "./reports": {
       "types": "./dist/taskReports.d.ts",
       "default": "./dist/taskReports.js"

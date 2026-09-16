@@ -526,14 +526,6 @@ const READ_REMOTE_TIMEOUT_MS = 5_000;
 // drains every already-durable JSON write itself. This removes the old "maybe a
 // third capture sweeps it later" liveness hole.
 const CAPTURE_LOCK_HANDOFF_MS = 120_000;
-/** Longest one git call inside a memory flush may take before it is stopped and the flush
- *  reports durability "local" (HUNCH_COMMIT_GIT_TIMEOUT_MS overrides; tests use a short one). */
-const COMMIT_GIT_TIMEOUT_MS = 60_000;
-const SLOW_FLUSH_MS = 5_000;
-function commitGitTimeoutMs(): number {
-  const raw = Number(process.env.HUNCH_COMMIT_GIT_TIMEOUT_MS);
-  return Number.isFinite(raw) && raw > 0 ? raw : COMMIT_GIT_TIMEOUT_MS;
-}
 
 function unsafeOverlayPublication(hunchDir: string, protectedRepoRoot: string): boolean {
   let currentOverlayRoot = dirname(resolve(hunchDir));
@@ -589,19 +581,9 @@ export function commitAndPushHunch(hunchDir: string, message: string, opts: Hunc
       for (let attempt = 0; attempt < 2; attempt++) {
         const startedAt = Date.now();
         try {
-          // A served write blocks on this call: bound it, and never let a commit trigger git's
-          // automatic gc (minutes of repacking inside one write, fnd_4318727d35). A timed-out
-          // call returns false, the flush reports durability "local", and the next flush
-          // sweeps the same files up — nothing is lost, and the server is not frozen.
-          execFileSync("git", ["-C", hunchDir, "-c", "gc.auto=0", ...args], { stdio: "ignore", env, timeout: commitGitTimeoutMs() });
-          const took = Date.now() - startedAt;
-          if (took > SLOW_FLUSH_MS) console.error(`hunch: git ${args.find((a) => !a.startsWith("-") && a !== "core.autocrlf=false") ?? args[0]} in "${hunchDir}" took ${took} ms`);
+          execFileSync("git", ["-C", hunchDir, ...args], { stdio: "ignore", env });
           return true;
         } catch (error) {
-          if ((error as NodeJS.ErrnoException & { signal?: string }).signal === "SIGTERM" || (error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
-            console.error(`hunch: git ${args.find((a) => !a.startsWith("-")) ?? args[0]} in "${hunchDir}" exceeded ${commitGitTimeoutMs()} ms and was stopped; the write stays local until the next flush`);
-            return false;
-          }
           // best-effort: nothing staged / not a repo / offline — EXCEPT a
           // stranded index.lock, which would otherwise fail every future
           // flush silently (issue #53); heal it and retry once.
@@ -652,7 +634,7 @@ export function commitAndPushHunch(hunchDir: string, message: string, opts: Hunc
     // private/shared repository above; it can never delete protected source.
     const staged = stagedMemoryPaths(hunchDir, env, opts.push !== false);
     if (staged === null) {
-      try { execFileSync("git", ["-C", hunchDir, "reset", "-q", "--", "."], { stdio: "ignore", env, timeout: commitGitTimeoutMs() }); } catch { /* best-effort unstage */ }
+      try { execFileSync("git", ["-C", hunchDir, "reset", "-q", "--", "."], { stdio: "ignore", env }); } catch { /* best-effort unstage */ }
       // Public-store commits (push:false) skip QUIETLY: a non-memory staged set there is
       // usually just the user's own staged work, not a misconfigured overlay — the record
       // stays on disk and the next flush's `git add .` sweeps it up. The overlay path
@@ -717,9 +699,8 @@ export function commitAndPushHunch(hunchDir: string, message: string, opts: Hunc
           ...(opts.push === false ? [] : ["-c", `core.attributesFile=${gitNullDevice()}`]),
           "-c", "core.autocrlf=false",
           "-c", "commit.gpgsign=false",
-          "-c", "gc.auto=0",
           "commit", "--no-gpg-sign", "--only", "-m", message, "--", ...commitPaths,
-        ], { stdio: "ignore", env, timeout: commitGitTimeoutMs() });
+        ], { stdio: "ignore", env, timeout: 15_000 });
         committed = true;
       } catch (error) {
         // Nothing staged / not a repo stays quiet, as before; only a healed
@@ -809,13 +790,13 @@ function stagedMemoryPaths(
 ): StagedMemory | null {
   let out = "";
   let prefix = "";
-  try { prefix = execFileSync("git", ["-C", hunchDir, "rev-parse", "--show-prefix"], { encoding: "utf8", env, timeout: commitGitTimeoutMs() }).trim().replace(/\\/g, "/"); }
+  try { prefix = execFileSync("git", ["-C", hunchDir, "rev-parse", "--show-prefix"], { encoding: "utf8", env }).trim().replace(/\\/g, "/"); }
   catch { return null; }
   if (!prefix) return null; // a Hunch layout is a scoped subdirectory, never the whole repository
   // Snapshot ID churn is semantically one delete plus one add. Disable Git's
   // heuristic rename presentation so the exact paths remain independently
   // auditable against the contained-memory rules below.
-  try { out = execFileSync("git", ["-C", hunchDir, "diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-status"], { encoding: "utf8", env, timeout: commitGitTimeoutMs() }); }
+  try { out = execFileSync("git", ["-C", hunchDir, "diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-status"], { encoding: "utf8", env }); }
   catch { return null; }
   const lines = out.split("\n").map((l) => l.trim()).filter(Boolean);
   if (!lines.length) return { memory: [], derived: [] };
@@ -1697,11 +1678,7 @@ function waitForCommitLockHandoff(
   let attempt: CommitLockAttempt = first;
   while (Date.now() < deadline) {
     if (attempt.state === "acquired") return true;
-    // Once the first snapshot proved a live owner, an owner-less snapshot can be
-    // the normal release window: recursive cleanup removes owner-<pid> before
-    // removing the outer lock directory. Keep the bounded handoff wait through
-    // that transient state instead of reporting a false busy/no-op result.
-    if (attempt.state === "held-live" && attempt.ownerPid === process.pid) return false;
+    if (attempt.state !== "held-live" || attempt.ownerPid === process.pid) return false;
     Atomics.wait(sleeper, 0, 0, Math.min(25, deadline - Date.now()));
     attempt = acquireCommitLock(lock);
   }
@@ -1768,9 +1745,11 @@ export function isLinkedWorktree(cwd: string): boolean {
   const common = gitCommonDir(cwd);
   const own = gitSafe(["rev-parse", "--absolute-git-dir"], cwd);
   if (!common || !own) return false;
-  // Git can spell the same directory differently: /var vs /private/var on
-  // macOS, or long vs 8.3/case variants on Windows. Compare physical identity.
-  return !sameFilesystemEntry(own, common);
+  // realpath BOTH before comparing: `--absolute-git-dir` is symlink-resolved while
+  // gitCommonDir is not, so on macOS the main checkout would otherwise mismatch on
+  // /var vs /private/var and falsely read as "linked".
+  const norm = (p: string): string => { try { return realpathSync(p); } catch { return resolve(p); } };
+  return norm(own) !== norm(common);
 }
 
 /** Every worktree of this repo (the main checkout AND every linked one), as absolute

@@ -41,9 +41,6 @@ test("a contending process drains a record written after the first owner's exact
   const hunchDir = join(overlayRoot, ".hunch");
   const lock = join(hunchDir, ".hunch-commit.lock");
   const ready = join(base, "owner-ready");
-  const writerSawLive = join(base, "writer-saw-live");
-  const writerSawOwnerless = join(base, "writer-saw-ownerless");
-  const writerSawOwnerlessAgain = join(base, "writer-saw-ownerless-again");
   let owner: ReturnType<typeof spawn> | null = null;
   let writer: ReturnType<typeof spawn> | null = null;
   try {
@@ -79,19 +76,10 @@ test("a contending process drains a record written after the first owner's exact
       'const path = require("node:path");',
       `const lock = ${JSON.stringify(lock)};`,
       `const ready = ${JSON.stringify(ready)};`,
-      `const writerSawLive = ${JSON.stringify(writerSawLive)};`,
-      `const writerSawOwnerless = ${JSON.stringify(writerSawOwnerless)};`,
-      `const writerSawOwnerlessAgain = ${JSON.stringify(writerSawOwnerlessAgain)};`,
       "fs.mkdirSync(path.join(lock, `owner-${process.pid}`), { recursive: true });",
       'fs.writeFileSync(ready, "ready\\n");',
-      "const sleep = (ms) => { const wait = new Int32Array(new SharedArrayBuffer(4)); Atomics.wait(wait, 0, 0, ms); };",
-      "const waitForMarker = (marker) => { const deadline = Date.now() + 30_000; while (!fs.existsSync(marker)) { if (Date.now() >= deadline) process.exit(91); sleep(10); } };",
-      "waitForMarker(writerSawLive);",
-      "fs.rmSync(path.join(lock, `owner-${process.pid}`), { recursive: true, force: true });",
-      "waitForMarker(writerSawOwnerless);",
-      "waitForMarker(writerSawOwnerlessAgain);",
-      "fs.rmSync(lock, { recursive: true, force: true });",
-      "process.exit(0);",
+      "setTimeout(() => { fs.rmSync(lock, { recursive: true, force: true }); }, 750);",
+      "setTimeout(() => process.exit(0), 800);",
     ].join("\n");
     owner = spawn(process.execPath, ["-e", ownerProgram], { stdio: "ignore" });
     await waitFor(() => existsSync(ready), 5_000);
@@ -99,31 +87,11 @@ test("a contending process drains a record written after the first owner's exact
     const runner = join(base, "writer.ts");
     const extractorUrl = pathToFileURL(join(PROJECT_ROOT, "src/extractors/git.ts")).href;
     writeFileSync(runner, [
-      'import fs, { mkdirSync, writeFileSync } from "node:fs";',
-      'import { syncBuiltinESMExports } from "node:module";',
+      'import { mkdirSync, writeFileSync } from "node:fs";',
       'import { join } from "node:path";',
       `import { commitAndPushHunch } from ${JSON.stringify(extractorUrl)};`,
       `const hunchDir = ${JSON.stringify(hunchDir)};`,
       `const codeRoot = ${JSON.stringify(codeRoot)};`,
-      `const lock = ${JSON.stringify(lock)};`,
-      `const writerSawLive = ${JSON.stringify(writerSawLive)};`,
-      `const writerSawOwnerless = ${JSON.stringify(writerSawOwnerless)};`,
-      `const writerSawOwnerlessAgain = ${JSON.stringify(writerSawOwnerlessAgain)};`,
-      'const originalReadDir = fs.readdirSync.bind(fs);',
-      'let emptyReads = 0;',
-      'fs.readdirSync = ((path, ...args) => {',
-      '  const entries = originalReadDir(path, ...args);',
-      '  if (String(path) === lock) {',
-      '    const names = entries.map((entry) => typeof entry === "string" ? entry : entry.name);',
-      '    if (names.some((name) => name.startsWith("owner-"))) fs.writeFileSync(writerSawLive, "live\\n");',
-      '    else if (names.length === 0 && fs.existsSync(lock)) {',
-      '      emptyReads += 1;',
-      '      fs.writeFileSync(emptyReads === 1 ? writerSawOwnerless : writerSawOwnerlessAgain, `${emptyReads}\\n`);',
-      '    }',
-      '  }',
-      '  return entries;',
-      '});',
-      'syncBuiltinESMExports();',
       'mkdirSync(join(hunchDir, "decisions"), { recursive: true });',
       'writeFileSync(join(hunchDir, "decisions/dec_waiter.json"), `${JSON.stringify({ id: "dec_waiter", title: "waiting writer" })}\\n`);',
       'const result = commitAndPushHunch(hunchDir, "hunch: drain waiting writer", { push: true, protectedRepoRoot: codeRoot });',

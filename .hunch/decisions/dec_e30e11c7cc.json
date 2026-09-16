@@ -19,7 +19,7 @@
   "supersedes": null,
   "superseded_by": null,
   "caused_by_bug": null,
-  "commit": "c477b65",
+  "commit": "1dec301",
   "valid_from": "2026-07-26T13:43:00+03:00",
   "valid_to": null,
   "retired": {
@@ -30,7 +30,7 @@
     "source": "inferred",
     "confidence": 0.3,
     "evidence": [
-      "commit:c477b65",
+      "commit:1dec301",
       "synth:provider=deterministic",
       "branch:agent/release-v1.9.4",
       "site/blog/posts.js",

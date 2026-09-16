@@ -76,15 +76,6 @@ test("canonical hashing is key-order independent and rejects non-finite numbers"
 
 // ---- verbs ----
 
-test("canonical hashing refuses silently omitted prototype keys without changing valid encodings", () => {
-  for (const value of [JSON.parse('{"__proto__":1}'), JSON.parse('{"nested":[{"__proto__":{"claim":"changed"}}]}')]) {
-    assert.throws(() => stateHash(value), /reserved.*__proto__/, "a supplied key cannot disappear from an evidence hash");
-  }
-  assert.equal(JSON.stringify(canonicalize({ b: 1, a: { d: [1, 2], c: "x" } })), '{"a":{"c":"x","d":[1,2]},"b":1}');
-  assert.equal(canonicalize('{"__proto__":1}'), '{"__proto__":1}', "derived content remains an exact string, including JSON text");
-  assert.equal(JSON.stringify(canonicalize({ constructor: "ordinary", prototype: 1 })), '{"constructor":"ordinary","prototype":1}');
-});
-
 test("read: the response is bound to a delivery receipt and never leaks outside the grants", () => {
   ReadRequestSchema.parse({ schema: "nuryel.state.read/1", principal: sofiaAgent, scope: user, subject: "event:10042", profile: "builder", facets: ["decisions", "receipts", "commitments"] });
   const ok = ReadResponseSchema.parse({ schema: "nuryel.state.read/1", receipt_id: "hdr_" + "a".repeat(24), scope: user, state_of_record: { subject: "event:10042", current: [{ facet: "derived", id: "nds_" + "b".repeat(24), record_hash: stateHash("x"), scope: user }], in_force: [], done: [], depends_on: [], invalidated_by: [] } });
@@ -124,14 +115,11 @@ test("capability negotiation names what is unsupported instead of degrading sile
 
 test("the invariants are enumerated, stable and each backed by an assertion or a schema rule", () => {
   const ids = STATE_INVARIANTS.map((i) => i.id);
-  assert.deepEqual(ids, ["authorization-before-retrieval", "similarity-never-authorizes", "never-in-request-path", "provenance-on-every-write", "one-live-decision-per-topic", "external-truth-stays-external", "derived-state-carries-dependencies", "one-entity-per-external-ref", "human-correction-outranks-agent-writes", "derived-state-writer-owns-currentness", "one-current-derived-per-subject-transform"]);
+  assert.deepEqual(ids, ["authorization-before-retrieval", "similarity-never-authorizes", "never-in-request-path", "provenance-on-every-write", "one-live-decision-per-topic", "external-truth-stays-external", "derived-state-carries-dependencies", "one-entity-per-external-ref", "human-correction-outranks-agent-writes", "derived-state-writer-owns-currentness"]);
   // derived-state-writer-owns-currentness: the write verb admits the external cause a sweep names,
   // and a stale write is an invalidation (test/state-chain.test.ts exercises the binding).
   assert.ok("cause" in WriteRequestSchema.shape, "WriteRequest carries the external cause");
   assert.ok((ChangeEventSchema.shape.change as { options: string[] }).options.includes("invalidated"));
-  // one-current-derived-per-subject-transform: the write verb refuses a second current derived
-  // statement per subject+transform unless supersedes names it (test/state-current-derived.test.ts).
-  assert.ok("supersedes" in WriteRequestSchema.shape, "WriteRequest carries supersedes");
   // similarity-never-authorizes: no verb schema admits a similarity score as an input to validity.
   for (const schema of [ReadResponseSchema, WriteResultSchema, ChangeEventSchema]) {
     assert.equal(Object.keys((schema as { shape: Record<string, unknown> }).shape).some((k) => /similar|score|embedding/i.test(k)), false);

@@ -1,14 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { finishReportTask, listReportTasks, listTaskSummaries, readTaskReport, startReportTask } from "../src/core/taskReport.js";
-import { promptTaskId } from "../src/core/taskReportHook.js";
+import { listReportTasks, readTaskReport } from "../src/core/taskReport.js";
 import { HunchStore } from "../src/store/hunchStore.js";
 import { hunchPaths } from "../src/core/paths.js";
-import { mkConstraint, tsxLoaderUrl } from "./helpers.js";
+import { mkConstraint } from "./helpers.js";
 
 const cli = resolve("src/cli/index.ts");
 function fixture(t: { after: (f: () => void) => void }) {
@@ -19,114 +18,27 @@ function fixture(t: { after: (f: () => void) => void }) {
   writeFileSync(join(root, ".gitignore"), ".hunch-cache/\n");
   return root;
 }
-function hook(root: string, event: string, extra: Record<string, unknown> = {}, provider = "claude") {
-  const output = execFileSync(process.execPath, ["--import", tsxLoaderUrl(), cli, "hook", "--provider", provider], {
+function hook(root: string, event: string, extra: Record<string, unknown> = {}) {
+  const output = execFileSync(process.execPath, ["--import", import.meta.resolve("tsx"), cli, "hook"], {
     cwd: root, env: { ...process.env, HUNCH_PIPELINE: "0" },
     input: JSON.stringify({ hook_event_name: event, cwd: root, session_id: "session-a", prompt_id: "prompt-a", ...extra }), encoding: "utf8",
   }).trim();
   return output ? JSON.parse(output) : null;
 }
 
-test("native Stop stays silent for a prompt with no observation, closes the task as a host close, and the empty row stays ledger-only", t => {
+test("native Stop shows missing coverage even when the agent never calls Hunch", t => {
   const root = fixture(t);
   const prompt = hook(root, "UserPromptSubmit", { prompt: "PRIVATE_PROMPT_SENTINEL" });
   const [task] = listReportTasks(root);
   assert.ok(task, "host must start reporting before the model can skip its instructions");
-  assert.equal(task.title, "Assistant task");
-  assert.match(prompt.hookSpecificOutput.additionalContext, /title: "Assistant task"/);
-  assert.doesNotMatch(prompt.hookSpecificOutput.additionalContext, /Claude task/);
   assert.match(prompt.hookSpecificOutput.additionalContext, new RegExp(task.task_id));
-  assert.equal(hook(root, "Stop"), null, "no delivery, check, save or denial: nothing to print (dec_77d99014e0's sibling: silence only where there is no evidence to show)");
-  assert.equal(readFileSync(join(root, ".hunch-cache", "served.db")).includes(Buffer.from("PRIVATE_PROMPT_SENTINEL")), false);
-  const closed = listReportTasks(root)[0]!;
-  assert.equal(closed.state, "completed", "the turn ended: the ledger says so without the agent's cooperation");
-  assert.equal(closed.closed_by, "host");
-  assert.equal(existsSync(join(root, ".hunch", "tasks")), false, "an empty task never becomes a graph record");
-  const [summary] = listTaskSummaries(root);
-  assert.equal(summary?.task.task_id, task.task_id);
-  assert.equal(summary?.empty, true, "the ledger still shows the prompt never touched Hunch");
-});
-
-test("a prompt that follows another in the same session continues its task; the episode's record is written under the first task's id", t => {
-  const root = fixture(t);
-  writeFileSync(join(root, ".hunch", "local.json"), JSON.stringify({ taskRecordsFlush: "batch" }));
-  hook(root, "UserPromptSubmit", { prompt_id: "p1" });
-  const [first] = listReportTasks(root);
-  assert.ok(first);
-  assert.equal(first.continues, undefined, "the first prompt of a session starts an episode");
-  assert.ok(first.session_key?.startsWith("sha256:"), "the session is kept as a hash, never as the identifier");
-  assert.equal(readFileSync(join(root, ".hunch-cache", "served.db")).includes(Buffer.from("session-a")), false, "the host session identifier is not retained");
-  hook(root, "Stop", { prompt_id: "p1" });
-  // "next": a follow-up prompt within the window in the same session.
-  hook(root, "UserPromptSubmit", { prompt_id: "p2" });
-  const second = listReportTasks(root).find(x => x.task_id !== first.task_id)!;
-  assert.equal(second.continues, first.task_id);
-  assert.equal(second.episode, first.task_id);
-  execFileSync(process.execPath, ["--import", tsxLoaderUrl(), cli, "task", "verify", second.task_id, "--json", "--", process.execPath, "-e", "process.exit(0)"], { cwd: root, encoding: "utf8" });
-  hook(root, "Stop", { prompt_id: "p2" });
-  assert.equal(existsSync(join(root, ".hunch", "tasks", `${second.task_id}.json`)), false, "no record per prompt");
-  const episode = JSON.parse(readFileSync(join(root, ".hunch", "tasks", `${first.task_id}.json`), "utf8")) as { id: string; checks: unknown[]; provenance: { evidence: string[] } };
-  assert.equal(episode.id, first.task_id, "the episode's record carries the head's id");
-  assert.equal(episode.checks.length, 1, "the follow-up prompt's check lives in the episode record");
-  assert.deepEqual(episode.provenance.evidence, [`hunch report ${first.task_id}`, `hunch report ${second.task_id}`]);
-  // A third prompt continues the same episode; another session never does.
-  hook(root, "UserPromptSubmit", { prompt_id: "p3" });
-  const third = listReportTasks(root).find(x => ![first.task_id, second.task_id].includes(x.task_id))!;
-  assert.equal(third.continues, second.task_id);
-  assert.equal(third.episode, first.task_id);
-  hook(root, "UserPromptSubmit", { session_id: "session-b", prompt_id: "p1" });
-  const other = listReportTasks(root).find(x => x.session_key !== first.session_key)!;
-  assert.equal(other.continues, undefined);
-  assert.equal(other.episode, undefined);
-  const [row] = listTaskSummaries(root).filter(s => s.task.task_id === second.task_id);
-  assert.equal(row?.task.episode, first.task_id, "summaries expose the episode for host views");
-});
-
-test("Stop keeps the record of a task with observations, a continuation reopens it, and an explicit finish overrides the host close", t => {
-  const root = fixture(t);
-  writeFileSync(join(root, ".hunch", "local.json"), JSON.stringify({ taskRecordsFlush: "batch" }));
-  hook(root, "UserPromptSubmit");
-  const [task] = listReportTasks(root);
-  const verify = () => execFileSync(process.execPath, ["--import", tsxLoaderUrl(), cli, "task", "verify", task!.task_id, "--json", "--", process.execPath, "-e", "process.exit(0)"], { cwd: root, encoding: "utf8" });
-  verify();
-  const stop = hook(root, "Stop");
-  assert.match(stop.systemMessage, /Checked .*passed/);
-  let row = listReportTasks(root)[0]!;
-  assert.equal(row.state, "completed");
-  assert.equal(row.closed_by, "host");
-  const recordPath = join(root, ".hunch", "tasks", `${task!.task_id}.json`);
-  assert.ok(existsSync(recordPath), "the host close persists the graph record; the agent never called finish");
-  const first = JSON.parse(readFileSync(recordPath, "utf8")) as { checks: unknown[]; state: string };
-  assert.equal(first.checks.length, 1);
-  assert.equal(first.state, "completed");
-  // The turn continued (another hook blocked, or the prompt resumed): a new
-  // observation reopens the host-closed task instead of failing.
-  verify();
-  row = listReportTasks(root)[0]!;
-  assert.equal(row.state, "open", "a host close is provisional");
-  assert.equal(row.closed_by, undefined);
-  hook(root, "Stop");
-  row = listReportTasks(root)[0]!;
-  assert.equal(row.state, "completed");
-  assert.equal((JSON.parse(readFileSync(recordPath, "utf8")) as { checks: unknown[] }).checks.length, 2, "the record is refreshed from the report at the next Stop");
-  // The agent's explicit outcome wins over the host's provisional one.
-  const explicit = finishReportTask(root, task!.task_id, "interrupted");
-  assert.equal(explicit.state, "interrupted");
-  assert.equal(explicit.closed_by, "agent");
-  assert.throws(() => finishReportTask(root, task!.task_id, "completed"), /different outcome/, "an agent close is final");
-});
-
-test("native Stop shows the card as soon as a check is observed, even when the agent never called a tool", t => {
-  const root = fixture(t);
-  hook(root, "UserPromptSubmit");
-  const [task] = listReportTasks(root);
-  execFileSync(process.execPath, ["--import", tsxLoaderUrl(), cli, "task", "verify", task!.task_id, "--json", "--", process.execPath, "-e", "process.exit(0)"], { cwd: root, encoding: "utf8" });
   const stop = hook(root, "Stop");
   assert.match(stop.systemMessage, /No task-linked delivery observed/);
-  assert.match(stop.systemMessage, /Checked .*passed/);
-  assert.match(stop.systemMessage, /Evidence  hunch report htask_[a-f0-9]{24} --html/, "the evidence view is rendered on demand, not written per prompt");
+  assert.match(stop.systemMessage, /file:\/\//);
   assert.equal(stop.decision, undefined, "report presentation never blocks Stop");
   assert.equal(stop.hookSpecificOutput, undefined, "report does not ask the model to continue");
+  assert.equal(readFileSync(join(root, ".hunch-cache", "served.db")).includes(Buffer.from("PRIVATE_PROMPT_SENTINEL")), false);
+  assert.equal(listReportTasks(root)[0]!.state, "open", "Stop alone cannot establish task completion or absence of another hook continuation");
 });
 
 test("host identities separate prompts and sessions; old hosts never borrow a recent task", t => {
@@ -138,7 +50,6 @@ test("host identities separate prompts and sessions; old hosts never borrow a re
   hook(root, "UserPromptSubmit", { prompt_id: "prompt-b" });
   hook(root, "UserPromptSubmit", { session_id: "session-b" });
   assert.equal(listReportTasks(root).length, 3);
-  execFileSync(process.execPath, ["--import", tsxLoaderUrl(), cli, "task", "verify", first.task_id, "--json", "--", process.execPath, "-e", "process.exit(0)"], { cwd: root, encoding: "utf8" });
   assert.match(hook(root, "Stop").systemMessage, new RegExp(first.task_id));
   const legacy = hook(root, "Stop", { prompt_id: undefined });
   assert.match(legacy.systemMessage, /exact prompt identifier/);
@@ -208,65 +119,4 @@ test("strict denial is retained in its prompt report without claiming host compl
   // An unidentified prompt must not attach to the most recent task.
   hook(root, "PreToolUse", { ...input, prompt_id: undefined });
   assert.equal((readTaskReport(root, task.task_id) as unknown as typeof report).refusals?.length, 1);
-});
-
-test("Codex hooks open the same per-prompt report from turn_id and never share a task with Claude Code", t => {
-  const root = fixture(t);
-  const prompt = hook(root, "UserPromptSubmit", { prompt_id: undefined, turn_id: "turn-1", prompt: "codex prompt" }, "codex");
-  const [task] = listReportTasks(root);
-  assert.ok(task, "Codex's UserPromptSubmit opens the report natively");
-  assert.equal(task.title, "Assistant task");
-  assert.match(prompt.hookSpecificOutput.additionalContext, new RegExp(task.task_id));
-  assert.equal(hook(root, "Stop", { prompt_id: undefined, turn_id: "turn-1" }, "codex"), null, "nothing observed yet: silent");
-  execFileSync(process.execPath, ["--import", tsxLoaderUrl(), cli, "task", "verify", task.task_id, "--json", "--", process.execPath, "-e", "process.exit(0)"], { cwd: root, encoding: "utf8" });
-  const stop = hook(root, "Stop", { prompt_id: undefined, turn_id: "turn-1" }, "codex").systemMessage;
-  assert.match(stop, new RegExp(task.task_id));
-  assert.match(stop, /Hunch · Assistant task/);
-  assert.doesNotMatch(stop, /Claude task/);
-  hook(root, "UserPromptSubmit", { prompt_id: "turn-1" }, "claude");
-  assert.equal(listReportTasks(root).length, 2, "same session/prompt strings on another host are a different task");
-});
-
-test("native SubagentStart grounding carries exact cwd and fails closed on supplied invalid cwd", t => {
-  const root = fixture(t), other = fixture(t);
-  const store = new HunchStore(hunchPaths(root));
-  store.json.ensureDirs();
-  store.json.put("constraints", mkConstraint({ id: "con_subagent_cwd", statement: "PRIVATE_NONEMPTY_STORE_SENTINEL", scope: ["src/**"], severity: "blocking" }));
-  store.reindex(); store.close();
-  for (const provider of ["claude", "codex"]) {
-    const routed = hook(root, "SubagentStart", { agent_type: "general" }, provider);
-    assert.ok(routed, `${provider} delegated agents need a routing instruction`);
-    assert.match(routed.hookSpecificOutput.additionalContext, /PRIVATE_NONEMPTY_STORE_SENTINEL/);
-    assert.match(routed.hookSpecificOutput.additionalContext, new RegExp(`cwd: ${JSON.stringify(realpathSync(root)).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
-    assert.equal(hook(root, "SubagentStart", { agent_type: "general", cwd: other }, provider), null, "a foreign payload cwd must suppress current-root memory too");
-    assert.equal(hook(root, "SubagentStart", { agent_type: "general", cwd: 42 }, provider), null, "a malformed supplied cwd must suppress current-root memory too");
-  }
-});
-
-test("an in-flight pre-upgrade native task keeps its legacy title and still receives its task ID", t => {
-  const root = fixture(t);
-  const id = promptTaskId(root, "session-a", "turn-legacy", null, "codex");
-  startReportTask(root, "Claude task", id);
-  const prompt = hook(root, "UserPromptSubmit", { prompt_id: undefined, turn_id: "turn-legacy" }, "codex");
-  assert.match(prompt.hookSpecificOutput.additionalContext, new RegExp(id));
-  assert.match(prompt.hookSpecificOutput.additionalContext, /title: "Claude task"/);
-  assert.equal(listReportTasks(root).length, 1);
-});
-
-test("prompt-derived titles are opt-in: the default retains no prompt text, the opt-in keeps a bounded first line", t => {
-  const root = fixture(t);
-  writeFileSync(join(root, ".hunch", "local.json"), JSON.stringify({ taskTitles: "prompt" }));
-  const prompt = hook(root, "UserPromptSubmit", { prompt: "Fix the settings merge so nested overrides survive\nsecond line is never used" });
-  const [task] = listReportTasks(root);
-  assert.equal(task!.title, "Fix the settings merge so nested overrides survive");
-  assert.match(prompt.hookSpecificOutput.additionalContext, /title: "Fix the settings merge so nested overrides survive"/);
-  // A credential-looking prompt keeps the generic title even when opted in.
-  const secret = hook(root, "UserPromptSubmit", { prompt: "-----BEGIN PRIVATE KEY-----\nabc", prompt_id: "prompt-b" });
-  assert.match(secret.hookSpecificOutput.additionalContext, /title: "Assistant task"/);
-  assert.equal(readFileSync(join(root, ".hunch-cache", "served.db")).includes(Buffer.from("BEGIN PRIVATE KEY")), false);
-  // The model paraphrasing the title on hunch_task start must not fork a task: the same
-  // identity re-opened with the persisted title is the only valid answer.
-  const again = hook(root, "UserPromptSubmit", { prompt: "Fix the settings merge so nested overrides survive\nsecond line is never used" });
-  assert.equal(listReportTasks(root).filter(x => x.task_id === task!.task_id).length, 1);
-  assert.match(again.hookSpecificOutput.additionalContext, new RegExp(task!.task_id));
 });

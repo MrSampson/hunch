@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Hunch changelog — releases and current capabilities</title>
-<meta name="description" content="Every Hunch release — engineering memory, shared deterministic state, integrations, and production qualifications." />
+<title>Changelog — Hunch Memory</title>
+<meta name="description" content="Every Hunch release — git-native engineering memory and Architectural Conformance for AI code." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=IBM+Plex+Sans+Hebrew:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -102,34 +102,12 @@
     <div class="masthead">
       <span class="eyebrow">changelog · newest first</span>
       <h1>Every release, since <em>v0.1</em>.</h1>
-      <p>From Git-native engineering memory to shared deterministic state — the whole arc, newest first.</p>
+      <p>From a git-native decision graph to deterministic Architectural Conformance — the whole arc, newest first.</p>
     </div>
 
     <div class="clog">
       <div class="clog-group">
-        <div class="clog-date">Sep 15, 2026</div>
-        <div class="clog-row"><span class="rel-tag">v1.38.0</span><span class="clog-t"><b>Every turn counts</b> — a task becomes memory when the turn ends, whether or not the agent reported it; follow-up prompts ("status", "next", "go") join the work they belong to as one record per episode; and work done from a shell, a rebase or a release commit anchors the record to the files git saw change. A verification whose runner died no longer freezes its task. Nothing to run, nothing to configure.</span></div>
-        <div class="clog-row"><span class="rel-tag">v1.37.1</span><span class="clog-t"><b>The ranking judges itself</b> — the evaluation of which past tasks to show reruns whenever a task finishes, delivery switches back to "latest only" on its own if the ranked choice loses with a confidence interval once enough history exists, and <span class="mono">hunch now</span> prints the current verdict. Nothing to run, nothing to configure.</span></div>
-        <div class="clog-row"><span class="rel-tag">v1.37.0</span><span class="clog-t"><b>The right past work, with reasons</b> — the tasks an agent sees before editing a file are chosen by relevance, not recency alone: same file, dependents, files that change together, shared rules, what went wrong, what was verified; each line says why it is there. A task that re-verified a file supersedes the older ones, <span class="mono">hunch task rank-eval</span> measures the selection against history with a confidence interval, and commit-time output is quiet.</span></div>
-        <div class="clog-row"><span class="rel-tag">v1.36.0</span><span class="clog-t"><b>Agents inherit each other's work</b> — before an agent touches a file it sees the last three finished tasks there: what they received, applied, saved and verified, and whether a rule was violated, delivered next to the invariants in <span class="mono">hunch_context</span>, the pre-edit hook and <span class="mono">hunch context</span>. Verification commands run on Windows again (npm, npx and other launchers), a command that cannot start says so, and the evidence view is rendered on demand instead of written for every prompt.</span></div>
-      </div>
-      <div class="clog-group">
-        <div class="clog-date">Sep 14, 2026</div>
-        <div class="clog-row"><span class="rel-tag">v1.35.0</span><span class="clog-t"><b>Finished tasks become graph memory</b> — the work an agent did is remembered in the repository like a decision: what Hunch delivered, what the agent applied, saved and checked, and which files it touched, visible in search, <span class="mono">hunch why</span>, <span class="mono">hunch task list</span> and the VS Code Contribution view, including tasks finished on another machine. Native tasks are titled from the prompt, and task reports on Windows no longer split by drive-letter casing.</span></div>
-        <div class="clog-row"><span class="rel-tag">v1.34.0</span><span class="clog-t"><b>Quiet update notices and tasks routed to the right worktree</b> — installed users learn about a newer release without any command waiting on the network, a fresh clone reports its untested state honestly, and native task reports follow the exact worktree that opened them. Product documentation is back in the public repository. Tagged but superseded before npm publication; included in v1.35.0.</span></div>
-        <div class="clog-row"><span class="rel-tag">v1.33.0</span><span class="clog-t"><b>Inspect and share state with explicit access and sources</b> — a read-only browser view, exact field citations, record audiences, sourced conventions, state CLI, key-bound credentials and a repository-built Python client. Upgrade all servers before enabling new access controls. <a href="/docs#shared-state">Setup and upgrade guidance →</a></span></div>
-      </div>
-      <div class="clog-group">
-        <div class="clog-date">Sep 13, 2026</div>
-        <div class="clog-row"><span class="rel-tag">v1.32.8</span><span class="clog-t"><b>Updates repair hooks and preserve user settings</b> — legacy launch commands are repaired without changing unrelated settings or enabling disabled hooks. Codex update guidance explains command trust through /hooks and starting a new session.</span></div>
-        <div class="clog-row"><span class="rel-tag">v1.32.7</span><span class="clog-t"><b>Codex hooks and MCP findings preserve honest provenance</b> — native command matchers cover Bash and PowerShell, integration health requires explicit failed-tool evidence, commit handoff waits through a transient owner release window, and finding captures remain advisory agent testimony until a human explicitly authenticates them.</span></div>
-        <div class="clog-row"><span class="rel-tag">v1.32.6</span><span class="clog-t"><b>Codex shell hooks report failures honestly</b> — native command matchers cover Bash and PowerShell, while integration health requires explicit failed-tool evidence instead of treating every PostToolUse delivery as a failure.</span></div>
-        <div class="clog-row"><span class="rel-tag">v1.32.5</span><span class="clog-t"><b>Memory writes and workspace actions stay safe</b> — concurrent updates respect shared-store locks, interrupted writes preserve complete files, and integration updates preserve malformed configuration for repair. The editor companion keeps actions in the right workspace and launches reliably through Windows command shims. Guard messages now distinguish a review requirement from a demonstrated violation.</span></div>
-        <div class="clog-row"><span class="rel-tag">v1.32.4</span><span class="clog-t"><b>Tool calls stop failing silently</b> — a release cut no longer points hooks and the MCP server at a version npm cannot serve, and <span class="mono">hunch doctor</span> names such a pin; a hook that fails says so in one line instead of nothing; Codex gets native lifecycle hooks; the contribution card has a home in the VS Code Contribution view and the terminal status line, and prints on stop only when there is something to show; the MCP server exposes the everyday tool set by default.</span></div>
-      </div>
-      <div class="clog-group">
         <div class="clog-date">Sep 12, 2026</div>
-        <div class="clog-row"><span class="rel-tag">v1.32.3</span><span class="clog-t"><b>One current statement per subject, and a flush that cannot freeze</b> — a second current summary on a subject must name the one it replaces or is refused with it named; a memory commit is bounded in time and never repacks inside a served write; both found by a half-year emulation of ten agents.</span></div>
         <div class="clog-row"><span class="rel-tag">v1.32.2</span><span class="clog-t"><b>The lesson announces itself once</b> — the first time a lesson reaches a task the agent, and the person watching, see one line saying what was recalled; policy checks that cannot run say exactly why in one block instead of ten; and memory drift on a vanished file now fails the release gate.</span></div>
         <div class="clog-row"><span class="rel-tag">v1.32.1</span><span class="clog-t"><b>Task reports survive real use</b> — a long check can be retained with a caller-set budget instead of timing out; the completion summary an agent receives now fits the host's round-trip, with the full evidence one command away; and hook capabilities are marked verified only from events the host actually delivered.</span></div>
       </div>
@@ -413,7 +391,7 @@
 
   <footer>
     <div class="wrap">
-      <span>© Hunch — shared records for AI agents.</span>
+      <span>© Hunch — Architectural Conformance for AI code.</span>
       <span><a href="/">Home</a> · <a href="/docs">Docs</a> · <a href="/blog">Blog</a> · <a href="https://github.com/davesheffer/hunch/releases" target="_blank" rel="noopener">GitHub releases</a></span>
     </div>
   </footer>

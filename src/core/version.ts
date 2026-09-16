@@ -17,7 +17,9 @@ export const HUNCH_VERSION: string = (() => {
   }
 })();
 
-/** Shared identity for Hunch's published package. */
+/** The single source of truth for Hunch's published package identity — every
+ *  other module that needs the name (update checks, MCP/provider configs)
+ *  derives from this instead of repeating the string literal. */
 export const HUNCH_PACKAGE_NAME = "@davesheffer/hunch";
 
 /** Exact public npm package consumed by generated CI and shared MCP/provider

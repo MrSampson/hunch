@@ -1,4 +1,3 @@
-import { RecordVisibilitySchema } from "./recordVisibility.js";
 /**
  * nuryel.state/1 — the ONE contract every orchestrator and agent speaks to the state layer.
  *
@@ -28,16 +27,12 @@ import { RecordVisibilitySchema } from "./recordVisibility.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { compareCodeUnits } from "./canonicalOrder.js";
-import { canonicalize, stateHash } from "./stateCanonical.js";
-import { assertFieldProvenance } from "./fieldProvenance.js";
-export { canonicalize, stateHash } from "./stateCanonical.js";
-export { fieldCitationValue, assertFieldProvenance } from "./fieldProvenance.js";
 import { DELIVERY_PROFILES, type DeliveryEnvelope } from "./delivery.js";
 import { isHumanConfirmed as sourceIsHumanConfirmed } from "./strictgate.js";
 import {
   ScopeSchema, scopePath, externalKey, DependencyRefSchema, ExternalRefSchema,
-  CONVENTION_SCHEMA_VERSION, RECEIPT_SCHEMA_VERSION, COMMITMENT_SCHEMA_VERSION, DERIVED_SCHEMA_VERSION, ENTITY_SCHEMA_VERSION, RELATIONSHIP_SCHEMA_VERSION,
-  type Convention, type Scope, type ActionReceipt, type Commitment, type DerivedState,
+  RECEIPT_SCHEMA_VERSION, COMMITMENT_SCHEMA_VERSION, DERIVED_SCHEMA_VERSION, ENTITY_SCHEMA_VERSION, RELATIONSHIP_SCHEMA_VERSION,
+  type Scope, type ActionReceipt, type Commitment, type DerivedState,
 } from "./stateRecords.js";
 
 export * from "./stateRecords.js";
@@ -52,15 +47,12 @@ export const STATE_CAPTURE_BATCH_VERSION = "nuryel.state.capture-batch/1" as con
 export const STATE_OBSERVATION_LINKS_VERSION = "nuryel.observation-links/1" as const;
 export const STATE_OBSERVATION_REVIEW_VERSION = "nuryel.observation-review/1" as const;
 export const STATE_OBSERVATION_PAGES_VERSION = "nuryel.observation-pages/1" as const;
-export const STATE_RECORD_VISIBILITY_VERSION = "nuryel.record-visibility/1" as const;
-export const PartitionDeclarationSchema = ScopeSchema.extend({ required_capabilities: z.array(z.literal(STATE_RECORD_VISIBILITY_VERSION)).min(1).max(1).optional() }).strict();
-export const STATE_FIELD_PROVENANCE_VERSION = "nuryel.field-provenance/1" as const;
 
 /** Capabilities a server advertises; a client that needs one the server lacks gets a typed
  *  `unsupported`, never a compatible-looking degraded answer. */
 export const STATE_CAPABILITIES = [
-  STATE_READ_VERSION, STATE_WRITE_VERSION, STATE_SUBSCRIBE_VERSION, STATE_RECORDS_VERSION, STATE_CAPTURE_VERSION, STATE_CAPTURE_BATCH_VERSION, STATE_OBSERVATION_LINKS_VERSION, STATE_OBSERVATION_REVIEW_VERSION, STATE_OBSERVATION_PAGES_VERSION, STATE_FIELD_PROVENANCE_VERSION, STATE_RECORD_VISIBILITY_VERSION,
-  CONVENTION_SCHEMA_VERSION, RECEIPT_SCHEMA_VERSION, COMMITMENT_SCHEMA_VERSION, DERIVED_SCHEMA_VERSION, ENTITY_SCHEMA_VERSION, RELATIONSHIP_SCHEMA_VERSION,
+  STATE_READ_VERSION, STATE_WRITE_VERSION, STATE_SUBSCRIBE_VERSION, STATE_RECORDS_VERSION, STATE_CAPTURE_VERSION, STATE_CAPTURE_BATCH_VERSION, STATE_OBSERVATION_LINKS_VERSION, STATE_OBSERVATION_REVIEW_VERSION, STATE_OBSERVATION_PAGES_VERSION,
+  RECEIPT_SCHEMA_VERSION, COMMITMENT_SCHEMA_VERSION, DERIVED_SCHEMA_VERSION, ENTITY_SCHEMA_VERSION, RELATIONSHIP_SCHEMA_VERSION,
 ] as const;
 export type StateCapability = (typeof STATE_CAPABILITIES)[number];
 
@@ -84,7 +76,6 @@ export type Principal = z.infer<typeof PrincipalSchema>;
 /** One relevant assertion, never a whole conversation. Source text is transient input:
  * only its exact supporting excerpt and a hashed external pointer may reach the store. */
 export const CaptureRequestSchema = z.object({
-  visibility: RecordVisibilitySchema.optional(),
   schema: z.literal(STATE_CAPTURE_VERSION),
   principal: PrincipalSchema,
   scope: ScopeSchema,
@@ -106,7 +97,7 @@ export type CaptureRequest = z.infer<typeof CaptureRequestSchema>;
 export const CaptureBatchRequestSchema = z.object({
   schema: z.literal(STATE_CAPTURE_BATCH_VERSION), principal: PrincipalSchema, scope: ScopeSchema,
   sources: z.array(CaptureRequestSchema.shape.evidence.element.omit({ excerpt: true })).min(1).max(8),
-  observations: z.array(CaptureRequestSchema.pick({ subject: true, statement: true, relevance: true, visibility: true }).extend({
+  observations: z.array(CaptureRequestSchema.pick({ subject: true, statement: true, relevance: true }).extend({
     evidence: z.array(z.object({ source: z.number().int().min(0).max(7), excerpt: z.string().trim().min(1).max(1200) }).strict()).min(1).max(8),
   })).min(0).max(32),
   reviews: z.array(z.object({
@@ -124,7 +115,7 @@ export function captureTransform(scope: Scope, subject: string, statement: strin
   return CAPTURE_TRANSFORM + stateHash({ scope, subject, statement: normalizeAssertion(statement), evidence: identities }).slice(7);
 }
 
-export const STATE_FACETS = ["decisions", "constraints", "bugs", "findings", "receipts", "commitments", "derived", "entities", "relationships", "conventions"] as const;
+export const STATE_FACETS = ["decisions", "constraints", "bugs", "findings", "receipts", "commitments", "derived", "entities", "relationships"] as const;
 export type StateFacet = (typeof STATE_FACETS)[number];
 
 // ---- verbs ------------------------------------------------------------------------------
@@ -178,15 +169,7 @@ export const StateOfRecordSchema = z.object({
 }).strict();
 export type StateOfRecord = z.infer<typeof StateOfRecordSchema>;
 
-export const ConventionDeliverySchema = z.object({
-  advisory: z.literal(true),
-  items: z.array(z.object({ ref: StateRefSchema, key: z.string(), conflict: z.boolean(), currentness: z.enum(["recorded", "stale"]) }).strict()).max(16),
-  truncated: z.boolean(),
-}).strict();
-export type ConventionDelivery = z.infer<typeof ConventionDeliverySchema>;
-
 export const ReadResponseSchema = z.object({
-  conventions: ConventionDeliverySchema.optional(),
   schema: z.literal(STATE_READ_VERSION),
   receipt_id: z.string().regex(/^hdr_[a-f0-9]{24}$/).describe("the delivery envelope's receipt"),
   scope: ScopeSchema,
@@ -259,7 +242,6 @@ export const SubscribeRequestSchema = z.object({
 export type SubscribeRequest = z.infer<typeof SubscribeRequestSchema>;
 
 export const ChangeEventSchema = z.object({
-  visibility: RecordVisibilitySchema.optional(),
   schema: z.literal(STATE_SUBSCRIBE_VERSION),
   seq: z.number().int().positive(),
   at: z.string().regex(ISO),
@@ -316,6 +298,30 @@ export function negotiate(offered: readonly string[], required: readonly string[
 
 // ---- canonical form, hashes, ids -----------------------------------------------------------
 
+/** Canonical JSON: keys sorted by code unit at every level, `undefined` dropped, non-finite
+ *  numbers rejected. Two records with the same facts hash the same regardless of who wrote them. */
+export function canonicalize(value: unknown): unknown {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error("canonical form rejects non-finite numbers");
+    return value;
+  }
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort(compareCodeUnits)) {
+      const v = (value as Record<string, unknown>)[key];
+      if (v !== undefined) out[key] = canonicalize(v);
+    }
+    return out;
+  }
+  throw new Error(`canonical form rejects ${typeof value}`);
+}
+
+export function stateHash(value: unknown): string {
+  return `sha256:${createHash("sha256").update(JSON.stringify(canonicalize(value))).digest("hex")}`;
+}
+
 const idFrom = (prefix: string, seed: unknown): string => `${prefix}_${createHash("sha256").update(JSON.stringify(canonicalize(seed))).digest("hex").slice(0, 24)}`;
 
 /** Identity = what makes two receipts the same action: who did what to which object, with which
@@ -325,9 +331,6 @@ export function actionReceiptId(r: Pick<ActionReceipt, "scope" | "actor" | "acti
 }
 export function commitmentId(c: Pick<Commitment, "scope" | "subject" | "title" | "owner" | "due">): string {
   return idFrom("ncm", { scope: c.scope, subject: c.subject, title: c.title.trim(), owner: c.owner, due: c.due });
-}
-export function conventionId(c: Pick<Convention, "scope" | "key" | "value" | "sources">): string {
-  return idFrom("ncv", { scope: c.scope, key: c.key, value: c.value.trim(), sources: c.sources.map(stateHash).sort(compareCodeUnits) });
 }
 export function derivedId(d: Pick<DerivedState, "scope" | "subject" | "transform_version" | "dependencies">): string {
   // Capture's reserved transform includes assertion/evidence identity, independent of
@@ -351,7 +354,6 @@ export const STATE_INVARIANTS = [
   { id: "one-entity-per-external-ref", statement: "One external record is one entity in a partition: a second active entity carrying an external key an incumbent already carries is refused with the incumbent named, and a subject written as that record's external key is refused with the entity's id named. Identity is explicit refs, never similarity; merge is explicit — a retired entity names the survivor in `merged_into`, the ledger holds the `retired` event, nothing under the old id is rewritten and reads resolve to the survivor — and split is the explicit reverse; never a silent rewrite." },
   { id: "human-correction-outranks-agent-writes", statement: "A record a human confirmed is never overwritten or superseded by an agent or service principal: the agent may replay it, write derived state back stale with the external cause that moved, or close a commitment with a receipt on record. Changing what the human said takes a human." },
   { id: "derived-state-writer-owns-currentness", statement: "No source writes the drawer. The writer of a current derived statement owns keeping its dependencies true: re-validate them on a schedule or on a source event, and write the statement back stale with the moved pointer as cause when one no longer holds. Without this duty an agent may capture source-backed observations only as unknown; observations never assert currentness." },
-  { id: "one-current-derived-per-subject-transform", statement: "A subject holds at most one current derived statement per transform: a new one must name the incumbent in supersedes (refused 409 with the incumbent named otherwise); the same identity written again updates or replays that record." },
 ] as const;
 
 const grantKey = (scope: Scope): string => scopePath(scope);
@@ -369,7 +371,6 @@ export function assertReadWithinGrants(principal: Principal, response: ReadRespo
   const granted = new Set(principal.grants.map(grantKey));
   if (!granted.has(grantKey(response.scope))) throw new Error(`read response scope ${grantKey(response.scope)} is outside the principal's grants`);
   const refs = response.state_of_record ? [...response.state_of_record.current, ...response.state_of_record.in_force, ...response.state_of_record.done, ...(response.state_of_record.observed ?? [])] : [];
-  refs.push(...(response.conventions?.items.map(item => item.ref) ?? []));
   for (const ref of refs) {
     if (!granted.has(grantKey(ref.scope))) throw new Error(`state ref ${ref.id} in scope ${grantKey(ref.scope)} leaked outside the principal's grants`);
   }
@@ -399,7 +400,6 @@ export function assertWriteWellFormed(request: WriteRequest): void {
 export function assertDerivedState(d: DerivedState): void {
   if (d.dependencies.length === 0) throw new Error("derived state without dependencies is not state");
   if (stateHash(d.content) !== d.content_hash) throw new Error("derived state content hash does not match its content");
-  assertFieldProvenance(d);
   if (d.transform_version.startsWith(CAPTURE_TRANSFORM)) {
     const content = z.object({
       schema: z.literal("nuryel.observation-content/1"),

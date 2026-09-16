@@ -57,12 +57,9 @@ readline.createInterface({input:process.stdin}).on('line', line=>{
 });
 `);
     const adapter: AgentCliAdapter = { name: "acp-test", command: process.execPath, args: [file], protocol: "acp", probe_args: ["--version"], timeout_ms: 5000 };
-    // The suite can run inside an agent host that exports CODEX_THREAD_ID or
-    // HUNCH_INITIATOR. Bind this synthetic adapter explicitly so the production
-    // account boundary is exercised without inheriting the host's account.
-    assert.deepEqual(JSON.parse(await withInitiator({ provider: "acp-test", source: "explicit" }, () => runAgentCli(adapter, "analyze supplied data only"))), { action: "review" });
+    assert.deepEqual(JSON.parse(await runAgentCli(adapter, "analyze supplied data only")), { action: "review" });
     writeFileSync(file, "setInterval(()=>{},1000);");
-    await assert.rejects(withInitiator({ provider: "acp-test", source: "explicit" }, () => runAgentCli({ ...adapter, timeout_ms: 1000 }, "data")), /timed out/);
+    await assert.rejects(runAgentCli({ ...adapter, timeout_ms: 1000 }, "data"), /timed out/);
   } finally {
     assert.ok(resolve(root).startsWith(resolve(tmpdir())));
     rmSync(root, { recursive: true, force: true });
