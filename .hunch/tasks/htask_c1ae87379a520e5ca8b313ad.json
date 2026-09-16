@@ -3,7 +3,7 @@
   "title": "where does hunch fit in",
   "state": "completed",
   "started_at": "2026-09-16T11:57:57.494Z",
-  "finished_at": "2026-09-16T13:05:34.933Z",
+  "finished_at": "2026-09-16T13:07:03.725Z",
   "coverage": "delivered",
   "lessons": [
     {
@@ -42,7 +42,7 @@
   ],
   "supersedes": [],
   "source_snapshot": null,
-  "report_hash": "sha256:043e6e6d6bec188e711875e4c4bfc0f773d04199792a67e4611da2225476032c",
+  "report_hash": "sha256:ab02c7d68ebaefc5bfc4146693707d3c085e3d50d79313a9f9787b56cb687431",
   "provenance": {
     "source": "task_report",
     "confidence": 1,
@@ -55,8 +55,9 @@
       "hunch report htask_ce1570c74088d1e32955865c",
       "hunch report htask_84ac38c621749916125d6601",
       "hunch report htask_8f5cb0a85b14f10428fff1e5",
-      "hunch report htask_8d7840f9e667497cfefede02"
+      "hunch report htask_8d7840f9e667497cfefede02",
+      "hunch report htask_57c168d1b74b37d74e0b4d85"
     ],
-    "last_verified": "2026-09-16T13:05:34.933Z"
+    "last_verified": "2026-09-16T13:07:03.725Z"
   }
 }
