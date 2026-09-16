@@ -17,25 +17,6 @@
   ],
   "rejected_tripwires": [
     {
-      "alternative": "Refactor tree-sitter wrapper to convert offsets to true UTF-8 bytes (more invasive, slower, unnecessary since JS works in char-indices)",
-      "scope": [
-        "src/constitution/**",
-        "test/**"
-      ],
-      "forbids": {
-        "deps": [
-          "tree-sitter"
-        ],
-        "symbols": [],
-        "patterns": []
-      },
-      "provenance": {
-        "source": "llm_draft",
-        "confidence": 0.5,
-        "evidence": []
-      }
-    },
-    {
       "alternative": "Rename all `*Byte` fields to `*Char` across the codebase (widespread refactoring, high friction, not the blocking bug)",
       "scope": [
         "src/constitution/**",
