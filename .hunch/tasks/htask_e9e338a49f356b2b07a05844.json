@@ -1,0 +1,47 @@
+{
+  "id": "htask_e9e338a49f356b2b07a05844",
+  "title": "check the new 1.38 task changes is it working?",
+  "state": "completed",
+  "started_at": "2026-09-16T13:24:42.920Z",
+  "finished_at": "2026-09-16T13:28:34.140Z",
+  "coverage": "no-delivery-observed",
+  "lessons": [],
+  "applied": [],
+  "saved": [
+    {
+      "kind": "findings",
+      "record_id": "fnd_6ec3c15f15",
+      "content_hash": "sha256:f2dfb92accb1471b84f4ccc3e41e3cefa242fb614c5e2e435e8cff1e3af7a37f",
+      "home": "public",
+      "operation": "created",
+      "durability": "committed"
+    }
+  ],
+  "checks": [
+    {
+      "label": "Verification command",
+      "state": "passed",
+      "exit_code": 0
+    }
+  ],
+  "conformance": [],
+  "refusals": 0,
+  "files": [
+    ".cursor/rules/hunch.mdc",
+    ".github/copilot-instructions.md",
+    ".windsurf/rules/hunch.md",
+    "AGENTS.md",
+    "CLAUDE.md"
+  ],
+  "supersedes": [],
+  "source_snapshot": "sha256:07da54abf7bbcba1ca3fa0bf545e30909cdcf06b0a4d318532cec2a34392eaf8",
+  "report_hash": "sha256:915eba2397f583e4534b4b80726b499e007151fcb47487977fd6a2c3040939b1",
+  "provenance": {
+    "source": "task_report",
+    "confidence": 1,
+    "evidence": [
+      "hunch report htask_e9e338a49f356b2b07a05844"
+    ],
+    "last_verified": "2026-09-16T13:28:34.140Z"
+  }
+}
