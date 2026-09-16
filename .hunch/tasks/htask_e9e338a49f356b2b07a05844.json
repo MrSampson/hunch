@@ -3,7 +3,7 @@
   "title": "check the new 1.38 task changes is it working?",
   "state": "completed",
   "started_at": "2026-09-16T13:24:42.920Z",
-  "finished_at": "2026-09-16T13:29:45.010Z",
+  "finished_at": "2026-09-16T13:48:43.951Z",
   "coverage": "no-delivery-observed",
   "lessons": [],
   "applied": [],
@@ -12,6 +12,30 @@
       "kind": "findings",
       "record_id": "fnd_6ec3c15f15",
       "content_hash": "sha256:f2dfb92accb1471b84f4ccc3e41e3cefa242fb614c5e2e435e8cff1e3af7a37f",
+      "home": "public",
+      "operation": "created",
+      "durability": "committed"
+    },
+    {
+      "kind": "findings",
+      "record_id": "fnd_a894c4e4ed",
+      "content_hash": "sha256:a60e02553e726e114126b1ec458e7d8313b89c2b1ccd161e3200566c2bb79e54",
+      "home": "public",
+      "operation": "created",
+      "durability": "committed"
+    },
+    {
+      "kind": "findings",
+      "record_id": "fnd_beeae8897b",
+      "content_hash": "sha256:67f0bdbcfd4130986c2f4d2dd7130cfd3314798ab49e4e00316040833b5bf99b",
+      "home": "public",
+      "operation": "created",
+      "durability": "committed"
+    },
+    {
+      "kind": "findings",
+      "record_id": "fnd_aba5b3019c",
+      "content_hash": "sha256:94d0cf28ef0e123b5dfac8693d100efe2197189f009be784a431d4b08fe03000",
       "home": "public",
       "operation": "created",
       "durability": "committed"
@@ -31,18 +55,26 @@
     ".github/copilot-instructions.md",
     ".windsurf/rules/hunch.md",
     "AGENTS.md",
-    "CLAUDE.md"
+    "CHANGELOG.md",
+    "CLAUDE.md",
+    "ROADMAP.md",
+    "docs/nuryel-state-contract.md",
+    "src/cli/serve.ts",
+    "src/serve/app.ts",
+    "src/serve/mcpHttp.ts",
+    "test/serve.test.ts"
   ],
   "supersedes": [],
   "source_snapshot": "sha256:07da54abf7bbcba1ca3fa0bf545e30909cdcf06b0a4d318532cec2a34392eaf8",
-  "report_hash": "sha256:bd406e09a97f4c33ffe690e5fef603eff54da200dfe1a5459283ef1a05231b4b",
+  "report_hash": "sha256:b1ffb9d3a4577f73e2e7694387de661d315354485ace1126fe4b9ed34283a6a7",
   "provenance": {
     "source": "task_report",
     "confidence": 1,
     "evidence": [
       "hunch report htask_e9e338a49f356b2b07a05844",
-      "hunch report htask_d5c68fd9983f83d2041953f7"
+      "hunch report htask_d5c68fd9983f83d2041953f7",
+      "hunch report htask_c248b8b1e7a0b0deaf18b9fd"
     ],
-    "last_verified": "2026-09-16T13:29:45.010Z"
+    "last_verified": "2026-09-16T13:48:43.951Z"
   }
 }
