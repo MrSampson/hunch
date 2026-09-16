@@ -1,0 +1,62 @@
+{
+  "id": "htask_c1ae87379a520e5ca8b313ad",
+  "title": "where does hunch fit in",
+  "state": "completed",
+  "started_at": "2026-09-16T11:57:57.494Z",
+  "finished_at": "2026-09-16T13:05:34.933Z",
+  "coverage": "delivered",
+  "lessons": [
+    {
+      "kind": "decisions",
+      "record_id": "dec_a33cccdcb7",
+      "content_hash": "sha256:29c80718a6d7944f469b2719a9f0e7ef598eed05e4b5ea26854cb552f6f41a6c",
+      "title": "Subject identity by external reference: one active entity per external record per partition, a subject written as an entity's external key refused with the entity id named, reads resolve one explicit "
+    },
+    {
+      "kind": "decisions",
+      "record_id": "dec_327dbd3c78",
+      "content_hash": "sha256:f7b0b2d7e4734be62b5c29a76334af5a7bad6dd56e87aec1551c6da65ad3afb7",
+      "title": "Compete for the deterministic state layer position from the organizational angle; never claim to have named it"
+    }
+  ],
+  "applied": [],
+  "saved": [],
+  "checks": [],
+  "conformance": [
+    {
+      "kind": "decisions",
+      "record_id": "dec_a33cccdcb7",
+      "content_hash": "sha256:29c80718a6d7944f469b2719a9f0e7ef598eed05e4b5ea26854cb552f6f41a6c",
+      "outcome": "unavailable"
+    },
+    {
+      "kind": "decisions",
+      "record_id": "dec_327dbd3c78",
+      "content_hash": "sha256:f7b0b2d7e4734be62b5c29a76334af5a7bad6dd56e87aec1551c6da65ad3afb7",
+      "outcome": "unavailable"
+    }
+  ],
+  "refusals": 0,
+  "files": [
+    "src/serve/mcpHttp.ts"
+  ],
+  "supersedes": [],
+  "source_snapshot": null,
+  "report_hash": "sha256:043e6e6d6bec188e711875e4c4bfc0f773d04199792a67e4611da2225476032c",
+  "provenance": {
+    "source": "task_report",
+    "confidence": 1,
+    "evidence": [
+      "hunch report htask_c1ae87379a520e5ca8b313ad",
+      "hunch report htask_1f19c627dcf9a62235e5fd67",
+      "hunch report htask_39a057c0da1e9e6402a87eee",
+      "hunch report htask_36e0bed57da01fbef33ed5b1",
+      "hunch report htask_8dfc2eaf85d85e0e9c2239cd",
+      "hunch report htask_ce1570c74088d1e32955865c",
+      "hunch report htask_84ac38c621749916125d6601",
+      "hunch report htask_8f5cb0a85b14f10428fff1e5",
+      "hunch report htask_8d7840f9e667497cfefede02"
+    ],
+    "last_verified": "2026-09-16T13:05:34.933Z"
+  }
+}
