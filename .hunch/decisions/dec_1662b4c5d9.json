@@ -1,0 +1,103 @@
+{
+  "id": "dec_1662b4c5d9",
+  "title": "Include imagePullSecrets[].name in Secret reference extraction",
+  "topic": null,
+  "status": "accepted",
+  "context": "Real production Helm chart validation revealed a gap in field-path enumeration: registry pull secrets (spec.template.spec.imagePullSecrets[].name) are a common, legitimate Secret reference that the original design never covered. Six review rounds focusing on parsing correctness missed this completeness gap. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.).",
+  "decision": "Added POD_SPEC_REF_SUFFIXES table and integrated imagePullSecrets[].name → Secret into the field-spec generator so literal and directly-templated pull secret names are extracted as reference candidates.",
+  "consequences": [
+    "Extractor now correctly identifies registry pull secret name references in Deployment/StatefulSet specs",
+    "Scanner behavior changes on manifests with direct imagePullSecrets declarations; indirected charts remain unaffected",
+    "Field-path enumeration moves closer to real-world Helm authoring patterns beyond what unit tests expose"
+  ],
+  "alternatives_rejected": [
+    "Attempting programmatic inference of all Secret references (fragile and incomplete)",
+    "Deferring until the next review cycle discovered it independently",
+    "Adding isolated fixes without categorizing pod-spec-level references as a distinct class"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Attempting programmatic inference of all Secret references (fragile and incomplete)",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Deferring until the next review cycle discovered it independently",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Adding isolated fixes without categorizing pod-spec-level references as a distinct class",
+      "scope": [
+        "src/extractors/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_a94a8fe5cc",
+    "cmp_e0ccfe26fe",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/extractors/k8sManifest.ts",
+    "test/k8sManifest.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "ffb1d7c3",
+  "valid_from": "2026-09-15T15:32:16+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:ffb1d7c3",
+      "synth:provider=claude-cli",
+      "branch:40-k8s-manifest-cross-resource-refs",
+      "src/extractors/k8sManifest.ts",
+      "test/k8sManifest.test.ts"
+    ],
+    "last_verified": "2026-09-15T13:32:31.290Z"
+  },
+  "date": "2026-09-15T15:32:16+02:00"
+}
