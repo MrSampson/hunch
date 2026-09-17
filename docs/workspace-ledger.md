@@ -213,7 +213,7 @@ unmerged or dirty as a second line of defense. Because `git branch -d` cannot se
 rebase merge once the upstream is gone or unset, the plan runs git's own `-d` precondition first
 (the head must be an ancestor of its upstream when one resolves, otherwise of the main worktree's
 `HEAD`); a step it would refuse is skipped whole — the worktree is not removed — and reported
-("squash-merged: git branch -d would refuse; delete manually after checking"). Ignored files
+("squash-merged: git branch -d would refuse (not merged into HEAD); delete manually after checking"). Ignored files
 (`.env`, `node_modules/`), which `git worktree remove` deletes without asking, are not a refusal
 but are named (bounded list plus count) in the plan and in the confirmation. Every token of a
 printed command is shell-quoted, and the record schema refuses control characters and newlines
