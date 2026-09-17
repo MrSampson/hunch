@@ -97,8 +97,15 @@ Field rules:
   - `ancestry` — `git merge-base --is-ancestor <head> <default remote head>`;
   - `squash` — the patch-id of the branch's whole diff since merge-base equals the patch-id of one
     commit on the default branch (the same `git patch-id --stable` signal `changeIdentity.ts` uses);
-  - `rebase` — every commit on the branch has a patch-equivalent commit on the default branch
-    (`git cherry`), i.e. it was rebased or cherry-picked in;
+  - `rebase` — every commit on the branch has a patch-equivalent commit among the searched
+    default-branch commits, i.e. it was rebased or cherry-picked in (computed against the
+    same one-time patch-id map as `squash`, not with `git cherry`, whose cost grows with the
+    default branch's history for every branch checked);
+  - the squash/rebase search covers the last 2000 default-branch commits; when that history
+    cannot be read (too large, git failed) the verdict says `search unavailable` rather than
+    claiming a search that did not happen. A record holds at most 4096 branches and 512
+    worktrees, newest first; anything omitted, and any branch name git would refuse as an
+    argument, is counted in the record's provenance instead of silently dropped;
   - `upstream_gone` alone is *not* a merged verdict (a branch can be deleted remotely without
     merging); it is reported as its own signal.
   - `unknown` when the default branch is not present locally or git failed (never collapsed into
@@ -257,7 +264,7 @@ tests named in the last column.
 | --- | --- | --- |
 | Crafted `ws_*.json` in a cloned public `.hunch/` or a shared overlay (attacker-controlled input read automatically) | Strict Zod schema (`.strict()`, bounded lengths, regex-validated ids, `check-ref-format`-validated branch names), the existing per-record size cap (`MAX_JSON_RECORD_BYTES`) and the same symlink / FIFO / hard-link refusals `readTeamConfig` applies. An invalid record is skipped and reported by `doctor`; it is never partially applied. | schema fuzz tests; malformed/oversized/symlinked record fixtures |
 | A stored record steering a destructive action (e.g. a record claiming a branch is merged) | Stored records are **display-only**. `prune --apply` re-computes the verdict from live git on this machine and acts on that only; it never reads `merged` from a record. Paths from *other* machines' records are never passed to any command. | test: a forged "merged" record must not cause a delete |
-| Command injection through branch names / paths | git is invoked with `execFileSync` and a fixed argv (no shell), every ref is passed after `--`, values starting with `-` are rejected, and branch names must pass `git check-ref-format` before use. Paths used by `--apply` come from `git worktree list --porcelain` on this machine, never from a record. | argv-level unit tests with hostile names (`--upload-pack=…`, `-D`, spaces, newlines) |
+| Command injection through branch names / paths | git is invoked with `execFileSync` and a fixed argv (no shell). No branch or worktree *name* is ever a git argument: the snapshot passes only literals, refs it built from a fixed candidate list (after `--end-of-options`), and 40/64-hex SHAs validated by regex; worktree paths are used only as the working directory. A branch name git would refuse as an argument is skipped and counted, never recorded. Paths used by `--apply` come from `git worktree list --porcelain` on this machine, never from a record. | schema tests with hostile names (`--upload-pack=…`, `-D`, spaces, newlines); a live `refs/heads/-dash` fixture |
 | Git hook executing untrusted content | The post-checkout / post-commit blocks call the pinned `hunch` invocation with a constant argument list (`workspaces snapshot --quiet`); no argument is derived from repository content. Hook blocks are the same managed-block mechanism `hunch init` already uses, install only when the user runs `hunch init`, and are inspectable in `.git/hooks`. | hook-content snapshot test |
 | Unattended destructive action | `--apply` is CLI-only, local-machine-only, `git branch -d` / `git worktree remove` without force flags, requires interactive confirmation or an explicit `--yes`, and never touches remote branches. The MCP tool is read-only. Nothing runs on another machine. | tests for each refusal path |
 | Secret leakage into memory | Every string field passes the existing credential filters; remote URLs, commit messages, diffs, file names, author emails and environment variables are not recorded at all. A record that fails the filter is rejected, not trimmed. | credential fixtures rejected |
