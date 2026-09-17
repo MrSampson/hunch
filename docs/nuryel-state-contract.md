@@ -253,7 +253,14 @@ over HTTP with the same three verbs: `GET /nuryel/v1/capabilities`, `POST /nurye
 schemas minus `schema` and `principal`), plus `GET /nuryel/v1/health` and the MCP endpoint
 `POST /nuryel/v1/mcp` described below. Errors are problem+json;
 a `StateRefusal` maps to 403 outside-grants, 409 conflict / idempotency, 422 identity, 400
-malformed / unsupported, 404 no-partition-home.
+malformed / unsupported, 404 no-partition-home. A server-side failure (500 internal, 503
+write-lock-timeout) carries only a generic `detail`; lock owners, host names and filesystem
+paths are written to the server's stderr, never to the response.
+
+`GET /nuryel/v1/health` needs no credential and then answers liveness only:
+`{ ok, version, protocol }`. With a valid credential in `Authorization` (the same bearer or DPoP
+check as every other route) the response adds `partitions`, the served partition ids. A presented
+but invalid credential is refused with 401 rather than answered anonymously.
 
 **MCP over streamable HTTP.** `POST /nuryel/v1/mcp` serves the `nuryel_*` tools
 (`nuryel_capabilities`, `read`, `write`, `capture`, `capture_batch`, `subscribe`, `records`) to any
