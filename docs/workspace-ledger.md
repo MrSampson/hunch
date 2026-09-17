@@ -1,7 +1,9 @@
 # Workspace ledger: branches and worktrees across machines
 
-Status: **plan, not shipped.** Drafted 2026-09-17. Nothing in this document is implemented yet;
-every file reference below is to code that exists today and that the plan builds on.
+Status: **Phase 1 implemented (branch `claude/git-branches-worktrees-tracking-7v15a6`, 2026-09-17):
+the record kind, machine identity, the git snapshot with merged verdicts, and `hunch workspaces`
+/ `hunch branches` on one machine. Phases 2 and 3 (overlay hooks, MCP tool, prune) are still a
+plan.** Drafted 2026-09-17.
 
 ## The problem
 
@@ -49,27 +51,28 @@ The example below is a `publish: full` record; the default `branches` mode has n
 ```jsonc
 {
   "schema": "hunch.workspace/1",
-  "id": "ws_a1b2c3d4e5f6",              // one record per machine per repository
+  "id": "ws_a1b2c3d4e5f6",              // derived from the machine id: one record per machine
   "machine": { "id": "mac_…", "label": "machine-7f3a", "platform": "darwin" },   // label is user-set; never the hostname by default
-  "repository": "github.com/davesheffer/hunch",   // canonicalRemoteRepositoryIdentity()
+  "repository": "git-remote:sha256:801e…",      // stableRepositoryName(): a digest, never a URL or path
+  "publish": "full",
   "observed_at": "2026-09-17T08:12:00Z",
-  "default_branch": { "name": "main", "remote_head": "8f3c…" },
-  "fetched_at": "2026-09-17T07:58:00Z",  // last time origin was fetched on this machine (or null)
+  "fetched_at": "2026-09-17T07:58:00Z",  // mtime of FETCH_HEAD: when origin was last fetched here (or null)
+  "default_branch": { "name": "main", "ref": "origin/main", "head": "8f3c…" },
   "worktrees": [
-    { "path": "/Users/dave/code/hunch",           "branch": "main",           "head": "8f3c…",
-      "is_main": true,  "dirty": false, "locked": false, "last_commit_at": "2026-09-16T…" },
-    { "path": "/Users/dave/code/hunch-wt/feat-x", "branch": "feat/x",         "head": "1a2b…",
-      "is_main": false, "dirty": true,  "locked": false, "last_commit_at": "2026-09-10T…" }
+    { "id": "wt_3c9e1a70", "path": "/Users/dave/code/hunch",          "branch": "main",   "head": "8f3c…",
+      "is_main": true,  "dirty": false, "locked": false, "prunable": false, "last_commit_at": "2026-09-16T…" },
+    { "id": "wt_b41d02f9", "path": "/Users/dave/code/hunch-wt/feat-x", "branch": "feat/x", "head": "1a2b…",
+      "is_main": false, "dirty": true,  "locked": false, "prunable": false, "last_commit_at": "2026-09-10T…" }
   ],
   "branches": [
-    { "name": "feat/x", "head": "1a2b…", "upstream": "origin/feat/x", "upstream_gone": false,
-      "ahead": 2, "behind": 0, "last_commit_at": "2026-09-10T…", "worktree": "/Users/dave/code/hunch-wt/feat-x",
-      "merged": { "status": "unmerged", "method": null, "evidence": [] } },
-    { "name": "fix/old", "head": "9c9c…", "upstream": "origin/fix/old", "upstream_gone": true,
-      "ahead": 0, "behind": 40, "last_commit_at": "2026-07-02T…", "worktree": null,
-      "merged": { "status": "merged", "method": "squash", "evidence": ["patch-id 9c9c…=d4d4… in main"] } }
+    { "name": "feat/x",  "head": "1a2b…", "is_default": false, "upstream": "origin/feat/x",  "upstream_gone": false,
+      "ahead": 2, "behind": 0,  "last_commit_at": "2026-09-10T…", "worktree": "wt_b41d02f9",
+      "merged": { "status": "unmerged", "method": null, "evidence": ["not in origin/main@8f3c…; squash searched last 2000 commits"] } },
+    { "name": "fix/old", "head": "9c9c…", "is_default": false, "upstream": "origin/fix/old", "upstream_gone": true,
+      "ahead": null, "behind": null, "last_commit_at": "2026-07-02T…", "worktree": null,
+      "merged": { "status": "merged", "method": "squash", "evidence": ["patch-id of 5e5e…..9c9c… equals origin/main commit d4d4…"] } }
   ],
-  "provenance": { "source": "extracted", "confidence": 1, "evidence": ["git worktree list --porcelain", "git for-each-ref …"] }
+  "provenance": { "source": "extracted", "confidence": 1, "evidence": ["git worktree list --porcelain", "git for-each-ref refs/heads/", "…"] }
 }
 ```
 
@@ -92,8 +95,10 @@ Field rules:
   only repository-derived content, and branch names must pass `git check-ref-format`.
 - **Merged verdicts** are deterministic, computed on the machine that has the objects:
   - `ancestry` — `git merge-base --is-ancestor <head> <default remote head>`;
-  - `squash` — patch-id equivalence of the branch's commits since merge-base against the default
-    branch (same signal `commitRepairStatus` / `repair-provenance` use for orphaned commits);
+  - `squash` — the patch-id of the branch's whole diff since merge-base equals the patch-id of one
+    commit on the default branch (the same `git patch-id --stable` signal `changeIdentity.ts` uses);
+  - `rebase` — every commit on the branch has a patch-equivalent commit on the default branch
+    (`git cherry`), i.e. it was rebased or cherry-picked in;
   - `upstream_gone` alone is *not* a merged verdict (a branch can be deleted remotely without
     merging); it is reported as its own signal.
   - `unknown` when the default branch is not present locally or git failed (never collapsed into
@@ -117,7 +122,7 @@ produces the same content hash as the stored record writes nothing and commits n
 | `git commit` | existing post-commit block: append `hunch workspaces snapshot --quiet` after the capture step | keeps `head`, `ahead`, `dirty` current |
 | MCP server start / first `hunch_context` of a session | `src/mcp/server.ts`, right after the existing overlay pull (`pullHunchStatus`) | guarantees a machine that only ever runs an agent still reports |
 | `hunch worktree <path>` | existing command in `src/cli/index.ts` | snapshot after the worktree is created |
-| `hunch workspaces snapshot [--fetch]` | manual / CI / cron | `--fetch` runs `git fetch --prune` first; the default never touches the network |
+| `hunch workspaces snapshot [--fetch] [--dry-run] [--quiet]` | manual / CI / cron (shipped) | `--fetch` runs `git fetch --prune` first; the default never touches the network. A snapshot whose content is unchanged and whose stored record is under a day old writes nothing |
 
 The snapshot is written to the overlay through the existing capture funnel
 (`flushPrivate` in `src/integrations/sync.ts`), so it auto-commits and pushes exactly like a
@@ -136,21 +141,25 @@ All queries read every `ws_*` record visible in the store (this machine's plus e
 and never shell out to git on another machine's behalf. Output is deliberately compact: one line
 per worktree/branch, so an agent spends tens of tokens, not thousands.
 
-### `hunch workspaces` — the inventory
+### `hunch workspaces` — the inventory (shipped)
 
-(shown with `publish: full`; in the default `branches` mode the WORKTREE column reads `yes` / `-`)
+This machine is always read **live** from git (its paths shown, never stored); other machines
+come from their stored records, whose WORKTREE column reads `yes` in the default `branches`
+publish mode.
 
 ```
-MACHINE     WORKTREE                          BRANCH            DIRTY  LAST COMMIT  SEEN
-dave-mbp    ~/code/hunch                      main              -      1d           2h ago
-dave-mbp    ~/code/hunch-wt/feat-x            feat/x            yes    7d           2h ago
-dave-desk   /home/dave/hunch                  main              -      1d           9d ago (unverified)
-dave-desk   /home/dave/hunch-wt/fix-old       fix/old           -      77d          9d ago (unverified)
+MACHINE           WORKTREE                     BRANCH     DIRTY  LAST COMMIT  SEEN
+build-box (this)  /home/dave/code/hunch        main       -      1d ago       live
+build-box (this)  /home/dave/code/hunch-wt/x   feat/x     yes    7d ago       live
+machine-9f2c      yes                          main       -      1d ago       9d ago (unverified)
+machine-9f2c      yes                          fix/old    -      77d ago      9d ago (unverified)
 ```
 
-Flags: `--machine <label>`, `--branch <name>`, `--json`.
+Flags: `--machine <label>`, `--branch <name>`, `--fetch`, `--json`. Companions: `hunch
+workspaces label [label]` (show/set this machine's label, warns when it equals the hostname or
+username) and `hunch workspaces forget <machine>` (drop a retired machine's record).
 
-### `hunch branches` — the verdicts
+### `hunch branches` — the verdicts (shipped)
 
 ```
 BRANCH        MACHINES            WORKTREE        UPSTREAM        MERGED          ACTION
@@ -159,7 +168,10 @@ fix/old       dave-mbp,dave-desk  dave-desk       gone            yes (squash)  
 spike/y       dave-desk           -               never pushed    unknown         review: unpushed, 41d idle, dave-desk unverified
 ```
 
-Flags: `--merged`, `--stale <days>`, `--unpushed`, `--machine <label>`, `--json`.
+Flags: `--merged`, `--stale <days>`, `--unpushed`, `--machine <label>`, `--fetch`, `--json`.
+Ahead/behind is measured against the branch's own upstream; "merged" is measured against the
+default branch. When two machines hold the same branch at different heads the row says so
+(`review: local heads differ …`) instead of recommending a delete.
 
 The `ACTION` column is a recommendation computed from the same rules everywhere:
 
@@ -168,7 +180,7 @@ The `ACTION` column is a recommendation computed from the same rules everywhere:
 | merged (ancestry or squash) and no dirty/locked worktree anywhere | delete local branch on each machine that has it; prune its worktree |
 | merged but a worktree on it is dirty | keep; name the machine and worktree |
 | unmerged, no upstream, idle > `stale_after` | review: unpushed work, possibly lost if the machine is retired |
-| unmerged, upstream ahead/behind | keep |
+| unmerged, upstream ahead/behind | keep (a dirty worktree is named: `keep; dirty worktree on X`) |
 | machine record unverified | any action is suffixed `(unverified)` and never auto-applied |
 
 ### `hunch workspaces prune`
@@ -232,7 +244,8 @@ tests named in the last column.
   the transport git already uses. There is no Hunch-operated service, no telemetry, no third
   party, and no new network endpoint. With no overlay configured, nothing leaves the machine.
 - In the default `publish: branches` mode the record contains: a random machine id, a user-set
-  label, the OS platform name, the canonical repository identity (host + path, no credentials),
+  label, the OS platform name, the privacy-safe repository label (`stableRepositoryName`: a
+  SHA-256 of the canonical fetch remote — never a URL or a path),
   branch names, commit SHAs, ISO timestamps, ahead/behind counts, dirty/locked booleans and the
   merged verdicts. Nothing else. Paths are added only under an explicit `publish: full`.
 - The snapshot never reads the network. `--fetch` is an explicit opt-in and runs `git fetch
@@ -267,13 +280,17 @@ tests named in the last column.
 
 Each phase ships on its own, is tested under `test/`, and does not require the next.
 
-**Phase 1 — single machine, local truth.** Record kind + strict Zod schema + migration no-op
-(`src/core/types.ts`, `src/core/migrate.ts`); machine identity (`src/core/machine.ts`);
-snapshot extractor (`src/extractors/workspaces.ts`: worktree list, branch list, upstream state,
-ancestry and squash verdicts, dirty/locked); `hunch workspaces snapshot [--dry-run --json]`,
-`hunch workspaces`, `hunch branches` reading the local store. Tests build throwaway repos with
-real worktrees, merges, squash-merges and a deleted upstream, plus the hostile-input and
-credential-filter tests listed in the security table. Exit criterion: on one machine, the three questions
+**Phase 1 — single machine, local truth (implemented).** Record kind + strict Zod schema
+(`src/core/workspace.ts`, registered in `src/core/types.ts`; no migration needed — the kind is
+additive); machine identity (`src/core/machine.ts`); snapshot extractor
+(`src/extractors/workspaces.ts`: worktree list, branch list, upstream state, ancestry / squash /
+rebase verdicts, dirty/locked); `hunch workspaces [list|snapshot|label|forget]` and `hunch
+branches`. `snapshot` already routes through the capture funnel, so with an overlay configured
+the record is committed and pushed there today; without one it writes nothing unless
+`workspaces.publish_public` is set. `test/workspaces.test.ts` builds throwaway repos with real
+worktrees, merge / squash / rebase merges, a deleted upstream and a never-pushed branch, and
+runs the hostile-input, forged-record, symlink, credential-filter and live-wins-over-stored
+cases from the security table. Exit criterion: on one machine, the three questions
 in "The problem" are answered by one command with no LLM and no network.
 
 **Phase 2 — cross-machine.** Overlay routing through `flushPrivate`; hooks (post-checkout block,
