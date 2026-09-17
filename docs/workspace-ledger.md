@@ -1,9 +1,10 @@
 # Workspace ledger: branches and worktrees across machines
 
-Status: **Phase 1 implemented (branch `claude/git-branches-worktrees-tracking-7v15a6`, 2026-09-17):
-the record kind, machine identity, the git snapshot with merged verdicts, and `hunch workspaces`
-/ `hunch branches` on one machine. Phases 2 and 3 (overlay hooks, MCP tool, prune) are still a
-plan.** Drafted 2026-09-17.
+Status: **Phases 1 and 2 implemented (branch `claude/git-branches-worktrees-tracking-7v15a6`,
+2026-09-17): the record kind, machine identity, the git snapshot with merged verdicts, cross-machine
+sync through the overlay, the post-checkout / post-commit hooks, the MCP-start refresh, the
+read-only `hunch_workspaces` tool, `/worktrees`, and the `now` / `doctor` lines. Phase 3 (prune,
+privacy modes beyond `publish`, PR linkage) is still a plan.** Drafted 2026-09-17.
 
 ## The problem
 
@@ -125,10 +126,10 @@ produces the same content hash as the stored record writes nothing and commits n
 
 | Trigger | Where it plugs in | Notes |
 | --- | --- | --- |
-| `git checkout` / `git switch` / `git worktree add` | new **post-checkout** managed block in `src/integrations/hooks.ts`, installed by `hunch init` next to post-commit / pre-commit / post-merge | the moment branches and worktrees actually change |
-| `git commit` | existing post-commit block: append `hunch workspaces snapshot --quiet` after the capture step | keeps `head`, `ahead`, `dirty` current |
-| MCP server start / first `hunch_context` of a session | `src/mcp/server.ts`, right after the existing overlay pull (`pullHunchStatus`) | guarantees a machine that only ever runs an agent still reports |
-| `hunch worktree <path>` | existing command in `src/cli/index.ts` | snapshot after the worktree is created |
+| `git checkout` / `git switch` / `git worktree add` | **post-checkout** managed block in `src/integrations/hooks.ts` (shipped), installed by `hunch init`, `hunch private` / `hunch shared`, and self-healed by `hunch index` like post-merge | fires only for branch checkouts (`$3 = 1`), never for file checkouts |
+| `git commit` | post-commit block: `hunch workspaces snapshot --quiet` after the capture step, inside the same `HUNCH_SYNC` guard (shipped) | keeps `head`, `ahead`, `dirty` current |
+| MCP server start | `src/mcp/server.ts` (shipped): the stdio entrypoint arms an unref'd 30 s timer that spawns a detached `workspaces snapshot --quiet` with this installation's launcher; an in-process server (tests, embedders) never spawns; `HUNCH_WORKSPACE_REFRESH=0` opts out | a machine that only ever runs an agent still reports; a session that closes within 30 s does not |
+| `hunch worktree <path>` | existing command in `src/cli/index.ts` (shipped) | snapshot after the worktree is created |
 | `hunch workspaces snapshot [--fetch] [--dry-run] [--quiet]` | manual / CI / cron (shipped) | `--fetch` runs `git fetch --prune` first; the default never touches the network. A snapshot whose content is unchanged and whose stored record is under a day old writes nothing |
 
 The snapshot is written to the overlay through the existing capture funnel
@@ -204,21 +205,26 @@ other machines are printed, never executed — and `--apply` never deletes remot
 Deleting somebody else's unmerged work is exactly the irreversible action Hunch should not take
 unattended, mirroring the `repair-provenance --apply` posture in `src/integrations/hooks.ts`.
 
-### MCP
+### MCP (shipped)
 
-One **read-only** tool, `hunch_workspaces(view: "inventory" | "branches", filter?)`, returning
-the same rows as JSON plus a `summary` string. It joins the everyday tool group (it is a
-grounding read, not a specialist state tool). There is no MCP write or prune surface: an agent
-can *see* what is prunable but can only act through the CLI, where the confirmation above
-applies. Its description tells the agent to call it *instead of* running git inventory commands.
+One **read-only** tool, `hunch_workspaces(view: "inventory" | "branches", machine?, branch?,
+merged_only?)`, returning the same table as text and the rows as `structuredContent`. It is in
+the everyday tool group (a grounding read, not a specialist state tool). There is no MCP write or
+prune surface: an agent can *see* what is prunable but can only act through the CLI, where the
+confirmation above applies. Its description tells the agent to call it *instead of* running git
+inventory commands.
 
-### Existing surfaces
+### Existing surfaces (shipped)
 
-- `hunch now` gains one line: `Workspaces: 3 machines · 7 worktrees (2 dirty) · 4 branches merged and deletable`.
-- `hunch doctor` reports whether this machine has a workspace record, its age, and whether the
+- `hunch now` and `hunch_now` gain one line from **stored** records only (no git, so the hot
+  view stays fast): `🗂 Workspaces in memory: 3 machine(s) (1 unverified) · 7 worktree(s) (2 dirty)
+  · 12 branch(es), 4 deletable`. The public view reads the public store; `--private` the union.
+- `hunch doctor` reports this machine's label (warning when it equals the hostname or username),
+  whether its record is in memory and when, how many other machines are, and whether the
   post-checkout hook is installed.
 - `hunch init` scaffolds a `/worktrees` slash command next to `/capture` and `/heal`
-  (`src/integrations/scaffold.ts`) whose body is "call `hunch_workspaces`, then answer".
+  (`src/integrations/scaffold.ts`): call `hunch_workspaces`, report the rows as they are, never
+  run git inventory commands, never delete.
 
 ## Team mode
 
@@ -300,11 +306,15 @@ runs the hostile-input, forged-record, symlink, credential-filter and live-wins-
 cases from the security table. Exit criterion: on one machine, the three questions
 in "The problem" are answered by one command with no LLM and no network.
 
-**Phase 2 — cross-machine.** Overlay routing through `flushPrivate`; hooks (post-checkout block,
-post-commit append, MCP-start refresh, `hunch worktree` hook-in); freshness labeling; union query
-across `ws_*` records; `hunch_workspaces` MCP tool; `/worktrees` scaffold; `now` and `doctor`
-lines. Exit criterion: a snapshot taken on machine A is visible in `hunch branches` on machine B
-after B's next MCP session start, with A's record labeled by age.
+**Phase 2 — cross-machine (implemented).** One shared code path
+(`src/integrations/workspaceLedger.ts`) records a snapshot through the capture funnel and reads
+the ledger for every surface; hooks (post-checkout block, post-commit line, MCP-start timer,
+`hunch worktree`); freshness labeling; union query across `ws_*` records; the read-only
+`hunch_workspaces` tool; `/worktrees`; `now` / `doctor` lines. `test/workspace-ledger.test.ts`
+drives a real post-checkout hook end to end (branch checkout records, file checkout does not),
+the record/read path against a real overlay repo, the tool through an in-memory MCP client with a
+forged record for this machine that must not be read, the detached launcher, the scaffold, and
+`hunch worktree` / `doctor` / `now` through the CLI.
 
 **Phase 3 — safe cleanup.** `prune --dry-run` / `--apply` with the local-only, evidence-bound
 rules above; `publish` privacy modes for shared stores; optional PR linkage (when the repo's
