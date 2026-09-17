@@ -227,9 +227,24 @@ The served product is the fold of Hunch Memory into Hunch. `hunch serve --config
 `127.0.0.1` (put it behind SSH or a reverse proxy; never expose the port) and hosts partitions
 over HTTP with the same three verbs: `GET /nuryel/v1/capabilities`, `POST /nuryel/v1/read`,
 `POST /nuryel/v1/write`, `POST /nuryel/v1/subscribe` (request bodies are the contract's request
-schemas minus `schema` and `principal`), plus `GET /nuryel/v1/health`. Errors are problem+json;
+schemas minus `schema` and `principal`), plus `GET /nuryel/v1/health` and the MCP endpoint
+`POST /nuryel/v1/mcp` described below. Errors are problem+json;
 a `StateRefusal` maps to 403 outside-grants, 409 conflict / idempotency, 422 identity, 400
 malformed / unsupported, 404 no-partition-home.
+
+**MCP over streamable HTTP.** `POST /nuryel/v1/mcp` serves the `nuryel_*` tools
+(`nuryel_capabilities`, `read`, `write`, `capture`, `capture_batch`, `subscribe`, `records`) to any
+MCP client that speaks the streamable HTTP transport — an agent gateway, a remote orchestrator, a
+hosted agent framework — with the same bearer or DPoP credential in the `Authorization` header as
+the REST routes. The endpoint is stateless (one JSON-RPC message per POST, JSON responses, no
+session id; GET and DELETE are 405) because every verb is a single request/response. Tool
+arguments are the contract's request schemas minus `schema` and `principal`; the credential
+decides the principal and a smuggled one is ignored. A refusal is a tool error whose
+`structuredContent` is the REST problem body (`status`, `title`, `detail`, `conflict`), so an MCP
+caller sees exactly the 403/409/422/400 the REST caller would. Both transports call one
+dispatcher in `src/serve/app.ts` (`src/serve/mcpHttp.ts` only registers the tools), so the
+grants, the write lock and the flush cannot diverge. This is a second binding of the contract,
+not a second implementation; `hunch mcp` over stdio remains the local, trusted-caller binding.
 
 **Shared state view (shipped in 1.33.0).** `/operator` serves a static, read-only browser client for the
 existing capabilities, read, records and subscribe endpoints. It introduces no state verb or
