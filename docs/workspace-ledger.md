@@ -1,10 +1,11 @@
 # Workspace ledger: branches and worktrees across machines
 
-Status: **Phases 1 and 2 implemented (branch `claude/git-branches-worktrees-tracking-7v15a6`,
+Status: **All three phases implemented (branch `claude/git-branches-worktrees-tracking-7v15a6`,
 2026-09-17): the record kind, machine identity, the git snapshot with merged verdicts, cross-machine
 sync through the overlay, the post-checkout / post-commit hooks, the MCP-start refresh, the
-read-only `hunch_workspaces` tool, `/worktrees`, and the `now` / `doctor` lines. Phase 3 (prune,
-privacy modes beyond `publish`, PR linkage) is still a plan.** Drafted 2026-09-17.
+read-only `hunch_workspaces` tool, `/worktrees`, the `now` / `doctor` lines, `hunch workspaces
+prune` (dry run / local-only `--apply`), and pull-request linkage from local commit subjects.**
+Drafted 2026-09-17.
 
 ## The problem
 
@@ -191,10 +192,12 @@ The `ACTION` column is a recommendation computed from the same rules everywhere:
 | unmerged, upstream ahead/behind | keep (a dirty worktree is named: `keep; dirty worktree on X`) |
 | machine record unverified | any action is suffixed `(unverified)` and never auto-applied |
 
-### `hunch workspaces prune`
+### `hunch workspaces prune` (shipped)
 
-`--dry-run` (default) prints the exact `git branch -d` / `git worktree remove` commands **per
-machine**. `--apply` executes only the commands for *this* machine, and before executing it
+The dry run (default) prints the exact `git branch -d -- <name>` / `git worktree remove -- <path>`
+commands **per machine**, each with the verdict evidence that justifies it, and lists the
+merged branches it deliberately leaves alone with the reason (checked out in the main worktree,
+dirty, locked, path missing). `--apply` executes only the commands for *this* machine, and before executing it
 re-runs the snapshot and acts on that **fresh local result, never on a stored record**: a branch
 is deleted only when the live verdict is `merged` with evidence tied to the same `head` sha, and
 a worktree is removed only when it is clean and unlocked right now. It uses `git branch -d`
@@ -316,10 +319,14 @@ the record/read path against a real overlay repo, the tool through an in-memory 
 forged record for this machine that must not be read, the detached launcher, the scaffold, and
 `hunch worktree` / `doctor` / `now` through the CLI.
 
-**Phase 3 — safe cleanup.** `prune --dry-run` / `--apply` with the local-only, evidence-bound
-rules above; `publish` privacy modes for shared stores; optional PR linkage (when the repo's
-`post-merge` hook already sees a merged PR, attach `merged.method: "pr"` with the PR number —
-never fetched from GitHub by the snapshot itself).
+**Phase 3 — safe cleanup (implemented).** `hunch workspaces prune [--apply] [--yes]` with the
+local-only, evidence-bound rules above (`planPrune` / `pruneRefusal` in `src/core/workspace.ts`
+are pure and tested against every refusal; `applyPrune` in `src/integrations/workspaceLedger.ts`
+runs fixed-argv git with `--`, no force flags, and re-snapshots afterwards so other machines see
+the change). PR linkage: a merged branch carries `merged.pr` when the LOCAL merge commit
+subject reads `Merge pull request #N from owner/<branch>` or the squash commit subject ends in
+`(#N)` — the subjects GitHub/GitLab write — matched in JS, never fetched from a forge, never a
+branch name in a git argument. `publish` privacy modes shipped in Phase 1.
 
 Deliberately **out of scope**: executing any command on another machine, deleting remote
 branches, a background daemon, and any use of `hunch serve` — the ledger must work for a
