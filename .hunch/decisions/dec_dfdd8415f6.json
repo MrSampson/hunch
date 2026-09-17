@@ -2,7 +2,7 @@
   "id": "dec_dfdd8415f6",
   "title": "MCP session start refreshes the ledger via an unref'd 30 s timer that spawns a detached snapshot, only from the real stdio entrypoint",
   "topic": "workspace-ledger.session-refresh",
-  "status": "accepted",
+  "status": "superseded",
   "context": "A machine that only ever runs an agent must still report its branches. Spawning at server construction made existing tests that count overlay commits across in-process or stdio MCP sessions nondeterministic (constitution.test.ts).",
   "decision": "`startServer` (the `hunch mcp` stdio entrypoint) enables `workspaceRefresh`; `buildServerWithRootControl` arms an unref'd setTimeout (HUNCH_WORKSPACE_REFRESH_DELAY_MS, default 30 s) that spawns `hunch workspaces snapshot --quiet` detached with this installation's launcher (verificationLauncherFor), HUNCH_SYNC=1, only when a snapshot has a home. In-process servers (tests, embedders) never spawn; HUNCH_WORKSPACE_REFRESH=0 opts out.",
   "consequences": [
@@ -24,11 +24,11 @@
     "src/integrations/workspaceLedger.ts"
   ],
   "supersedes": null,
-  "superseded_by": null,
+  "superseded_by": "dec_9b2c4b884e",
   "caused_by_bug": null,
   "commit": null,
   "valid_from": "2026-09-17T06:49:13.799Z",
-  "valid_to": null,
+  "valid_to": "2026-09-17T07:54:28.970Z",
   "retired": {
     "symbols": [],
     "deps": []
