@@ -140,9 +140,10 @@ mode (no overlay configured) the record is written to the repo-tracked `.hunch/`
 `workspaces.publish_public: true`; the default is to skip with a one-line `doctor` hint, because
 committing per-machine paths into the code repository is rarely wanted.
 
-Hook cost guard: the hook runs the snapshot in the background (`&` / detached spawn, the same
-pattern the post-commit capture uses) and skips the write when the stored record is younger than
-one day and its content is unchanged, so `git checkout` latency is unaffected.
+Hook cost guard: the hook runs the snapshot in the background (`&`, the same shell pattern the
+post-commit capture line uses — nothing is detach-spawned any more) and skips the write when the
+stored record is younger than one day and its content is unchanged, so `git checkout` latency is
+unaffected.
 
 ## The queries
 
