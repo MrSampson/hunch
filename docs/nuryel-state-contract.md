@@ -181,15 +181,25 @@ the record; a ledger that is not contiguous is an error, never silently restarte
 facets, dropped from legacy ones; an agent principal cannot sign `human_confirmed` — it is
 rewritten to `agent_recorded`, a human principal can) → identity (a supplied id must equal the
 derived one, `identity` refusal otherwise; receipts, commitments and derived state derive their
-ids, entities and relationships are checked by their schemas) → facet schema → idempotency (same
-key + same payload = `replayed`; same key + other payload = `idempotency` refusal naming the
-incumbent; same content under a new key = `replayed`, the key is remembered) → `expected_version`
+ids, entities and relationships are checked by their schemas) → facet schema → exact replay (same
+key + same payload for the same record = `replayed`, checked right here, before identity,
+visibility and link checks: a retry of a write that succeeded returns what it wrote even when an
+entity has since claimed its subject, so a writer whose response was lost never re-derives a
+duplicate) → identity / visibility / link checks → idempotency (same key + other payload =
+`idempotency` refusal naming the incumbent; same content under a new key = `replayed`, the key is
+remembered; when that record is a receipt, commitment, derived statement, entity or relationship
+the ledger has never seen — no event names it and no idempotency entry references it — the replay
+also appends its missing `created` event with the hash on file, so the record stops being an
+orphan instead of being hidden behind the idempotency table) → `expected_version`
 (a record hash or the record's latest seq; mismatch = `conflict`) → one-live-decision-per-topic
 (`conflict` naming the incumbent; explicit `supersedes` closes it and yields `superseded`) →
 supersede target still open (a `supersedes` that names an already-closed commitment or derived
 record is a `conflict` naming the record that is current now — two writers racing to replace
 the same incumbent can never leave two current records for one subject; the writer that closed
-it itself, same id under a new key, is exempt) → put → ledger → reindex → durability from the flush (`local` when nothing committed). Every
+it itself, same id under a new key, is exempt) → events built and validated → put → ledger →
+reindex → durability from the flush (`local` when nothing committed). The change events are
+validated BEFORE the record is written, so a refusal never leaves a record on file without its
+event. Every
 refusal is a typed `StateRefusal { code, conflict? }`; MCP renders it as
 `nuryel.state/1 refused [code]: …`.
 
@@ -294,7 +304,10 @@ returns the record as stored so a writer verifies what landed. The `records` ver
 because subscribe events name records and reads only returned refs.
 
 Amendments made while binding (all additive, called out for the review): `ChangeEvent.subject`
-(optional); `SubscribeResponse`; `ReadResponse.records` (optional, the records behind the refs); `WriteResult.record`; the `records` verb (`nuryel.state.records/1`, in the capability list); the union read — `ReadRequest.scopes` (optional, 1..64) with `ReadResponse.scopes` and `ReadResponse.receipts` (optional; the partitions read and one receipt each; `assertReadWithinGrants` checks both against the grants) and `mergeReadResponses` in the binding; the token grammar is written as explicit character classes
+(optional; bounded at 512 characters — a record subject longer than that, such as a receipt's
+`object_type:object_key` with a long key, an entity id, a relationship endpoint or a decision topic,
+is omitted from the event rather than truncated or refused, and the record keeps it in full; a
+subscriber still matches that event by `record_id`); `SubscribeResponse`; `ReadResponse.records` (optional, the records behind the refs); `WriteResult.record`; the `records` verb (`nuryel.state.records/1`, in the capability list); the union read — `ReadRequest.scopes` (optional, 1..64) with `ReadResponse.scopes` and `ReadResponse.receipts` (optional; the partitions read and one receipt each; `assertReadWithinGrants` checks both against the grants) and `mergeReadResponses` in the binding; the token grammar is written as explicit character classes
 instead of an `i` flag so it survives zod → JSON schema in MCP output validation;
 `assertWriteWellFormed` compares the record's scope only when it is a partition scope (a legacy
 constraint carries path globs under the same key).
