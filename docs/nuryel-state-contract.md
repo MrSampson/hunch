@@ -338,6 +338,37 @@ reverse — re-key or retire the survivor, then write the entity active again wi
 (refused while any active entity still carries its keys) — and the ledger shows `retired` then
 `updated`. `test/state-entity-merge.test.ts`.
 
+## Read or compute
+
+A writer of derived state repeats one pattern: read the subject, reuse the current statement when
+nothing it rests on moved, otherwise compute and write the replacement. Both clients ship it —
+`readOrCompute(client, request)` in `@davesheffer/hunch/state` and `read_or_compute(client, ...)`
+in `hunch_state` — so the rules below are applied once instead of re-derived by every writer:
+
+1. **Reuse by dependency set.** A current statement on the subject under the same
+   `transform_version` whose dependency set equals the request's is returned and `compute` never
+   runs. Order is irrelevant, exactly as for `derivedId`.
+2. **Compute once, write current.** Otherwise `compute` runs once and its content is written as
+   the subject's current statement (`content_hash` computed client-side with the canonical form
+   above; both clients are tested byte for byte against the server's `stateHash`).
+3. **The idempotency key names the request**: statement identity (scope, subject, transform,
+   dependency set), content hash and `computed_at`. A key without the content hash collides when
+   the same evidence yields new wording, and the binding refuses a reused key with another
+   payload for good — the pilot's outbox stalled on exactly that. The same request is the same
+   key, so a resend replays.
+4. **Supersede the predecessor.** The statement it replaces under the same transform is named in
+   `supersedes`; the binding keeps one current statement per subject and transform.
+5. **Keep the audience.** Without an explicit `visibility` the new statement keeps its
+   predecessor's; an explicit change sends the predecessor's `record_hash` as `expected_version`,
+   which the binding requires for an audience change during supersession.
+6. **No retries.** Refusals (`StateClientError`) and transport failures surface. Calling again
+   re-reads first, so a write that landed before a lost response is reused, not written twice.
+
+Race: two writers that compute concurrently both miss the reuse; the second write is refused
+`409 conflict` naming the first as incumbent. Calling again reuses it when the dependency sets
+match, or supersedes it when they do not. `test/read-or-compute.test.ts`,
+`clients/python/tests/test_derived.py`, and the live Python round trip.
+
 ## Invariants (exported, asserted, tested)
 
 | Id | Statement | Enforced by |
