@@ -141,8 +141,8 @@ mode (no overlay configured) the record is written to the repo-tracked `.hunch/`
 committing per-machine paths into the code repository is rarely wanted.
 
 Hook cost guard: the hook runs the snapshot in the background (`&` / detached spawn, the same
-pattern the post-commit capture uses) and skips entirely when the stored record is younger than
-60 seconds, so `git checkout` latency is unaffected.
+pattern the post-commit capture uses) and skips the write when the stored record is younger than
+one day and its content is unchanged, so `git checkout` latency is unaffected.
 
 ## The queries
 
