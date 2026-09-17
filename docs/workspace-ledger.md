@@ -96,11 +96,16 @@ Field rules:
   emails, environment variables, the hostname. Branch names, commit SHAs and ISO dates are the
   only repository-derived content, and branch names must pass `git check-ref-format`.
 - **Merged verdicts** are deterministic, computed on the machine that has the objects:
-  - `ancestry` — `git merge-base --is-ancestor <head> <default remote head>`;
+  - `ancestry` — `git merge-base --is-ancestor <head> <default remote head>`, unless the head lies on
+    the default branch's first-parent history: such a branch has no commits of its own (freshly
+    created, or fast-forwarded in) and is reported as `no-commits`, never offered for deletion;
   - `squash` — the patch-id of the branch's whole diff since merge-base equals the patch-id of one
-    commit on the default branch (the same `git patch-id --stable` signal `changeIdentity.ts` uses);
+    commit on the default branch **after the branch's merge base** (the same `git patch-id --stable`
+    signal `changeIdentity.ts` uses). A matching commit that is an ancestor of the merge base is the
+    branch's own history, so a reland (revert of a revert) or a value flipped back is not merged —
+    the same `base..default` set `git cherry` compares against;
   - `rebase` — every commit on the branch has a patch-equivalent commit among the searched
-    default-branch commits, i.e. it was rebased or cherry-picked in (computed against the
+    default-branch commits after the merge base, i.e. it was rebased or cherry-picked in (computed against the
     same one-time patch-id map as `squash`, not with `git cherry`, whose cost grows with the
     default branch's history for every branch checked);
   - the squash/rebase search covers the last 2000 default-branch commits; when that history
@@ -112,7 +117,8 @@ Field rules:
     merging); it is reported as its own signal.
   - `unknown` when the default branch is not present locally or git failed (never collapsed into
     `unmerged` — the same "false ≠ error" rule `CommitRepairStatus` exists to enforce).
-- **Dirty** is `git status --porcelain` non-empty in that worktree; **locked** comes from
+- **Dirty** is `git status --porcelain --untracked-files=all` non-empty in that worktree (explicit,
+  so `status.showUntrackedFiles=no` cannot hide an untracked file); **locked** comes from
   `git worktree list --porcelain`. Both gate pruning.
 - **Freshness**: a record older than `workspaces.stale_after` (default 7 days) is reported as
   *unverified* in every query — the machine may be off, or the hook may not be installed. The
@@ -203,7 +209,15 @@ re-runs the snapshot and acts on that **fresh local result, never on a stored re
 is deleted only when the live verdict is `merged` with evidence tied to the same `head` sha, and
 a worktree is removed only when it is clean and unlocked right now. It uses `git branch -d`
 (never `-D`) and `git worktree remove` (never `--force`), so git itself refuses anything
-unmerged or dirty as a second line of defense. `--apply` asks for interactive confirmation
+unmerged or dirty as a second line of defense. Because `git branch -d` cannot see a squash or
+rebase merge once the upstream is gone or unset, the plan runs git's own `-d` precondition first
+(the head must be an ancestor of its upstream when one resolves, otherwise of the main worktree's
+`HEAD`); a step it would refuse is skipped whole — the worktree is not removed — and reported
+("squash-merged: git branch -d would refuse (not merged into HEAD); delete manually after checking"). Ignored files
+(`.env`, `node_modules/`), which `git worktree remove` deletes without asking, are not a refusal
+but are named (bounded list plus count) in the plan and in the confirmation. Every token of a
+printed command is shell-quoted, and the record schema refuses control characters and newlines
+in stored paths and evidence. `--apply` asks for interactive confirmation
 listing every command; in a non-TTY it refuses unless `--yes` is passed explicitly. Commands for
 other machines are printed, never executed — and `--apply` never deletes remote branches.
 Deleting somebody else's unmerged work is exactly the irreversible action Hunch should not take
