@@ -177,7 +177,20 @@ scope's home, appended atomically): the strictly ordered `ChangeEvent` stream (s
 plus the idempotency table. A record write and its event land in one atomic ledger write after
 the record; a ledger that is not contiguous is an error, never silently restarted.
 
-**write** in order: grants → provenance → home → normalize (partition scope stamped on new
+**Partitions sharing a home stay separate.** Organization, team and user partitions all live in
+the one overlay, so every rule that looks for an incumbent compares the record's partition with the
+write's: one current derived statement per subject and transform, the supersede target and its
+still-open check are all counted within the write's own partition. A `supersedes` that names a
+record in another partition is a `conflict` (reason `supersede target in another partition`) —
+closing it from here would put its `superseded` event in the wrong ledger — and a write whose id is
+already on record in another partition of the same home (entity and relationship ids do not derive
+from the scope) is a `conflict` (reason `record id held by another partition`), never an overwrite.
+When the principal cannot read that record either refusal is `outside-grants` and describes nothing.
+Legacy kinds (decisions, constraints, bugs, findings) carry no partition scope and are read as the
+store's own partition, so they are written only under that scope; any other scope is refused
+`unsupported`.
+
+**write** in order: grants → provenance → legacy kinds only under the store's own partition → home → normalize (partition scope stamped on new
 facets, dropped from legacy ones; an agent principal cannot sign `human_confirmed` — it is
 rewritten to `agent_recorded`, a human principal can) → identity (a supplied id must equal the
 derived one, `identity` refusal otherwise; receipts, commitments and derived state derive their
