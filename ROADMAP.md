@@ -399,6 +399,67 @@ Organization/team/user scope work must include:
 - source references that do not leak credentials/content;
 - an independent kill/suspension path in the agent control plane for consequential automation.
 
+## Agent-gateway readiness — 2026-09-16
+
+Managed agent runtimes (Amazon Bedrock AgentCore and its peers) now run multi-agent systems in
+production: an orchestrator, specialist agents exposed as MCP tools behind a gateway, a sandbox,
+an identity layer and telemetry. What they leave open is the record: two identical requests may
+take different paths, the verdict lives in a trace, the policy an agent relied on is whatever
+retrieval surfaced, and a human escalation is a dead end. That is the state layer's position, and
+every item below is a generic binding or packaging of the existing contract — nothing is built
+for one vendor or one prospect. The boundary section above still holds: Hunch stays the
+system of record beside the runtime, never a request-path proxy and never an orchestrator.
+
+The phases are ordered by what blocks a first external run, then by what blocks a regulated
+deployment. Each item names its acceptance evidence; a checkbox flips only on that evidence.
+
+### Phase A — reachable from a managed runtime
+
+- [ ] **MCP over streamable HTTP in `hunch serve`** (`POST /nuryel/v1/mcp`). The `nuryel_*`
+  tools behind the same bearer/DPoP credential, grants and write lock as the REST routes, through
+  one shared dispatcher — a binding, not a second implementation. Stateless JSON responses.
+  Evidence: a test client speaks MCP over HTTP to a served partition, a write replays and a
+  changed payload is refused with the same problem the REST route returns; `docs/nuryel-state-contract.md`
+  documents the endpoint. Branch `feat/serve-mcp-http`.
+- [ ] **A deployable image.** A published container for `hunch serve` that binds a configurable
+  interface behind TLS termination, with a written reference deployment for one managed cloud
+  (a container service in front of a git-backed partition). Evidence: the image starts from a
+  mounted config, the health route answers, and the reference deployment is reproduced once.
+- [ ] **Python on PyPI plus an agent-framework tool module.** Publish `hunch-state`; ship
+  `read`/`write` wrappers usable as tools in the common Python agent frameworks. Evidence: an
+  independent Python process installs from PyPI and completes the roundtrip fixture.
+- [ ] **Read-or-compute helper in the clients.** The pattern the pilot agent wrote by hand — read
+  the subject, reuse the current record when its dependencies are unchanged, otherwise compute
+  and write with supersession — becomes a documented client helper. Evidence: the emulation's
+  reuse number reproduces through the helper instead of bespoke code.
+- [ ] **A worked multi-agent sample** under `examples/`, never in core: a flagged case, an
+  orchestrator that reads first, specialists that write receipts, a decision record citing them and
+  the policy version, an escalation as an open commitment, a human closure as a correction.
+  Evidence: a deterministic replay over synthetic cases reports reuse, zero contradictions and
+  which decisions rest on a superseded policy.
+
+### Phase B — acceptable to a regulated organization
+
+- [ ] **Erasure.** A subject-scoped deletion path that satisfies retention and privacy
+  obligations without giving up the git-native source of truth: per-subject encryption with key
+  destruction, or a documented mode where history is not retained. Evidence: after erasure the
+  subject's records are unreadable from every copy and replay still reports a consistent ledger.
+- [ ] **External identity.** Accept OIDC/JWT credentials verified against a JWKS and map them to
+  principals and grants, so a runtime's identity layer can be the source of who a principal is.
+  Evidence: a token minted by an external issuer reads a granted partition and is refused outside
+  it, with no Hunch-issued token involved.
+- [ ] **Audit and telemetry export.** OpenTelemetry traces and an audit export of the ledger.
+  Evidence: one served write appears in an external collector with its record id and hash.
+- [ ] **More than one instance.** Shared storage or a leader/follower arrangement behind the write
+  lock, with a measured throughput number for the escalation path. Evidence: two instances serve
+  one partition without a ledger gap under the concurrent-writes test.
+- [ ] **Operator actions.** The shared state view lets an authorized human close a commitment and
+  record a correction, through the existing write verb. Evidence: a closure from the view is a
+  normal ledger event with the human as author.
+
+Deferred until an external partner asks for it, in keeping with the pilot's non-goals: a hosted
+service, vendor-specific adapters, and hot-path scoring.
+
 ## Existing engineering program status
 
 ### Project DNA
