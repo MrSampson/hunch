@@ -2,7 +2,7 @@
 
 Status: **All three phases implemented (branch `claude/git-branches-worktrees-tracking-7v15a6`,
 2026-09-17): the record kind, machine identity, the git snapshot with merged verdicts, cross-machine
-sync through the overlay, the post-checkout / post-commit hooks, the MCP-start refresh, the
+sync through the overlay, the post-checkout hook, the ledger-read refresh, the
 read-only `hunch_workspaces` tool, `/worktrees`, the `now` / `doctor` lines, `hunch workspaces
 prune` (dry run / local-only `--apply`), and pull-request linkage from local commit subjects.**
 Drafted 2026-09-17.
@@ -38,8 +38,8 @@ the overlay store (private or shared), describing that machine's worktrees and l
 with deterministic verdicts (pushed? ahead/behind? merged, and how?). The record is an
 *observation* with an `observed_at` stamp and git evidence, never a claim of truth. Because each
 machine owns exactly one file, syncing through the overlay never conflicts: no merge-driver
-changes, no last-writer-wins. Snapshots refresh from git hooks and at MCP session start, so the
-ledger is maintained as a side effect of normal work. Queries read the union of all machines'
+changes, no last-writer-wins. Snapshots refresh from git hooks and whenever an agent reads the
+ledger, so it is maintained as a side effect of normal work. Queries read the union of all machines'
 records and produce a compact table plus a recommended action per branch and worktree.
 
 ## What gets recorded
@@ -128,8 +128,8 @@ produces the same content hash as the stored record writes nothing and commits n
 | Trigger | Where it plugs in | Notes |
 | --- | --- | --- |
 | `git checkout` / `git switch` / `git worktree add` | **post-checkout** managed block in `src/integrations/hooks.ts` (shipped), installed by `hunch init`, `hunch private` / `hunch shared`, and self-healed by `hunch index` like post-merge | fires only for branch checkouts (`$3 = 1`), never for file checkouts |
-| `git commit` | post-commit block: `hunch workspaces snapshot --quiet` after the capture step, inside the same `HUNCH_SYNC` guard (shipped) | keeps `head`, `ahead`, `dirty` current |
-| MCP server start | `src/mcp/server.ts` (shipped): the stdio entrypoint arms an unref'd 30 s timer that spawns a detached `workspaces snapshot --quiet` with this installation's launcher; an in-process server (tests, embedders) never spawns; `HUNCH_WORKSPACE_REFRESH=0` opts out | a machine that only ever runs an agent still reports; a session that closes within 30 s does not |
+| `git commit` | **nothing, deliberately** | a commit changes `HEAD`, not which branches and worktrees exist; snapshotting per commit would add git work (up to a patch-id walk) to the most frequent operation there is, and its backgrounded child outliving `git commit` held a Windows clone directory open and broke an unrelated test's teardown |
+| An agent calls `hunch_workspaces` | `src/mcp/server.ts` (shipped): the read publishes the observation it just took, in the server process, through the ordinary capture path — no timer and no child process, so nothing can outlive the session or hold the repository directory open (a detached child did, and broke an unrelated Windows test's teardown); `HUNCH_WORKSPACE_REFRESH=0` makes the call read-only | the machines that ASK about the ledger are the machines visible in it; a host with no git hooks yet still reports, and a session nobody asks never writes |
 | `hunch worktree <path>` | existing command in `src/cli/index.ts` (shipped) | snapshot after the worktree is created |
 | `hunch workspaces snapshot [--fetch] [--dry-run] [--quiet]` | manual / CI / cron (shipped) | `--fetch` runs `git fetch --prune` first; the default never touches the network. A snapshot whose content is unchanged and whose stored record is under a day old writes nothing |
 
@@ -311,12 +311,12 @@ in "The problem" are answered by one command with no LLM and no network.
 
 **Phase 2 — cross-machine (implemented).** One shared code path
 (`src/integrations/workspaceLedger.ts`) records a snapshot through the capture funnel and reads
-the ledger for every surface; hooks (post-checkout block, post-commit line, MCP-start timer,
-`hunch worktree`); freshness labeling; union query across `ws_*` records; the read-only
+the ledger for every surface; refresh triggers (post-checkout block, the `hunch_workspaces`
+read-time publish, `hunch worktree`; never post-commit); freshness labeling; union query across `ws_*` records; the read-only
 `hunch_workspaces` tool; `/worktrees`; `now` / `doctor` lines. `test/workspace-ledger.test.ts`
 drives a real post-checkout hook end to end (branch checkout records, file checkout does not),
 the record/read path against a real overlay repo, the tool through an in-memory MCP client with a
-forged record for this machine that must not be read, the detached launcher, the scaffold, and
+forged record for this machine that must not be read, the read-time publish and its opt-out, the scaffold, and
 `hunch worktree` / `doctor` / `now` through the CLI.
 
 **Phase 3 — safe cleanup (implemented).** `hunch workspaces prune [--apply] [--yes]` with the
