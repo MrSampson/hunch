@@ -1,3 +1,9 @@
+import { conventionDelivery, conventionSupplements } from '../core/conventionDelivery.js';
+import { StateRefusal } from "./stateError.js";
+import { partitionOf, recordScope } from "./statePartition.js";
+import { createStateAccess, type StateAccessOptions } from "./stateAccess.js";
+import { visibilityAllows, type RecordVisibility } from "../core/recordVisibility.js";
+import { writeFileAtomic } from "../core/io.js";
 /**
  * nuryel.state/1 bound to the store — the ONE implementation of read / write / subscribe
  * that every transport (MCP today; HTTP, CLI, typed client next) calls. Transport-free:
@@ -17,37 +23,28 @@
  * dependencies, external-truth-stays-external (schema refinements), never-in-request-path
  * (there is no proxy verb — this module never fetches anything).
  */
-import { basename, join } from "node:path";
-import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { z } from "zod";
 import type { HunchStore } from "./hunchStore.js";
-import { appendChanges, latestSeqFor, readLedger, type PendingChange } from "./changeLedger.js";
+import { appendChanges, latestSeqFor, readLedger, type Ledger, type PendingChange } from "./changeLedger.js";
+import { STATE_ONLY_FACETS } from "./replay.js";
 import { hunchPaths } from "../core/paths.js";
 import { decisionId } from "../core/ids.js";
 import { ENTITY_KINDS, SCHEMAS, type EntityFor, type EntityKind } from "../core/types.js";
 import { captureConflicts, isLive } from "../core/topics.js";
 import { buildDeliveryEnvelope, type DeliveryEnvelope } from "../core/delivery.js";
 import {
-  STATE_CAPABILITIES, STATE_CONTRACT_VERSION, STATE_FACETS, STATE_READ_VERSION, STATE_SUBSCRIBE_VERSION, STATE_WRITE_VERSION,
+  STATE_CAPABILITIES, STATE_CONTRACT_VERSION, STATE_RECORD_VISIBILITY_VERSION, STATE_FACETS, STATE_READ_VERSION, STATE_SUBSCRIBE_VERSION, STATE_WRITE_VERSION,
   ReadRequestSchema, ReadResponseSchema, WriteRequestSchema, WriteResultSchema, SubscribeRequestSchema, ChangeEventSchema,
   RecordsRequestSchema, RecordsResponseSchema, STATE_RECORDS_VERSION,
-  ScopeSchema, scopePath, stateHash, actionReceiptId, commitmentId, derivedId, relationshipId, externalKey, subjectOfRef,
+  ScopeSchema, scopePath, stateHash, conventionId, actionReceiptId, commitmentId, derivedId, relationshipId, externalKey, subjectOfRef,
   assertReadWithinGrants, assertWriteWellFormed, assertDerivedState, isHumanConfirmed,
   type Principal, type Scope, type StateFacet, type ReadRequest, type ReadResponse, type WriteRequest, type WriteResult,
   type SubscribeRequest, type ChangeEvent, type StateRef, type DependencyRef, type RecordsRequest, type RecordsResponse,
 } from "../core/stateContract.js";
 
 /** A typed refusal. `code` is stable for bindings; `conflict` names the incumbent when one exists. */
-export class StateRefusal extends Error {
-  constructor(
-    readonly code: "outside-grants" | "unsupported" | "malformed" | "identity" | "conflict" | "no-partition-home" | "idempotency",
-    message: string,
-    readonly conflict: { incumbent_id: string; reason: string } | null = null,
-  ) {
-    super(message);
-    this.name = "StateRefusal";
-  }
-}
+export { StateRefusal } from "./stateError.js";
 
 const LEGACY_FACETS = new Set<StateFacet>(["decisions", "constraints", "bugs", "findings"]);
 // Explicit classes, no `i` flag: the pattern must survive zod → JSON schema for MCP output validation.
@@ -57,19 +54,7 @@ const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,199}$/;
  *  (`{ kind, id }`, committed with the store); a plain checkout is the repository partition
  *  named after its directory, sanitized to the contract's token grammar — stable per clone,
  *  discoverable through `capabilities`, and the scope every legacy record defaults to. */
-export function partitionOf(store: HunchStore): Scope {
-  const declared = join(hunchPaths(store.publicRoot).hunch, "partition.json");
-  if (existsSync(declared)) {
-    const parsed = ScopeSchema.safeParse(JSON.parse(readFileSync(declared, "utf8")));
-    if (!parsed.success) throw new StateRefusal("unsupported", `${declared} does not declare a valid partition scope`);
-    return parsed.data;
-  }
-  const raw = basename(store.publicRoot).replace(/[^A-Za-z0-9._:@+-]/g, "-").replace(/^[^A-Za-z0-9]+/, "");
-  const id = TOKEN.test(raw) ? raw : "repository";
-  return { kind: "repository", id };
-}
-/** @deprecated name kept for callers written before served partitions; same value as partitionOf. */
-export const repositoryScope = partitionOf;
+export { partitionOf, repositoryScope } from "./statePartition.js";
 
 export const SubscribeResponseSchema = z.object({
   schema: z.literal(STATE_SUBSCRIBE_VERSION),
@@ -114,12 +99,6 @@ export function stateHomeFor(store: HunchStore, scope: Scope): { home: "public" 
   return { home: "private", hunchDir: store.privateDir, isPrivate: true };
 }
 
-const recordScope = (record: unknown, repo: Scope): Scope => {
-  const s = (record as { scope?: unknown }).scope;
-  const parsed = ScopeSchema.safeParse(s);
-  return parsed.success ? parsed.data : repo;
-};
-
 // ---- read ----------------------------------------------------------------------------------
 
 function refOf(facet: StateFacet, record: { id: string }, scope: Scope): StateRef {
@@ -142,9 +121,9 @@ function survivorOf(byId: Map<string, EntityFor["entities"]>, entity: EntityFor[
 
 /** The entities in the principal's grants that stand for an external key or an entity id — active
  *  ones directly, retired-and-merged ones through the survivor they name. */
-function entityIndex(store: HunchStore, principal: Principal, repo: Scope): { byKey: Map<string, EntityFor["entities"]>; bySubject: Map<string, EntityFor["entities"]>; byId: Map<string, EntityFor["entities"]>; survivor: (e: EntityFor["entities"]) => EntityFor["entities"] } {
+function entityIndex(store: HunchStore, principal: Principal, repo: Scope, canRead: (record: unknown) => boolean = () => true): { byKey: Map<string, EntityFor["entities"]>; bySubject: Map<string, EntityFor["entities"]>; byId: Map<string, EntityFor["entities"]>; survivor: (e: EntityFor["entities"]) => EntityFor["entities"] } {
   const byId = new Map<string, EntityFor["entities"]>();
-  for (const e of store.recs("entities")) if (granted(principal, recordScope(e, repo))) byId.set(e.id, e);
+  for (const e of store.recs("entities")) if (granted(principal, recordScope(e, repo)) && canRead(e)) byId.set(e.id, e);
   const survivor = (e: EntityFor["entities"]): EntityFor["entities"] => survivorOf(byId, e);
   const byKey = new Map<string, EntityFor["entities"]>();
   const bySubject = new Map<string, EntityFor["entities"]>();
@@ -161,9 +140,9 @@ function entityIndex(store: HunchStore, principal: Principal, repo: Scope): { by
 
 /** The names one subject is filed under: itself, the entity that stands for it (through merges),
  *  every entity merged into that one, and every key any of them carries. Explicit refs only. */
-function subjectAliases(store: HunchStore, principal: Principal, repo: Scope, subject: string): Set<string> {
+function subjectAliases(store: HunchStore, principal: Principal, repo: Scope, subject: string, canRead: (record: unknown) => boolean): Set<string> {
   const aliases = new Set([subject]);
-  const { bySubject, byId, survivor } = entityIndex(store, principal, repo);
+  const { bySubject, byId, survivor } = entityIndex(store, principal, repo, canRead);
   const named = bySubject.get(subject) ?? byId.get(subject);
   if (!named) return aliases;
   const stands = survivor(named);
@@ -179,7 +158,7 @@ function subjectAliases(store: HunchStore, principal: Principal, repo: Scope, su
 /** read — the system-of-record answer for a subject, under the delivery envelope's receipt.
  *  Grants are the first predicate on every candidate; a matching record in a scope the
  *  principal lacks is NAMED in denied_scopes and never described. */
-export function readState(store: HunchStore, input: unknown): { response: ReadResponse; envelope: DeliveryEnvelope } {
+export function readState(store: HunchStore, input: unknown, options: StateAccessOptions = {}): { response: ReadResponse; envelope: DeliveryEnvelope } {
   const request: ReadRequest = ReadRequestSchema.parse(input);
   if (!granted(request.principal, request.scope)) throw new StateRefusal("outside-grants", `scope ${scopePath(request.scope)} is outside the principal's grants`);
   if (request.observed_page && (request.subject === undefined || request.scopes !== undefined || (request.facets && !request.facets.includes('derived')))) {
@@ -188,17 +167,29 @@ export function readState(store: HunchStore, input: unknown): { response: ReadRe
   const repo = partitionOf(store);
   const facets = new Set<StateFacet>(request.facets ?? STATE_FACETS);
   const target = request.task ?? request.subject ?? scopePath(request.scope);
-  const ctx = store.assembleContext(target, request.budget_tokens ?? 1500);
+  const access = createStateAccess(store, request.principal, options);
+  const conventions = facets.has('conventions') ? store.recs('conventions').filter(r => access.canRead(r) && scopePath(r.scope) === scopePath(request.scope)) : [];
+  const resolveConventionSource = (id: string, scope: Scope) => {
+    for (const source of [store, ...(options.additionalStores ?? [])]) {
+      const record = findRecord(source, id)?.record;
+      if (record && scopePath(recordScope(record, partitionOf(source))) === scopePath(scope) && access.canRead(record)) return record;
+    }
+    return undefined;
+  };
+  const conventionView = conventionDelivery(conventions, resolveConventionSource);
+  const ctx = store.assembleContext(target, request.budget_tokens ?? 1500, { canRead: access.canRead });
   const envelope = buildDeliveryEnvelope(ctx, {
     root: store.publicRoot,
-    symbols: store.recs("symbols"),
-    components: store.recs("components"),
-    decisionCorpus: store.recs("decisions"),
+    symbols: store.recs("symbols").filter(access.canRead),
+    components: store.recs("components").filter(access.canRead),
+    decisionCorpus: store.recs("decisions").filter(access.canRead),
     profile: request.profile ?? "builder",
+    supplements: conventionSupplements(conventions, resolveConventionSource),
   });
 
   let stateOfRecord: ReadResponse["state_of_record"] = null;
   const records: Record<string, Record<string, unknown>> = {};
+  for (const item of conventionView?.items ?? []) records[item.ref.id] = conventions.find(r => r.id === item.ref.id)! as unknown as Record<string, unknown>;
   const denied = new Map<string, Scope>();
   // Union read against ONE store: every requested scope the principal lacks is named up front;
   // the partitions actually read are declared so a caller never mistakes this for the union
@@ -209,13 +200,13 @@ export function readState(store: HunchStore, input: unknown): { response: ReadRe
     // Subject identity by external reference: a read for an external record's key (`event:26904`,
     // `customer:Site:7`) also finds what is filed under the entity that carries that ref, and a
     // read for the entity id finds what was filed under its keys — one explicit hop, grants first.
-    const aliases = subjectAliases(store, request.principal, repo, subject);
+    const aliases = subjectAliases(store, request.principal, repo, subject, access.canRead);
     const isSubject = (s: string | undefined): boolean => s !== undefined && aliases.has(s);
     // One hop only. Do not broaden aliases: a linked observation does not merge subjects,
     // bring unrelated facts, receipts or commitments, or traverse another relationship.
     const linkedObservations = new Map<string, Set<string>>();
     for (const r of store.recs("relationships")) {
-      if (!granted(request.principal, r.scope) || scopePath(r.scope) !== scopePath(request.scope)) continue;
+      if (!access.canRead(r) || !granted(request.principal, r.scope) || scopePath(r.scope) !== scopePath(request.scope)) continue;
       if (r.type !== "observation_about" || r.lifecycle === "retired" || !isSubject(r.to) || !r.observation_hash) continue;
       const hashes = linkedObservations.get(r.from) ?? new Set<string>();
       hashes.add(r.observation_hash); linkedObservations.set(r.from, hashes);
@@ -231,7 +222,7 @@ export function readState(store: HunchStore, input: unknown): { response: ReadRe
     const admit = (facet: StateFacet, record: { id: string }): Scope | null => {
       const scope = recordScope(record, repo);
       if (!granted(request.principal, scope)) { denied.set(scopePath(scope), scope); return null; }
-      return scope;
+      return access.canRead(record) ? scope : null;
     };
     const keep = (facet: StateFacet, record: { id: string }, scope: Scope): StateRef => {
       records[record.id] = record as unknown as Record<string, unknown>;
@@ -263,11 +254,14 @@ export function readState(store: HunchStore, input: unknown): { response: ReadRe
       else if (c.status === "done" && c.closed_by) done.push(keep("commitments", c, scope));
     }
     if (facets.has("derived")) for (const d of store.recs("derived")) {
+      // Match the subject BEFORE admit, as every other facet does: admit names an ungranted
+      // partition in denied_scopes, and only a record that matches may name its partition.
+      // A linked observation must sit in the request's (granted) partition, so it never names one.
+      const direct = isSubject(d.subject) || d.id === subject;
+      const linked = scopePath(recordScope(d, repo)) === scopePath(request.scope) && linkedObservations.get(d.id)?.has(stateHash(d));
+      if (!direct && !linked) continue;
       const scope = admit("derived", d); if (!scope) continue;
       if (request.observed_page && scopePath(scope) !== scopePath(request.scope)) continue;
-      const direct = isSubject(d.subject) || d.id === subject;
-      const linked = scopePath(scope) === scopePath(request.scope) && linkedObservations.get(d.id)?.has(stateHash(d));
-      if (!direct && !linked) continue;
       if (!direct) { if (d.state === "unknown" && d.valid_to == null) observations.push(d); continue; }
       if (d.state === "current" && d.valid_to == null) { current.push(keep("derived", d, scope)); dependsOn.push(...d.dependencies); }
       else if (d.state === "unknown" && d.valid_to == null) observations.push(d);
@@ -309,7 +303,8 @@ export function readState(store: HunchStore, input: unknown): { response: ReadRe
     scope: request.scope,
     state_of_record: stateOfRecord,
     denied_scopes: [...denied.values()],
-    ...(stateOfRecord ? { records } : {}),
+    ...(conventionView ? { conventions: conventionView } : {}),
+    ...(stateOfRecord || conventionView ? { records } : {}),
     ...(request.scopes ? { scopes: [request.scope], receipts: [{ scope: request.scope, receipt_id: envelope.receipt_id }] } : {}),
   });
   assertReadWithinGrants(request.principal, response);
@@ -363,13 +358,29 @@ export function mergeReadResponses(primary: ReadResponse, others: readonly ReadR
     };
     for (const r of all) for (const [id, record] of Object.entries(r.records ?? {})) if (!(id in records)) records[id] = record;
   }
+  // Recompute cross-scope conflicts without inventing an organization/team/user winner.
+  const conventionRecords = all.flatMap(r => (r.conventions?.items ?? []).map(item => r.records?.[item.ref.id])).filter((r): r is Record<string, unknown> => !!r);
+  const deliveredConventions = all.flatMap(r => r.conventions?.items ?? []);
+  const conventionView = conventionDelivery(conventionRecords as unknown as EntityFor['conventions'][], undefined, new Map(deliveredConventions.map(item => [item.ref.id, item.currentness])));
+  if (conventionView) {
+    conventionView.truncated ||= all.some(r => r.conventions?.truncated);
+    for (const item of conventionView.items) {
+      const prior = deliveredConventions.find(x => x.ref.id === item.ref.id)!;
+      item.currentness = prior.currentness;
+      item.conflict ||= prior.conflict;
+      records[item.ref.id] = conventionRecords.find(r => r.id === item.ref.id)!;
+    }
+    const selected = new Set(conventionView.items.map(item => item.ref.id));
+    for (const record of conventionRecords) if (!selected.has(String(record.id))) delete records[String(record.id)];
+  }
   return ReadResponseSchema.parse({
     schema: STATE_READ_VERSION,
     receipt_id: primary.receipt_id,
     scope: primary.scope,
     state_of_record: stateOfRecord,
     denied_scopes: [...denied.values()],
-    ...(stateOfRecord ? { records } : {}),
+    ...(conventionView ? { conventions: conventionView } : {}),
+    ...(stateOfRecord || conventionView ? { records } : {}),
     scopes: [...scopes.values()],
     receipts: [...receipts.values()],
   });
@@ -377,7 +388,7 @@ export function mergeReadResponses(primary: ReadResponse, others: readonly ReadR
 
 // ---- write ---------------------------------------------------------------------------------
 
-export interface WriteOptions {
+export interface WriteOptions extends StateAccessOptions {
   /** Internal batch owner rebuilds once in finally while holding the write lock. */
   deferReindex?: boolean;
   /** Internal cache scoped to one uninterrupted partition write lock. Never retained. */
@@ -391,6 +402,7 @@ export interface WriteOptions {
 function subjectOf(facet: StateFacet, record: unknown): string | undefined {
   const r = record as Record<string, unknown>;
   switch (facet) {
+    case "conventions": return typeof r.key === "string" ? r.key : undefined;
     case "commitments": case "derived": return typeof r.subject === "string" ? r.subject : undefined;
     case "entities": return typeof r.id === "string" ? r.id : undefined;
     case "relationships": return r.type === "observation_about" && typeof r.to === "string" ? r.to : typeof r.from === "string" ? r.from : undefined;
@@ -398,6 +410,18 @@ function subjectOf(facet: StateFacet, record: unknown): string | undefined {
     case "decisions": return typeof r.topic === "string" ? r.topic : undefined;
     default: return undefined;
   }
+}
+
+/** The published `ChangeEvent.subject` bound. Record subjects can be longer (a receipt's
+ *  `object_type:object_key`, an entity id, a relationship endpoint, a decision topic); the record
+ *  limits are never lowered and the event limit is never raised (dec_a9bfb5dd8d). */
+const EVENT_SUBJECT_MAX = 512;
+
+/** The subject an EVENT carries: the record's subject when it fits the event limit, otherwise
+ *  omitted (`subject` is optional). A subscriber still matches the event by `record_id`. */
+function eventSubjectOf(facet: StateFacet, record: unknown): string | undefined {
+  const subject = subjectOf(facet, record);
+  return subject !== undefined && subject.length <= EVENT_SUBJECT_MAX ? subject : undefined;
 }
 
 /** Which facet a record id belongs to, from its prefix; `null` for a kind-qualified entity id
@@ -409,6 +433,7 @@ function facetOfId(id: string): StateFacet | null {
     case "con": return "constraints";
     case "bug": return "bugs";
     case "fnd": return "findings";
+    case "ncv": return "conventions";
     case "nrc": return "receipts";
     case "ncm": return "commitments";
     case "nds": return "derived";
@@ -529,6 +554,28 @@ function closeWindow(store: HunchStore, facet: StateFacet, incumbentId: string, 
   return true;
 }
 
+/** Validate pending change events against the published event schema without writing anything,
+ *  so a write whose event could not be appended is refused before its record lands (#283). */
+function assertEventsValid(ledger: Ledger, scope: Scope, at: string, changes: readonly PendingChange[]): void {
+  changes.forEach((change, i) => {
+    const parsed = ChangeEventSchema.safeParse({ schema: STATE_SUBSCRIBE_VERSION, seq: ledger.head_seq + i + 1, at, scope, ...change });
+    if (!parsed.success) throw new StateRefusal("malformed", `change event for ${change.record_id} is malformed: ${parsed.error.issues.map((x) => `${x.path.join(".") || "event"}: ${x.message}`).join("; ")}`);
+  });
+}
+
+/** The event a replayed write owes the ledger (#282): a state-only record on file that the ledger
+ *  has never seen — no event names it and no idempotency entry references it (compaction drops
+ *  events but keeps the table, so an entry means "known") — was written without its event, by a
+ *  crash between put and append or a refusal after the put. The retry appends it with the hash on
+ *  file. A record the ledger already knows gets no new event. */
+function missingEventFor(ledger: Ledger, facet: StateFacet, onFile: Record<string, unknown>, principal: string): PendingChange[] {
+  if (!(STATE_ONLY_FACETS as readonly StateFacet[]).includes(facet)) return [];
+  const id = String(onFile.id);
+  if (latestSeqFor(ledger, id) > 0 || Object.values(ledger.idempotency).some((e) => e.record_id === id)) return [];
+  const invalidates = facet === "receipts" && Array.isArray(onFile.invalidates) ? onFile.invalidates as string[] : [];
+  return [{ ...(onFile.visibility ? { visibility: onFile.visibility as RecordVisibility } : {}), facet, record_id: id, record_hash: stateHash(onFile), change: "created", subject: eventSubjectOf(facet, onFile), invalidates, cause: { kind: "write", principal } }];
+}
+
 /** Normalize + validate the record for its facet; enforce the identity rule (an id, when
  *  given, must be the one the record's facts derive). Returns the canonical record. */
 function normalizeRecord(facet: StateFacet, scope: Scope, raw: Record<string, unknown>, principal: Principal): EntityFor[EntityKind] {
@@ -548,7 +595,8 @@ function normalizeRecord(facet: StateFacet, scope: Scope, raw: Record<string, un
   }
   let expectedId: string | null = null;
   try {
-    if (facet === "receipts") expectedId = actionReceiptId(record as never);
+    if (facet === "conventions") expectedId = conventionId(record as never);
+    else if (facet === "receipts") expectedId = actionReceiptId(record as never);
     else if (facet === "commitments") expectedId = commitmentId(record as never);
     else if (facet === "derived") expectedId = derivedId(record as never);
     else if (facet === "relationships") expectedId = relationshipId(String(record.from), String(record.to), String(record.type));
@@ -571,11 +619,37 @@ function normalizeRecord(facet: StateFacet, scope: Scope, raw: Record<string, un
 /** write — provenance + idempotency in, durability out. A replay returns the original;
  *  a conflict names the incumbent; nothing is ever silently overwritten or duplicated. */
 export function writeState(store: HunchStore, input: unknown, opts: WriteOptions = {}): WriteResult {
+  const request = WriteRequestSchema.parse(input);
+  if (!granted(request.principal, request.scope)) throw new StateRefusal("outside-grants", "scope is outside the principal grants");
+  const access = createStateAccess(store, request.principal, { ...opts, requireVisibility: request.record.visibility !== undefined });
+  try { return writeStateAuthorized(store, request, opts, access); }
+  catch (error) {
+    // Collision detection remains global, but inaccessible incumbents never become
+    // refusal details. Do not filter the collision corpus and permit duplicates.
+    if (error instanceof StateRefusal && error.conflict) {
+      const incumbent = findRecord(store, error.conflict.incumbent_id)?.record;
+      if (incumbent && !access.canRead(incumbent)) throw new StateRefusal('outside-grants', 'record unavailable or operation not permitted');
+    }
+    throw error;
+  }
+}
+
+function writeStateAuthorized(store: HunchStore, input: unknown, opts: WriteOptions, access: ReturnType<typeof createStateAccess>): WriteResult {
   const request: WriteRequest = WriteRequestSchema.parse(input);
   try { assertWriteWellFormed(request); } catch (e) {
     throw new StateRefusal(/grants/.test((e as Error).message) ? "outside-grants" : "malformed", (e as Error).message);
   }
+  const repo = partitionOf(store);
+  // Legacy kinds carry no partition scope: whatever home they land in, every reader (and the
+  // repository's edit gate) treats them as the store's OWN partition. Written under any other
+  // scope they would silently become that partition's records, so they are refused instead.
+  if (LEGACY_FACETS.has(request.facet) && scopePath(request.scope) !== scopePath(repo)) {
+    throw new StateRefusal("unsupported", `${request.facet} records belong to this store's own partition ${scopePath(repo)}; they cannot be written under ${scopePath(request.scope)} — use a partition-scoped facet (conventions, receipts, commitments, derived, entities, relationships) there`);
+  }
   const { home, hunchDir, isPrivate } = stateHomeFor(store, request.scope);
+  /** Several partitions share one overlay home: a record counts for this write only when it is
+   *  in the write's own partition. */
+  const inScope = (r: unknown): boolean => scopePath(recordScope(r, repo)) === scopePath(request.scope);
   const now = (opts.now ?? (() => new Date()))().toISOString();
   const facet = request.facet;
   const getHere = (id: string) => facet === "derived" || facet === "receipts" || facet === "commitments"
@@ -583,25 +657,8 @@ export function writeState(store: HunchStore, input: unknown, opts: WriteOptions
     : home === "private" ? store.getPrivateRec(facet as EntityKind, id) : store.json.get(facet as EntityKind, id);
   if (!(ENTITY_KINDS as readonly string[]).includes(facet)) throw new StateRefusal("unsupported", `facet ${facet} is not a store kind`);
   const record = normalizeRecord(facet, request.scope, request.record, request.principal);
-  let replayLink: EntityFor["relationships"] | undefined;
-  if (facet === "relationships" && (record as EntityFor["relationships"]).type === "observation_about") {
-    const link = record as EntityFor["relationships"];
-    const observation = store.getStateDirect("derived", link.from, home);
-    if (!observation || scopePath(observation.scope) !== scopePath(request.scope) || !granted(request.principal, observation.scope)) throw new StateRefusal("conflict", "observation is absent from the granted partition");
-    if (!observation.transform_version.startsWith("agent-capture/1:")) throw new StateRefusal("malformed", "only captured observations can be linked");
-    if (link.lifecycle !== "retired" && (observation.state !== "unknown" || observation.valid_to != null || stateHash(observation) !== link.observation_hash)) throw new StateRefusal("conflict", "observation changed or is no longer eligible; re-read before linking");
-    const prior = getHere(link.id) as EntityFor["relationships"] | undefined;
-    if (prior?.lifecycle === "retired" && link.lifecycle !== "retired" && request.expected_version === null) throw new StateRefusal("conflict", "retired observation link requires an explicit expected_version to reactivate");
-    // Repeated reads and different agents do not rewrite an identical association.
-    // Preserve its first author/evidence time and avoid index/Git work on replay.
-    if (prior && prior.from === link.from && prior.to === link.to && prior.type === link.type && prior.reason === link.reason
-      && prior.observation_hash === link.observation_hash && prior.lifecycle === link.lifecycle
-      && prior.evidence && link.evidence && externalKey(prior.evidence) === externalKey(link.evidence) && prior.evidence.content_hash === link.evidence.content_hash) {
-      replayLink = prior;
-    }
-  }
+  const deny = () => { throw new StateRefusal('outside-grants', 'record unavailable or operation not permitted'); };
   const id = (record as { id: string }).id;
-  assertExternalIdentity(store, request.principal, request.scope, facet, record);
   /** The normalized PAYLOAD hash: what idempotency recognizes on a re-send. */
   const hash = stateHash(record);
   const ledger = opts.ledgerCache?.ledger ?? readLedger(hunchDir, request.scope);
@@ -615,11 +672,71 @@ export function writeState(store: HunchStore, input: unknown, opts: WriteOptions
     return WriteResultSchema.parse({ schema: STATE_WRITE_VERSION, record_id: rid, record_hash: stateHash(onFile), durability: durability(), outcome, conflict, record: onFile });
   };
 
-  // Idempotency: the same key replays the original; the same key with a different payload
-  // is a refusal, never a second record.
+  // Idempotency, exact replay FIRST: the same key with the same payload for the same record is
+  // the retry of a request that already succeeded, and returns what it wrote — before any check
+  // that depends on state changed since (an entity now claiming the subject, a visibility or link
+  // change). Otherwise a writer whose response was lost is refused, re-derives, and duplicates
+  // the record it already holds (#284). A differing payload under the key falls through to every
+  // check and the idempotency refusal below.
   const seen = ledger.idempotency[request.idempotency_key];
+  if (seen && seen.record_id === id && (seen.record_hash === hash || seen.payload_hash === hash)) {
+    const prior = findRecord(store, seen.record_id)?.record; if (prior && !access.canRead(prior)) deny();
+    return result("replayed");
+  }
+
+  const incumbent = getHere(String(record.id)) as Record<string, unknown> | undefined;
+  if (incumbent && !access.canWrite(incumbent)) deny();
+  // An id not derived from its scope (an entity, a relationship) can collide with another
+  // partition's record in a shared home: that record is never rewritten from this partition.
+  if (incumbent && !inScope(incumbent)) throw new StateRefusal("conflict", `${id} is on record in ${scopePath(recordScope(incumbent, repo))}, not ${scopePath(request.scope)}: a write never moves or rewrites another partition's record`, { incumbent_id: id, reason: "record id held by another partition" });
+  const previousVisibility = incumbent?.visibility as RecordVisibility | undefined;
+  const nextVisibility = (record as { visibility?: RecordVisibility }).visibility;
+  if (nextVisibility && home === 'private') throw new StateRefusal('unsupported', 'record visibility requires a dedicated partition home; shared/private overlays cannot safely gate every older reader');
+  const supersededRecord = request.supersedes ? findRecord(store, request.supersedes)?.record : undefined;
+  const supersededVisibility = supersededRecord?.visibility as RecordVisibility | undefined;
+  if (supersededRecord) {
+    if (!access.canWrite(supersededRecord)) deny();
+    // Supersession stays inside one partition: closing another partition's record from here would
+    // land its `superseded` event in THIS ledger, invisible to that partition's subscribers.
+    if (!inScope(supersededRecord)) throw new StateRefusal("conflict", `supersedes ${request.supersedes} is on record in ${scopePath(recordScope(supersededRecord, repo))}, not ${scopePath(request.scope)}: a write supersedes only a record in its own partition`, { incumbent_id: String(supersededRecord.id), reason: "supersede target in another partition" });
+    if (stateHash(supersededVisibility ?? null) !== stateHash(nextVisibility ?? null)) {
+      if (supersededVisibility ? supersededVisibility.owner !== request.principal.id : request.principal.kind !== 'human') deny();
+      const matches = typeof request.expected_version === 'number'
+        ? latestSeqFor(readLedger(hunchDir, request.scope), String(supersededRecord.id)) === request.expected_version
+        : request.expected_version === stateHash(supersededRecord);
+      if (!matches) throw new StateRefusal('malformed', 'changing visibility during supersession requires the predecessor expected_version');
+    }
+  }
+  if (!incumbent && !supersededRecord && nextVisibility?.owner !== undefined && nextVisibility.owner !== request.principal.id) deny();
+  if (incumbent && stateHash(previousVisibility ?? null) !== stateHash(nextVisibility ?? null)) {
+    if (previousVisibility ? previousVisibility.owner !== request.principal.id : request.principal.kind !== 'human' || nextVisibility?.owner !== request.principal.id) deny();
+    if (request.expected_version === null) throw new StateRefusal('malformed', 'changing visibility requires an explicit expected_version');
+  }
+  if (!visibilityAllows(record, request.principal.id) || !access.referencesVisible(record) || (request.cause && !access.referencesVisible(request.cause))) deny();
+  if (request.supersedes) { const prior = findRecord(store, request.supersedes)?.record; if (prior && !access.canWrite(prior)) deny(); }
+  let replayLink: EntityFor["relationships"] | undefined;
+  if (facet === "relationships" && (record as EntityFor["relationships"]).type === "observation_about") {
+    const link = record as EntityFor["relationships"];
+    const observation = store.getStateDirect("derived", link.from, home);
+    if (observation && !access.canRead(observation)) deny();
+    if (!observation || scopePath(observation.scope) !== scopePath(request.scope) || !granted(request.principal, observation.scope)) throw new StateRefusal("conflict", "observation is absent from the granted partition");
+    if (!observation.transform_version.startsWith("agent-capture/1:")) throw new StateRefusal("malformed", "only captured observations can be linked");
+    if (link.lifecycle !== "retired" && (observation.state !== "unknown" || observation.valid_to != null || stateHash(observation) !== link.observation_hash)) throw new StateRefusal("conflict", "observation changed or is no longer eligible; re-read before linking");
+    const prior = getHere(link.id) as EntityFor["relationships"] | undefined;
+    if (prior?.lifecycle === "retired" && link.lifecycle !== "retired" && request.expected_version === null) throw new StateRefusal("conflict", "retired observation link requires an explicit expected_version to reactivate");
+    // Repeated reads and different agents do not rewrite an identical association.
+    // Preserve its first author/evidence time and avoid index/Git work on replay.
+    if (prior && prior.from === link.from && prior.to === link.to && prior.type === link.type && prior.reason === link.reason
+      && prior.observation_hash === link.observation_hash && prior.lifecycle === link.lifecycle
+      && prior.evidence && link.evidence && externalKey(prior.evidence) === externalKey(link.evidence) && prior.evidence.content_hash === link.evidence.content_hash) {
+      replayLink = prior;
+    }
+  }
+  assertExternalIdentity(store, request.principal, request.scope, facet, record);
+
+  // Idempotency: the same key with a different payload is a refusal, never a second record.
   if (seen) {
-    if (seen.record_id === id && (seen.record_hash === hash || seen.payload_hash === hash)) return result("replayed");
+    const prior = findRecord(store, seen.record_id)?.record; if (prior && !access.canRead(prior)) deny();
     // Say WHAT differs and what to do: a stable key with a varying payload (a timestamp, new
     // wording) is the trap every writer falls into once; the refusal must teach the way out.
     const stored = store.getRec(facet as EntityKind, seen.record_id) as Record<string, unknown> | undefined;
@@ -634,7 +751,7 @@ export function writeState(store: HunchStore, input: unknown, opts: WriteOptions
     if (review && stateHash(review) !== stateHash(existing?.review ?? null) && review.by !== request.principal.id) throw new StateRefusal('malformed', 'reviewer must be the initiating principal');
   }
   if (existing && stateHash(existing) === hash) {
-    appendChanges(hunchDir, request.scope, [], { key: request.idempotency_key, entry: { record_id: id, record_hash: hash, payload_hash: hash, facet } }, now, opts.ledgerCache?.ledger);
+    appendChanges(hunchDir, request.scope, missingEventFor(ledger, facet, existing, request.principal.id), { key: request.idempotency_key, entry: { record_id: id, record_hash: hash, payload_hash: hash, facet } }, now, opts.ledgerCache?.ledger);
     return result("replayed");
   }
   if (existing && request.expected_version !== null) {
@@ -646,7 +763,7 @@ export function writeState(store: HunchStore, input: unknown, opts: WriteOptions
 
   if (replayLink) {
     const recordHash = stateHash(replayLink);
-    appendChanges(hunchDir, request.scope, [], { key: request.idempotency_key, entry: { record_id: replayLink.id, record_hash: recordHash, payload_hash: hash, facet } }, now, opts.ledgerCache?.ledger);
+    appendChanges(hunchDir, request.scope, missingEventFor(ledger, facet, replayLink, request.principal.id), { key: request.idempotency_key, entry: { record_id: replayLink.id, record_hash: recordHash, payload_hash: hash, facet } }, now, opts.ledgerCache?.ledger);
     return WriteResultSchema.parse({ schema: STATE_WRITE_VERSION, record_id: replayLink.id, record_hash: recordHash, record: replayLink, outcome: "replayed", conflict: null, durability: "local" });
   }
 
@@ -674,11 +791,26 @@ export function writeState(store: HunchStore, input: unknown, opts: WriteOptions
     };
     const verdict = guard(existing, "overwrite");
     if (verdict === "replay") {
-      appendChanges(hunchDir, request.scope, [], { key: request.idempotency_key, entry: { record_id: id, record_hash: stateHash(existing!), payload_hash: hash, facet } }, now, opts.ledgerCache?.ledger);
+      appendChanges(hunchDir, request.scope, missingEventFor(ledger, facet, existing!, request.principal.id), { key: request.idempotency_key, entry: { record_id: id, record_hash: stateHash(existing!), payload_hash: hash, facet } }, now, opts.ledgerCache?.ledger);
       return result("replayed");
     }
     if (verdict === "keep-provenance") (record as { provenance: unknown }).provenance = existing!.provenance;
     if (supersedes && supersedes !== id) guard(store.getRec(facet as EntityKind, supersedes) as Record<string, unknown> | undefined, "supersede");
+  }
+
+  if (facet === 'conventions') {
+    const convention = record as EntityFor['conventions'];
+    if (existing && request.expected_version === null) throw new StateRefusal('conflict', 'changing a convention requires expected_version');
+    if (supersedes) {
+      const prior = store.getRec('conventions', supersedes);
+      if (!prior || prior.key !== convention.key || scopePath(prior.scope) !== scopePath(convention.scope)) throw new StateRefusal('conflict', 'convention supersession must preserve scope and key');
+      if (request.expected_version !== stateHash(prior)) throw new StateRefusal('conflict', 'convention supersession requires the predecessor expected_version hash');
+    }
+    if (convention.status === 'accepted' && convention.valid_to === null) {
+      const incumbent = store.recsInHome('conventions', home).find(r => r.key === convention.key && scopePath(r.scope) === scopePath(convention.scope) && r.status === 'accepted' && r.valid_to === null && r.id !== id && r.id !== supersedes);
+      if (incumbent) throw new StateRefusal('conflict', `${convention.key} already has an accepted convention; pass supersedes`, { incumbent_id: incumbent.id, reason: 'one accepted convention per scope and key' });
+    }
+    assertRestsOn(store, request.principal, request.scope, convention.sources);
   }
 
   // one-live-decision-per-topic — refuse with the incumbent named; supersession is explicit.
@@ -692,7 +824,7 @@ export function writeState(store: HunchStore, input: unknown, opts: WriteOptions
       }
     }
   }
-  if (supersedes && !store.recsInHome(facet as EntityKind, home).some((r) => (r as { id: string }).id === supersedes)) {
+  if (supersedes && !store.recsInHome(facet as EntityKind, home).some((r) => (r as { id: string }).id === supersedes && inScope(r))) {
     throw new StateRefusal("conflict", `supersedes ${supersedes} is not a ${facet} record in this partition`, { incumbent_id: supersedes, reason: "supersede target absent" });
   }
   if (supersedes === id) supersedes = null;
@@ -705,7 +837,7 @@ export function writeState(store: HunchStore, input: unknown, opts: WriteOptions
     if (incumbent && "valid_to" in incumbent && incumbent.valid_to !== null) {
       const subject = subjectOf(facet, incumbent);
       const open = store.recsInHome(facet as EntityKind, home)
-        .filter((r) => subjectOf(facet, r) === subject && (r as { valid_to?: string | null }).valid_to === null)
+        .filter((r) => inScope(r) && subjectOf(facet, r) === subject && (r as { valid_to?: string | null }).valid_to === null)
         .map((r) => (r as { id: string }).id).sort();
       if (!open.includes(id)) {
         const current = open.length ? `the current ${facet} record for ${subject ?? "that subject"} is ${open.join(", ")}` : `no ${facet} record for ${subject ?? "that subject"} is open now`;
@@ -715,15 +847,31 @@ export function writeState(store: HunchStore, input: unknown, opts: WriteOptions
     }
   }
 
+  // one-current-derived-per-subject-transform: a NEW current derived statement on a subject that
+  // already holds a current statement under the same transform must name it in `supersedes`.
+  // Otherwise a writer that never names its predecessor leaves a growing pile of "current"
+  // statements that every reader has to reconcile (season finding fnd_1939ced249: up to 58 on
+  // one subject over half a year). Writing the same identity again is an update or a replay of
+  // that record and is not affected; a different transform is a different statement.
+  if (facet === "derived" && (record as EntityFor["derived"]).state === "current") {
+    const d = record as EntityFor["derived"];
+    const incumbent = store.recsInHome("derived", home).find((r) => {
+      const x = r as EntityFor["derived"];
+      return x.id !== id && x.id !== supersedes && inScope(x) && x.subject === d.subject && x.transform_version === d.transform_version && x.state === "current" && x.valid_to === null;
+    }) as EntityFor["derived"] | undefined;
+    if (incumbent) {
+      throw new StateRefusal("conflict", `${d.subject} already has a current ${d.transform_version} statement ${incumbent.id}; pass supersedes: "${incumbent.id}" to replace it, or write that identity to update it`, { incumbent_id: incumbent.id, reason: "one-current-derived-per-subject-transform" });
+    }
+  }
+
   // The chain (Gate 4): a receipt names what it rested on, a closure names the receipt.
   // Both are checked against the drawer, grants first, before anything lands.
   if (facet === "receipts") assertRestsOn(store, request.principal, request.scope, (record as EntityFor["receipts"]).rests_on ?? []);
   const closedBy = facet === "commitments" ? assertClosedBy(store, request.principal, record as EntityFor["commitments"]) : null;
 
-  store.putCapture(facet as EntityKind, record, isPrivate);
-  /** What is on file now — the hash every event, ref and result carries. */
-  const onFileHash = stateHash(getHere(id) ?? record);
-  const changes: PendingChange[] = [];
+  // Build and validate every change event BEFORE anything is written (#283): a refusal must never
+  // leave a record on file without its event. Only the hashes are filled in after the write (the
+  // store may enrich a record on put), and a sha256 always satisfies the event schema.
   const cause = closedBy ? { kind: "receipt" as const, receipt_id: closedBy } : request.cause ?? { kind: "write" as const, principal: request.principal.id };
   // A current derived statement written back as stale is an INVALIDATION, not an update: the
   // ledger says so, and names the external pointer that moved when the writer gives one.
@@ -731,15 +879,27 @@ export function writeState(store: HunchStore, input: unknown, opts: WriteOptions
   const invalidates = facet === "receipts" ? (record as EntityFor["receipts"]).invalidates : [];
   // An entity leaving service is a `retired` change (a merge names the survivor in the record).
   const retired = (facet === "entities" || facet === "relationships") && (record as EntityFor["entities"]).lifecycle === "retired" && (!existing || existing.lifecycle !== "retired");
-  const subject = subjectOf(facet, record);
+  const subject = eventSubjectOf(facet, record);
+  const supersededPrior = supersedes ? store.getRec(facet as EntityKind, supersedes) as Record<string, unknown> | undefined : undefined;
+  const supersededChange = (old: Record<string, unknown>): PendingChange => ({ ...(old.visibility ? { visibility: old.visibility as RecordVisibility } : {}), facet, record_id: String(old.id), record_hash: stateHash(old), change: "superseded", subject: eventSubjectOf(facet, old), invalidates: [], cause });
+  const ownChange = (recordHash: string): PendingChange => ({ ...(nextVisibility ? { visibility: nextVisibility } : {}), facet, record_id: id, record_hash: recordHash, change: invalidated ? "invalidated" : retired ? "retired" : existing ? "updated" : "created", subject, invalidates: invalidated && subject ? [subject] : invalidates, cause });
+  assertEventsValid(ledger, request.scope, now, [...(supersededPrior ? [supersededChange(supersededPrior)] : []), ownChange(hash)]);
+
+  if (nextVisibility) {
+    // Publish the fail-closed old-reader gate BEFORE protected bytes. An interrupted
+    // write can leave a gate without a record, never a record without the gate.
+    const declaration = join(hunchPaths(store.publicRoot).hunch, 'partition.json');
+    writeFileAtomic(declaration, JSON.stringify({ ...partitionOf(store), required_capabilities: [STATE_RECORD_VISIBILITY_VERSION] }, null, 2) + '\n');
+  }
+  store.putCapture(facet as EntityKind, record, isPrivate);
+  /** What is on file now — the hash every event, ref and result carries. */
+  const onFileHash = stateHash(getHere(id) ?? record);
+  const changes: PendingChange[] = [];
   if (supersedes) {
     const closed = closeWindow(store, facet, supersedes, id, now, isPrivate);
-    if (closed) {
-      const old = store.getRec(facet as EntityKind, supersedes)!;
-      changes.push({ facet, record_id: supersedes, record_hash: stateHash(old), change: "superseded", subject: subjectOf(facet, old), invalidates: [], cause });
-    }
+    if (closed) changes.push(supersededChange(store.getRec(facet as EntityKind, supersedes)! as Record<string, unknown>));
   }
-  changes.push({ facet, record_id: id, record_hash: onFileHash, change: invalidated ? "invalidated" : retired ? "retired" : existing ? "updated" : "created", subject, invalidates: invalidated && subject ? [subject] : invalidates, cause });
+  changes.push(ownChange(onFileHash));
   appendChanges(hunchDir, request.scope, changes, { key: request.idempotency_key, entry: { record_id: id, record_hash: onFileHash, payload_hash: hash, facet } }, now, opts.ledgerCache?.ledger);
   if (!opts.deferReindex) store.reindex();
   return result(supersedes ? "superseded" : existing ? "updated" : "created");
@@ -749,18 +909,21 @@ export function writeState(store: HunchStore, input: unknown, opts: WriteOptions
 
 /** subscribe — the scope's ordered change stream after a cursor. Unfiltered, the events are
  *  contiguous and assertChangeSequence holds; filtered, `head_seq` is still the cursor. */
-export function subscribeState(store: HunchStore, input: unknown): SubscribeResponse {
+export function subscribeState(store: HunchStore, input: unknown, options: StateAccessOptions = {}): SubscribeResponse {
   const request: SubscribeRequest = SubscribeRequestSchema.parse(input);
   if (!granted(request.principal, request.scope)) throw new StateRefusal("outside-grants", `scope ${scopePath(request.scope)} is outside the principal's grants`);
   const { hunchDir } = stateHomeFor(store, request.scope);
   const ledger = readLedger(hunchDir, request.scope);
   const facets = request.facets ? new Set<string>(request.facets) : null;
   const subjects = request.subjects ? new Set(request.subjects) : null;
-  const filtered = !!(facets || subjects);
+  const access = createStateAccess(store, request.principal, options);
+  const visibilityFiltered = ledger.events.some(e => e.visibility !== undefined) || access.restricted;
+  const filtered = !!(facets || subjects || visibilityFiltered);
   const resync = request.after_seq < ledger.floor_seq;
   const after = resync ? ledger.floor_seq : request.after_seq;
   const events: ChangeEvent[] = ledger.events.filter((e) =>
     e.seq > after
+    && (!visibilityFiltered || (visibilityAllows(e, request.principal.id) && access.canRead(findRecord(store, e.record_id)?.record) && access.referencesVisible(e)))
     && (!facets || facets.has(e.facet))
     && (!subjects || subjects.has(e.record_id) || (e.subject !== undefined && subjects.has(e.subject)) || e.invalidates.some((s) => subjects.has(s))));
   return SubscribeResponseSchema.parse({ schema: STATE_SUBSCRIBE_VERSION, scope: request.scope, head_seq: ledger.head_seq, events, filtered, floor_seq: ledger.floor_seq, resync });
@@ -770,10 +933,11 @@ export function subscribeState(store: HunchStore, input: unknown): SubscribeResp
 
 /** records — fetch by id, grants first. Every id is accounted for: found, denied (its scope is
  *  outside the grants — named, never described) or missing. */
-export function recordsState(store: HunchStore, input: unknown): RecordsResponse {
+export function recordsState(store: HunchStore, input: unknown, options: StateAccessOptions = {}): RecordsResponse {
   const request: RecordsRequest = RecordsRequestSchema.parse(input);
   if (!granted(request.principal, request.scope)) throw new StateRefusal("outside-grants", `scope ${scopePath(request.scope)} is outside the principal's grants`);
   const repo = partitionOf(store);
+  const access = createStateAccess(store, request.principal, options);
   const records: Record<string, Record<string, unknown>> = {};
   const facets: Record<string, StateFacet> = {};
   const denied: string[] = [];
@@ -787,6 +951,7 @@ export function recordsState(store: HunchStore, input: unknown): RecordsResponse
     if (!found) { missing.push(id); continue; }
     const scope = recordScope(found.record, repo);
     if (!granted(request.principal, scope)) { denied.push(id); continue; }
+    if (!access.canRead(found.record)) { missing.push(id); continue; }
     records[id] = found.record;
     facets[id] = found.facet;
   }

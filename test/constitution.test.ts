@@ -33,6 +33,8 @@ import { ensureGitignore } from "../src/integrations/gitignore.js";
 import { runSourceMutation } from "../src/constitution/sourceMutation.js";
 import { SYMLINK_SKIP } from "./helpers.js";
 import { hunchCliArgs } from "./cli-invocation.js";
+// These suites exercise the specialist MCP tool groups; the everyday default hides them (src/mcp/toolset.ts).
+process.env.HUNCH_MCP_TOOLS = "all";
 
 const NOW = "2026-07-10T10:00:00.000Z";
 
@@ -62,7 +64,10 @@ function decision(id: string, opts: { private?: boolean } = {}): Decision {
   };
 }
 
-function layeredRepo(apiBody = 'import { fetchOrders } from "../services/orders.js";\nexport function listOrders(u){ return fetchOrders(u); }\n') {
+function layeredRepo(
+  apiBody = 'import { fetchOrders } from "../services/orders.js";\nexport function listOrders(u){ return fetchOrders(u); }\n',
+  servicesBody = 'import { dbQuery } from "../db/client.js";\nexport function fetchOrders(u){ return dbQuery(u); }\n',
+) {
   const root = mkdtempSync(join(tmpdir(), "hunch-constitution-"));
   const git = (...args: string[]): void => { execFileSync("git", args, { cwd: root, stdio: "ignore" }); };
   git("init", "-q");
@@ -76,7 +81,7 @@ function layeredRepo(apiBody = 'import { fetchOrders } from "../services/orders.
   mkdirSync(join(root, "src/services"), { recursive: true });
   mkdirSync(join(root, "src/db"), { recursive: true });
   writeFileSync(join(root, "src/db/client.ts"), "export function dbQuery(sql){ return sql; }\n");
-  writeFileSync(join(root, "src/services/orders.ts"), 'import { dbQuery } from "../db/client.js";\nexport function fetchOrders(u){ return dbQuery(u); }\n');
+  writeFileSync(join(root, "src/services/orders.ts"), servicesBody);
   writeFileSync(join(root, "src/api/orders.ts"), apiBody);
   git("add", "-A");
   git("commit", "-qm", "fixture: layered orders");
@@ -589,6 +594,72 @@ test("Phase 3E applies an exists mutation to isolated source and persists a pars
     assert.equal(primary.graph_diff.removed_symbols.length, 1);
     assert.equal(readFileSync(sourceFile, "utf8"), before, "source mutation never changes the active checkout");
     assert.deepEqual(readdirSync(join(root, ".hunch-cache/mutations")), []);
+  } finally {
+    cleanup();
+  }
+});
+
+test("an exists mutation on a file with multi-byte UTF-8 content before the target deletes exactly the right span (issue #85)", () => {
+  // "café — über" is 11 JS chars but 15 UTF-8 bytes (é, —, ü each cost more
+  // bytes than code units) -- placed before fetchOrders so a byte-vs-char
+  // offset bug would misalign the deletion, corrupting or mis-targeting it.
+  const servicesBody = '// café — über multi-byte comment, deliberately before the target\nimport { dbQuery } from "../db/client.js";\nexport function fetchOrders(u){ return dbQuery(u); }\n';
+  const { root, store, cleanup } = layeredRepo(undefined, servicesBody);
+  try {
+    store.json.put("decisions", {
+      ...decision("dec_exists_source_mutation_utf8"),
+      title: "The order service entrypoint must exist",
+      conformance: [{ assert: "exists", subject: "fetchOrders", transitive: false }],
+    });
+    store.reindex();
+    const service = new ConstitutionService(store, root);
+    const policy = service.compile("dec_exists_source_mutation_utf8", { now: NOW });
+    const proved = service.prove(policy.id, { now: "2026-07-10T10:01:00.000Z" });
+    const primary = proved.proof.mutation_receipts.find((receipt) => receipt.kind === "primary")!;
+    assert.equal(primary.operator, "delete-required-symbol");
+    assert.equal(primary.result, "violated");
+    assert.equal(primary.passed, true);
+    assert.equal(primary.parseability, "parseable");
+    const diff = primary.source_patch?.diff ?? "";
+    assert.match(diff, /^-export function fetchOrders\(u\)\{ return dbQuery\(u\); \}$/m, "deletes exactly the target line, not a byte-shifted span");
+    assert.match(diff, /^ \/\/ café — über multi-byte comment/m, "the preceding multi-byte comment survives untouched as diff context");
+    assert.doesNotMatch(diff, /^[-+].*(café|über)/m, "the multi-byte comment is never itself added or removed");
+  } finally {
+    cleanup();
+  }
+});
+
+test("a forbidden-edge mutation on a file with multi-byte UTF-8 content before the target injects the call inside the right braces (issue #85)", () => {
+  // Exercises the OTHER byte-sensitive path in sourceMutation.ts (the
+  // open-brace search that locates where to inject a call), not the
+  // spliceChars delete path the sibling "exists mutation" test above covers.
+  // Needs enough UTF-8/UTF-16 delta (20 em dashes, 2 extra bytes each = 40
+  // bytes) to exceed the short function body's own length -- with only a
+  // couple of multi-byte characters the old Buffer-based search still finds
+  // the right brace by scanning forward from a too-early start position; at
+  // this size the byte-vs-char gap corrupts the boundary check that follows.
+  const apiBody = `// ${"—".repeat(20)} multi-byte comment, deliberately before the target\nimport { fetchOrders } from "../services/orders.js";\nexport function listOrders(u){ return fetchOrders(u); }\n`;
+  const { root, store, cleanup } = layeredRepo(apiBody);
+  try {
+    store.json.put("decisions", decision("dec_forbidden_edge_source_mutation_utf8"));
+    store.reindex();
+    const service = new ConstitutionService(store, root);
+    const policy = service.compile("dec_forbidden_edge_source_mutation_utf8", { now: NOW });
+    const proved = service.prove(policy.id, { now: "2026-07-10T10:01:00.000Z" });
+    const primary = proved.proof.mutation_receipts.find((receipt) => receipt.kind === "primary")!;
+    assert.equal(primary.operator, "add-forbidden-edge");
+    assert.equal(primary.result, "violated");
+    assert.equal(primary.passed, true);
+    assert.equal(primary.parseability, "parseable");
+    const diff = primary.source_patch?.diff ?? "";
+    // Each unified-diff added line is separately "+"-prefixed, even within
+    // the same logical statement -- assert each line rather than one
+    // multi-line pattern, to keep the expectation legible.
+    assert.match(diff, /^\+export function listOrders\(u\)\{$/m, "the opening brace line is unchanged, not byte-shifted");
+    assert.match(diff, /^\+ {2}dbQuery\(\); \/\/ hunch deterministic source mutation$/m, "the call is injected right after listOrders' opening brace");
+    assert.match(diff, /^\+ return fetchOrders\(u\); \}$/m, "the original body content survives after the injected call");
+    assert.match(diff, /^ \/\/ —+ multi-byte comment/m, "the preceding multi-byte comment survives untouched as diff context");
+    assert.doesNotMatch(diff, /^-.*—/m, "the multi-byte comment is never removed");
   } finally {
     cleanup();
   }
@@ -1544,6 +1615,26 @@ test("Phase 2Q G2 shadow sweep is real-state deduplicated, retry-safe, private, 
     service.classifyShadow(proved.policy.id, queue.items[0]!.shadow_id, "true_positive_actionable", "human:reviewer", "Real bypass in the changed graph.", { now: "2026-07-11T11:05:00.000Z" });
     assert.equal(service.g2ShadowQueue(5).total_unclassified, 0, "a current human disposition removes the item immediately");
 
+    const beforeRetire = service.repository.listShadowEvaluations({ privateOnly: true }).length;
+    const live = service.get(proved.policy.id);
+    service.repository.putPolicy(PolicySpecSchema.parse({
+      ...live,
+      revision: live.revision + 1,
+      state: "retired",
+      authority: null,
+      valid_to: "2026-07-11T11:06:00.000Z",
+      updated_at: "2026-07-11T11:06:00.000Z",
+    }), { private: true });
+    writeFileSync(join(root, "src/api/orders.ts"), `${readFileSync(join(root, "src/api/orders.ts"), "utf8")}
+// change after retirement
+`);
+    commitFiles(root, ["src/api/orders.ts"], "fixture: new HEAD after retirement");
+    const afterRetire = service.g2ShadowSweep({ now: "2026-07-11T11:07:00.000Z" });
+    assert.deepEqual(afterRetire.retired, [proved.policy.id]);
+    assert.equal(afterRetire.recorded.length, 0, "a retired policy is never observed again, even at a new HEAD");
+    assert.equal(afterRetire.failures.length, 9);
+    assert.equal(service.repository.listShadowEvaluations({ privateOnly: true }).length, beforeRetire, "retired history is kept, nothing new is written");
+
     const planFile = join(privateRoot, "gates", `${g2Plan.id}.json`);
     const tampered = JSON.parse(readFileSync(planFile, "utf8"));
     tampered.reason = "tampered plan";
@@ -1769,7 +1860,7 @@ test("Phase 2S G2 candidate attestations are exact, append-only, private, and no
     assert.notEqual(cliOutput.review.content_hash, afterRejected.content_hash, "the read receipt now binds the appended review status");
 
     const [tsx, cli] = hunchCliArgs();
-    const transport = new StdioClientTransport({ command: process.execPath, args: [tsx, cli, "mcp"], cwd: root });
+    const transport = new StdioClientTransport({ command: process.execPath, args: [tsx, cli, "mcp"], cwd: root, env: { ...process.env } });
     client = new Client({ name: "g2-candidate-attestation-test", version: "1.0.0" });
     await client.connect(transport);
     const mcpCall = await client.callTool({
@@ -2172,7 +2263,7 @@ test("Phase 2U/2V/2W/2X/2Y replays, attests, and proves exact executable behavio
     assert.equal(cliReplay.content_hash, replayWithSnapshot.content_hash);
     assert.equal(cliReplay.verdict, "behavior_confirmed");
 
-    const transport = new StdioClientTransport({ command: process.execPath, args: hunchCliArgs("mcp"), cwd: root });
+    const transport = new StdioClientTransport({ command: process.execPath, args: hunchCliArgs("mcp"), cwd: root, env: { ...process.env } });
     client = new Client({ name: "g2-behavior-candidate-test", version: "1.0.0" });
     await client.connect(transport);
     const mcpReviewCall = await client.callTool({
@@ -2370,7 +2461,7 @@ test("Phase 2U/2V/2W/2X/2Y replays, attests, and proves exact executable behavio
     assert.equal(cliMaterialization.content_hash, materialization.content_hash, "CLI exposes the exact core materialization assessment");
     assert.equal(cliMaterialization.materialized_policies, 0);
 
-    const materializationTransport = new StdioClientTransport({ command: process.execPath, args: hunchCliArgs("mcp"), cwd: root });
+    const materializationTransport = new StdioClientTransport({ command: process.execPath, args: hunchCliArgs("mcp"), cwd: root, env: { ...process.env } });
     client = new Client({ name: "g2-behavior-materialization-test", version: "1.0.0" });
     await client.connect(materializationTransport);
     const mcpMaterializationCall = await client.callTool({
@@ -4328,7 +4419,8 @@ test("MD-1a capture survives a dirty baseline and ordinary index retries it afte
     client = new Client({ name: "automatic-correction-upgrade-test", version: "1.0.0" });
     await client.connect(transport);
 
-    // Countersigned on purpose. This correction is later upgraded into a Constitution
+    // Countersigned on purpose (interview, then the human runs `hunch review --confirm`
+    // outside the agent channel — MCP alone never grants a correction authority). This correction is later upgraded into a Constitution
     // policy candidate ("correction reviews: 1 proved" below), and candidate eligibility
     // has always required human_confirmed provenance (bootstrap.ts) — testimony must not
     // become policy evidence. Since the authorship stamp, an un-token'd correction lands
@@ -4351,7 +4443,7 @@ test("MD-1a capture survives a dirty baseline and ordinary index retries it afte
       },
     });
     const captureText = (capture.content[0] as { type: "text"; text: string }).text;
-    assert.match(captureText, /Recorded blocking constraint con_/);
+    assert.match(captureText, /Recorded warning constraint con_/);
     assert.match(captureText, /REVIEW PENDING/);
     assert.match(captureText, /After the fix is committed, run hunch index/i);
     assert.match(captureText, /post-commit hook retries this automatically/i);
@@ -4362,6 +4454,8 @@ test("MD-1a capture survives a dirty baseline and ordinary index retries it afte
     assert.ok(correctionId);
     await client.close();
     client = null;
+    const confirmRun = spawnSync(process.execPath, [tsx, cli, "review", "--confirm", correctionId!, "--severity", "blocking"], { cwd: fixture.root, env, encoding: "utf8" });
+    assert.equal(confirmRun.status, 0, `${confirmRun.stdout}${confirmRun.stderr}`);
 
     const pendingStore = new HunchStore(hunchPaths(fixture.root));
     assert.equal(new ConstitutionService(pendingStore, fixture.root).list({ publicOnly: true }).length, 0,

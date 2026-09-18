@@ -4,23 +4,24 @@ Shipped in 1.32.0. Live-host results and the acceptance items still open are
 recorded in the [qualification record](task-report-qualification.md); this
 document is not a claim that every host has passed its live acceptance tests.
 
-Hunch can retain the lessons returned during a task, the agent's stated application
-of those lessons, and command results observed by its local verification wrapper.
-The result is available as a short completion card and a self-contained HTML view.
+**See what Hunch contributed to the work.** A short completion card and a local HTML report show what memory reached the agent, what the agent says it used, and which checks actually ran. These are separate kinds of evidence: a delivered lesson or a passing test alone does not prove that Hunch improved the result.
+
+The durable memory is the decision, rule, bug history or finding that future tasks can reuse. A task report records how that memory appeared in one task. Project DNA is different again: it describes observed repository conventions, such as terminology and review habits; it does not make those habits mandatory.
 
 ## Normal agent workflow
 
 The generated Hunch instructions ask the agent to:
 
-1. Start one task with `hunch_task(action: "start", title: "Short task title")`.
-2. Carry the returned `task_id` into each `hunch_context` call and each decision,
-   correction, or finding capture.
+1. Reuse the task ID and exact `cwd` supplied by a trusted native prompt hook. If none was supplied, start one task with `hunch_task(action: "start", title: "Short task title")`.
+2. Carry the returned `task_id` and hook-supplied `cwd` into each `hunch_context`
+   call and each decision, correction, or finding capture. Pass that `cwd` again
+   when reading or finishing the task report.
 3. Run a relevant verification using the exact `verification_argv` launcher from
    task start, followed by the command and arguments. This avoids stale global CLIs.
 4. Before attributing an application, read `hunch_report(task_id)` and copy its
    exact `application_references`, adding the action actually taken.
 5. Finish with `hunch_task(action: "finish", task_id, applications?)` and include
-   the structured `contribution_card`, including its evidence link, in the final
+   the structured `contribution_card`, including its Evidence line, in the final
    response unless presentation is disabled.
 
 The first time a lesson revision reaches a task, the delivery carries one
@@ -30,7 +31,7 @@ line — `Hunch recalled: <lesson title>` — in the `hunch_context` result, the
 same task stay silent; deduplication is per task and record revision, so a new
 prompt hears a lesson once more. Presentation opt-out silences the hook line.
 
-This lifecycle is instruction-driven. Configuration does not prove the host
+Native hooks can supply task identity; the agent's reporting workflow remains instruction-driven. Configuration does not prove the host
 followed it. A host must load the current MCP server and allow the tool calls;
 missing task identity or denied tools cannot produce a verified contribution.
 Hunch does not guess a task ID from a transport session or recent activity.
@@ -38,7 +39,9 @@ Hunch does not guess a task ID from a transport session or recent activity.
 `hunch init` writes the instructions. `hunch update` invokes the freshly installed
 CLI's `integrations repair-pins`, which now also refreshes existing Hunch
 grounding documents. Other user prose and unrelated integration settings remain
-preserved. Restart/reconnect the host after updating.
+preserved. Restart/reconnect the host after updating. In Codex, open `/hooks` to review and trust changed hook commands, then start a new session. An updated version pin changes the command and needs renewed trust. Hunch does not grant that trust automatically.
+
+`hunch integrations check --harness codex --probe --require mcp` checks a fresh MCP process. After a trusted hook has run in the host, `hunch integrations check --harness codex --require context` checks its recorded context delivery. The first check does not prove the second, or prove that the model used the delivered memory.
 
 ## Terminal access
 
@@ -204,6 +207,78 @@ observations and generated report files, never durable project lessons. Recent o
 tasks remain available until explicitly closed or their retention period expires. Symlinked/hard-linked report paths
 are refused so reports do not cross repository/worktree boundaries.
 
+## Tasks in the graph
+
+A finished task with at least one observation becomes graph memory:
+`.hunch/tasks/<task_id>.json`, a bounded summary in the same JSON format as
+decisions and findings (title, delivered lesson revisions, agent-reported
+applications and whether Hunch's own rule check supported them, saves with their
+home and proven durability, observed checks, the files it touched, and the
+content hash of the full local report). It is written through the same capture
+path as every other record, so public/private homing, the one-home-per-record
+rule, auto-commit and team routing apply unchanged. A task that saved to the
+private overlay, or that received a lesson living only there, is homed private.
+Empty tasks stay ledger-only. Titles are the only prose kept; prompt text,
+transcripts, context payloads and denial reasons never leave the local ledger.
+
+Up to five graph tasks are delivered as a "RECENT TASKS" supplement by
+`hunch_context`, the pre-edit hook and `hunch context` (advisory history
+sharing the brief's budget; withheld on time-travel), chosen deterministically:
+candidates are tasks that touched the file, a dependent of it, a file that
+co-changed with it in at least two commits, or that share a rule or decision
+with the current task; each is scored by file relation, IDF-weighted shared
+records, outcome (a violated rule or failed check ranks highest), phrase
+match, recency (30-day half-life, never a cutoff) and overlap with the files
+this task already touched. Slots: the latest task on the exact file, the most
+recent task with a problem, then up to three relevant tasks with near-duplicates
+removed. Every line names its reasons ("same file", "shares con_x (3 tasks)",
+"RULE VIOLATED", "12 days ago"). The current task's own ledger is the query; no
+prompt text is read or stored. A task whose last check passed, with no rule
+violated, supersedes older tasks on the same file that share a record with it;
+superseded records stay in the graph but are not delivered. Recency counts
+from the later of a task's finish and its last delivery, so lines that keep
+being useful stay warm.
+
+Whether that selection helps is measured, not assumed: `hunch task rank-eval`
+replays history leave-one-out (rank the older tasks with each task's own
+record as the query; did the records it evidently used land in the five
+slots?) and reports Hit@5 and MRR against "latest 3 on the file" with a paired
+bootstrap confidence interval; `hunch task stats` adds two proxies from task
+records alone, the re-verification rate (a later task re-ran an earlier task's
+check on the same file within 24 hours) and the repeat-violation rate. The
+pre-registered rule applies itself: the evaluation is recomputed whenever a
+task record is written (cached under `.hunch-cache/task-rank-eval.json`),
+delivery reads it, and once 200 task records exist a ranked selection that has
+lost to "latest 3" with a confidence interval excluding zero switches delivery
+to latest-only; the header says so, `hunch now` and `hunch task stats` print the
+current line, and a verdict change is recorded as a finding. Nobody has to run
+anything. `"taskRanking": "ranked" | "latest"` in `.hunch/local.json` pins the
+mode for a repository that wants to.
+`hunch task list` and the VS Code Contribution view show graph records next to
+local observations (`in graph (public|private)`), including tasks another
+machine or teammate finished. `hunch report <id>` prints the graph record when
+the local ledger no longer has the task. Graph tasks are indexed for
+`hunch_query`, and `hunch_why <file>` lists recent tasks that touched the file.
+One record per episode, not per prompt. A prompt that follows another of the same host session within 30 minutes continues its task: the ledger row carries `continues` (the previous task) and `episode` (the first task of the chain), and the chain's graph record is written under the episode's id and refreshed as prompts finish. "status", "next" and "go" therefore add their observations and their git-side work to the work they belong to instead of leaving empty rows behind. The session is kept only as a hash; the host session identifier is still never retained. An episode whose record already lives in the public store splits when a later prompt brings private-only memory, so private memory is never named in a public record. A task still open when the next prompt arrives (the user interrupted the previous one before its Stop) is the session's current work whatever its age: the new prompt continues it and closes it as a host close, so its evidence reaches the record. A host notification turn (a background command finished) continues the session's latest task instead of opening a row of its own.
+
+Git-side anchoring excludes Hunch's own work: commits with a `hunch:` subject (captures, task records, repairs) and fresh working-tree changes to the grounding files a capture rewrites (`CLAUDE.md`, `AGENTS.md`, the host rule files); a user commit that edits those files, or a delivery that named one, still counts. When another session had a task open on the same checkout during the window, only commits anchor the record: a working-tree mtime cannot say whose edit it was.
+
+A record's `files` also include what git saw change while the task was open: commits authored by the configured git user in the task window (merges excluded) and working-tree changes whose modification time falls in it. Work done from a shell (patch scripts, rebases, release commits) therefore anchors the record even though no pre-edit hook ever fired for it. Hunch's own memory and cache paths and deletions are excluded; report-derived files come first under the 64-file cap.
+
+Set `"taskRecords": false` in `.hunch/local.json` to keep tasks ledger-only.
+Set `"taskRecordsFlush": "batch"` to write records without their own commit;
+they ride the next capture commit (decision, finding, correction) instead.
+
+By default native tasks (Claude Code, Codex) carry the generic title
+"Assistant task" and no prompt text is retained anywhere. Set
+`"taskTitles": "prompt"` in `.hunch/local.json` to title them from the prompt's
+first line (72 characters, cut at a word). Credential-looking prompts keep the
+generic title. That title is then the only prompt-derived prose retained, and it
+travels into the task's graph record, so opt in only where the graph's home is
+acceptable for it.
+The files a task touched include the targets of its context deliveries when
+they name a path or symbol; task phrases are never recorded as files.
+
 ## Integration boundary
 
 CLI and MCP use the same local report service. CCC or another orchestrator can
@@ -225,11 +300,17 @@ references are presentation metadata alongside the report, outside its content h
 
 ## Native Claude lifecycle coverage
 
-Claude Code 2.1.196+ supplies an authoritative prompt identifier. Existing Hunch prompt hooks create an exact report from physical worktree, provider, session, prompt and optional agent identity; raw prompt text and host identifiers are not retained. Every prompt receives its ID even when ambient reminders are deduplicated. The model reuses it through MCP. The Stop hook emits a nonblocking `systemMessage`, including missing coverage when no linked retrieval occurred. It never adds a Stop block or another model turn. An existing verification gate still takes precedence.
+Claude Code 2.1.196+ supplies an authoritative prompt identifier. Existing Hunch prompt hooks create an exact report from physical worktree, provider, session, prompt and optional agent identity; raw prompt text and host identifiers are not retained (a repository that opts in with `taskTitles: "prompt"` keeps only a bounded first-line title). Every prompt receives its ID and canonical worktree `cwd` even when ambient reminders are deduplicated. The model reuses both through MCP. The Stop hook emits a nonblocking `systemMessage`, including missing coverage when no linked retrieval occurred. It never adds a Stop block or another model turn. An existing verification gate still takes precedence.
 
-Stop does not close an unfinished report: another hook may continue the turn, and Stop is not an independent assertion that all user work finished. Explicit finish/interruption records remain authoritative. Older Claude versions receive an unassociated coverage notice, never a report selected by time or recent task. Presentation opt-out silences both notices and cards; firmness off retains its existing disabled-hook semantics.
+Stop closes the prompt's task as a *host close*: the ledger records the task as completed when the turn ends, and a task with observations becomes a graph record without the agent calling finish. The close is provisional. Another hook may continue the turn, so the next observation reopens the task and the following Stop closes it again, refreshing the record from the report. Once the session has moved on to a later prompt, an observation that still names the older, host-closed task (the grounding tells agents to reuse ids) lands on the session's newest task instead, so nothing is reopened that no Stop would close again; verification keeps its own task, since a result must match its start. An explicit finish or interruption from the agent overrides a host close and is final. Stop also closes any task an earlier prompt of the session left open, and a new prompt closes them on arrival, so an interrupted prompt's evidence is never stranded. A task whose verification is still running stays open; a verification whose runner never came back (a killed process, a closed laptop) stops holding the task open once its own timeout plus a minute has passed, and the report keeps saying that its result was not retained. Older Claude versions receive an unassociated coverage notice, never a report selected by time or recent task. Presentation opt-out silences both notices and cards; firmness off retains its existing disabled-hook semantics.
 
 Live Claude 2.1.268 headless qualification observed exact prompt continuity through a Stop continuation, informational-message delivery, and the previously failing README task now returning an empty-memory card with a clickable Markdown evidence link. Interactive display and CCC/Watchtower adapters require their own qualification.
+
+## Native Codex lifecycle coverage
+
+Codex 0.153+ has a Hunch lifecycle adapter for `.codex/hooks.json`. After the project and hook commands are trusted, the prompt hook can supply the task identity from `turn_id` and its canonical worktree `cwd`; the agent reuses both through MCP. Pre-edit and post-tool events support grounding and observation, and Stop can present the contribution card. Hook command changes require renewed review through `/hooks` and a new session.
+
+Check observed delivery with `hunch integrations check`. Enabled configuration does not prove that each event ran, that a failed-tool event was delivered, or that the model used a lesson.
 
 ## Provider-neutral engine API
 

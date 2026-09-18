@@ -6,11 +6,12 @@
 import type { ReadRequest, ReadResponse, SubscribeRequest, WriteRequest, WriteResult, ChangeEvent, Scope, RecordsResponse } from "../core/stateContract.js";
 import type { DeliveryEnvelope } from "../core/delivery.js";
 import type { CaptureRequest, CaptureBatchRequest, CaptureBatchResult } from "../core/stateContract.js";
+import type { SubscribeResponse } from '../store/stateBinding.js';
 
 export type ClientReadRequest = Omit<ReadRequest, "schema" | "principal">;
 export type ClientWriteRequest = Omit<WriteRequest, "schema" | "principal" | "expected_version"> & { expected_version?: string | number | null };
 export type ClientSubscribeRequest = Omit<SubscribeRequest, "schema" | "principal">;
-export interface ClientSubscribeResponse { schema: string; scope: Scope; head_seq: number; events: ChangeEvent[]; filtered: boolean }
+export type ClientSubscribeResponse = SubscribeResponse;
 
 export interface StateProblem { type: string; title: string; status: number; detail: string; conflict?: { incumbent_id: string; reason: string }; issues?: string[] }
 
@@ -22,7 +23,9 @@ export class StateClientError extends Error {
   }
 }
 
+export interface StateProofRequest { method: string; url: string; token: string; nonce?: string }
 export interface StateClientOptions {
+  proof?: (request: StateProofRequest) => Promise<string>;
   baseUrl: string;
   token: string;
   fetch?: typeof fetch;
@@ -33,16 +36,30 @@ export function createStateClient(opts: StateClientOptions) {
   const base = opts.baseUrl.replace(/\/+$/, "");
   const doFetch = opts.fetch ?? fetch;
   const timeoutMs = opts.timeoutMs ?? 15_000;
+  let nonce: string | undefined;
   async function call<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await doFetch(`${base}${path}`, {
+      const url = `${base}${path}`;
+      const request = async () => doFetch(url, {
         method,
-        headers: { authorization: `Bearer ${opts.token}`, ...(body !== undefined ? { "content-type": "application/json" } : {}) },
+        headers: { authorization: `${opts.proof ? 'DPoP' : 'Bearer'} ${opts.token}`, ...(opts.proof ? { dpop: await opts.proof({ method, url, token: opts.token, nonce }) } : {}), ...(body !== undefined ? { "content-type": "application/json" } : {}) },
         body: body !== undefined ? JSON.stringify(body) : undefined,
         signal: controller.signal,
+        redirect: "error",
       });
+      let response = await request();
+      // This one retry is an authentication challenge before any operation runs.
+      // Idempotency/conflict/network failures never trigger automatic write retries.
+      if (opts.proof && response.status === 401 && response.headers.has('dpop-nonce')) {
+        const challenge = await response.clone().json().catch(() => null) as { title?: string } | null;
+        if (challenge?.title === 'use_dpop_nonce') {
+          nonce = response.headers.get('dpop-nonce')!;
+          await response.arrayBuffer();
+          response = await request();
+        }
+      }
       const text = await response.text();
       const parsed = text ? (JSON.parse(text) as unknown) : {};
       if (!response.ok) {
@@ -62,7 +79,10 @@ export function createStateClient(opts: StateClientOptions) {
     captureBatch: (request: Omit<CaptureBatchRequest, "schema" | "principal">) => call<CaptureBatchResult>("POST", "/nuryel/v1/capture-batch", request),
     subscribe: (request: ClientSubscribeRequest) => call<ClientSubscribeResponse>("POST", "/nuryel/v1/subscribe", request),
     records: (request: { scope: Scope; ids: string[] }) => call<RecordsResponse>("POST", "/nuryel/v1/records", request),
-    health: () => call<{ ok: boolean; version: string; protocol: string; partitions: string[] }>("GET", "/nuryel/v1/health"),
+    /** Liveness; `partitions` is present because this client sends its credential. */
+    health: () => call<{ ok: boolean; version: string; protocol: string; partitions?: string[] }>("GET", "/nuryel/v1/health"),
   };
 }
 export type StateClient = ReturnType<typeof createStateClient>;
+
+export { readOrCompute, type ReadOrComputeClient, type ReadOrComputeRequest, type ReadOrComputeResult, type ComputedContent } from "./readOrCompute.js";

@@ -31,7 +31,11 @@ export function writeMcpJson(root: string, inv: Invocation): string {
       }
     }
   }
-  json.mcpServers = json.mcpServers ?? {};
+  const servers = json.mcpServers;
+  if (servers !== undefined && (!servers || typeof servers !== "object" || Array.isArray(servers))) {
+    throw new Error(`refusing to edit ${file}: mcpServers must be a JSON object when present; fix it, then re-run.`);
+  }
+  json.mcpServers = servers as Record<string, unknown> | undefined ?? {};
   json.mcpServers.hunch = { command: inv.command, args: [...inv.args, "mcp"] };
   // Atomic: .mcp.json holds the user's other servers — a torn write would leave
   // it unparseable, which this writer then refuses to touch (issue #43).
@@ -84,8 +88,19 @@ Capture the decision for **$ARGUMENTS** into Hunch's graph.
 2. Run the GRILLING LOOP: one focused question at a time. Push back on hand-wavy answers. Resolve every branch before committing — an unexamined decision poisons the graph.
 3. Confirm the TOPIC anchor with me before committing. One topic per decision; if it spans two, split into two captures.
 4. Capture REJECTED alternatives explicitly (what, and why not) — this is what makes the decision enforceable (Veto/drift check against it).
-5. Commit with \`hunch_record_decision\`, passing \`capture_token\` (from step 1) and the confirmed \`topic\`. The artifact is the graph write, not prose.
+5. Commit with \`hunch_record_decision\`, passing \`capture_token\` (from step 1) and the confirmed \`topic\`. The artifact is the graph write, not prose. The token is not my signature: confirm the record in the client prompt if one appears; otherwise it stays agent testimony until I run the \`hunch review --confirm <id>\` command the response prints.
 6. On CONFLICT for the topic, do NOT auto-supersede — Hunch refuses and presents both; let me choose supersede (link) / split the topic / discard.
+`;
+
+const WORKTREES_CMD = `---
+description: Which worktrees and branches are open on which machine, what is merged and deletable — from Hunch's workspace ledger, not from git spelunking
+---
+Answer **$ARGUMENTS** (default: "what is open, and what can I delete?") from the workspace ledger.
+
+1. Call \`hunch_workspaces(view: "branches")\` (and \`view: "inventory"\` for the worktree list). Do NOT run \`git branch\`, \`git worktree list\` or \`git log\` yourself — the tool already read this machine live and every other machine from memory.
+2. Report the rows as they are: MACHINES, WORKTREE (dirty), UPSTREAM, MERGED (with its method) and the ACTION column. A verdict of \`unknown\` or a machine marked \`unverified\` is reported as such, never upgraded to a guess.
+3. Recommend only what the ACTION column says. You never delete a branch or remove a worktree from this command; the human runs the printed git commands (or \`hunch workspaces prune\` when it ships) on the machine that holds them.
+4. If a machine is missing or stale, say so: it has not run \`hunch workspaces snapshot\` (the post-checkout hook / MCP session start does this) or it is not sharing an overlay.
 `;
 
 const AUDIT_CMD = `---
@@ -134,7 +149,7 @@ function isHunchHook(entry: HookEntry): boolean {
   return !!entry.hooks?.some((h) => {
     if (typeof h.command !== "string") return false;
     const command = h.command;
-    const nativeOrSource = /[\\/]index\.(js|ts)"?\s+hook\s*$/.test(command);
+    const nativeOrSource = /(?:dist|src)[\\/]+cli[\\/]+index\.(js|ts)"?\s+hook\s*$/.test(command);
     const publishedNpx = /^\s*"?npx(?:\.cmd)?"?\s+/i.test(command)
       && /--package=(?:hunch-exact@npm:)?@davesheffer\/hunch(?:@[^"\s]+)?/.test(command)
       && /\s"?hunch"?\s+"?hook"?\s*$/.test(command);
@@ -170,7 +185,17 @@ export function installClaudeHooks(root: string, hookCmd: string): ClaudeHookIns
       }
     }
   }
-  json.hooks = json.hooks ?? {};
+  const hooks = json.hooks;
+  if (hooks !== undefined && (!hooks || typeof hooks !== "object" || Array.isArray(hooks))) {
+    throw new Error(`refusing to edit ${file}: hooks must be a JSON object when present; fix it, then re-run.`);
+  }
+  json.hooks = hooks as Record<string, HookEntry[]> | undefined ?? {};
+  for (const event of ["PreToolUse", "UserPromptSubmit", "SessionStart", "SubagentStart", "PreCompact", "PostToolUse", "PostToolUseFailure", "Stop"]) {
+    const existing = json.hooks[event];
+    if (existing !== undefined && !Array.isArray(existing)) {
+      throw new Error(`refusing to edit ${file}: hooks.${event} must be an array when present; fix it, then re-run.`);
+    }
+  }
   const keep = (arr?: HookEntry[]) => (Array.isArray(arr) ? arr.filter((e) => !isHunchHook(e)) : []);
 
   json.hooks.PreToolUse = [
@@ -240,6 +265,7 @@ export function writeSlashCommands(root: string): { written: string[]; skipped: 
     ["capture.md", CAPTURE_CMD],
     ["heal.md", HEAL_CMD],
     ["audit.md", AUDIT_CMD],
+    ["worktrees.md", WORKTREES_CMD],
   ];
   for (const [name, body] of files) {
     const p = join(dir, name);

@@ -17,7 +17,11 @@ hunch init --firmness advisory     # start gentle; raise later
 git commit --allow-empty -m "hunch: first capture"
 ```
 
-**Observe:** `.hunch/` appears (git-tracked JSON), `.claude/settings.json` gains five hook events (`PreToolUse`, `UserPromptSubmit`, `SessionStart`, `PostToolUse`, `Stop`), and your next assistant session opens with a 🧠 orientation block.
+**Observe:** `.hunch/` appears, and supported assistant configurations gain lifecycle hooks. Claude Code uses `.claude/settings.json`; Codex uses `.codex/hooks.json` and requires review and trust through `/hooks`. Reload the assistant, then use `hunch integrations check` to inspect configuration and observed delivery. A configured hook does not prove that the host ran it.
+
+For later updates, run `hunch update` in the repository. Reconnect the assistant; in Codex, review and trust changed commands with `/hooks`, then start a new session. A version pin change changes the hook command and requires renewed trust.
+
+Installed interactive CLI commands may show a cached update notice. A detached worker checks npm's public `latest` metadata at most once every 24 hours; hooks, MCP, CI, servers, the updater, non-interactive commands, and source checkouts skip it. Set `HUNCH_NO_UPDATE_CHECK=1` or `NO_UPDATE_NOTIFIER=1` to opt out.
 
 Cold start on an old repo:
 
@@ -49,9 +53,9 @@ What each level may and may not do, and the human act that arms blocking, is spe
 
 ## 3. The verification pipeline (v1.4.0+)
 
-The operating loop — **scope → evidence → change → verify → attack → report** — is injected at session start and *enforced* at turn end. Facts, not claims: the `PostToolUse` hook records which product files were edited and whether a verify-shaped command (test / build / typecheck / plan) ran afterwards. At `firm`/`strict`, the `Stop` hook refuses to end a turn with unverified product edits (max twice per turn, so a broken gate can never trap you).
+On hosts that support and run the configured hooks, the operating loop — **scope → evidence → change → verify → attack → report** — is delivered at session start. `PostToolUse` records observed product-file edits and subsequent verification-shaped commands. At `firm`/`strict`, a supported `Stop` hook can request continued work when edits lack that evidence, at most twice per turn. This does not prove a check passed or that the model used the context; [task reports](task-reports.md) distinguish those claims.
 
-**Why it exists (measured, 2026-07-08):** instruction skills installed as files were read in **0/20** benchmark sessions — and pass rates were identical to having no skill at all. When the same content was guaranteed-delivered, hard-bug diagnosis flipped FAIL→PASS on every discriminating cell (Opus and Haiku both). Delivery, not content, is the bottleneck; hooks are the only delivery mechanism the model can't ignore.
+**Why it exists (benchmark, 2026-07-08):** instruction skills installed as files were read in **0/20** benchmark sessions; directly supplying the same content changed the hard-bug diagnosis result in the tested cells. That result motivated hook delivery. It is scoped benchmark evidence, not a guarantee about every host or task: even delivered context can be ignored or misunderstood.
 
 Escape hatches:
 
@@ -173,7 +177,7 @@ remote, and the URL committed into the code repository must not contain credenti
 On one maintainer machine:
 
 ```bash
-npm i -g @davesheffer/hunch@1.18.1
+npm i -g @davesheffer/hunch
 hunch shared --repo git@github.com:acme/project-hunch-memory.git
 git add .gitignore .hunch/team.json
 git commit -m "chore: connect shared Hunch memory"
@@ -185,7 +189,7 @@ into the dedicated store. Review the reported untrack/ignore changes and follow 
 Hunch prints. On every teammate machine:
 
 ```bash
-npm i -g @davesheffer/hunch@1.18.1
+npm i -g @davesheffer/hunch
 git pull
 hunch init
 hunch doctor
@@ -201,13 +205,14 @@ For a coordinated pause or rollback that preserves every memory record:
 ```bash
 hunch firmness off
 hunch shared --repo git@github.com:acme/project-hunch-memory.git --no-auto-commit
-npm i -g @davesheffer/hunch@1.16.0
 ```
 
 Revert the `.hunch/team.json` setup commit only if new clones must stop discovering the Matrix. Do
 not delete the memory repo or local overlay; after upgrading again, `hunch shared --sync` publishes
-pending local memory. Pause enforcement first and keep every client on the same release before
-resuming Matrix policy workflows.
+pending local memory. Pause enforcement first and keep every client on the same compatible release
+before resuming Matrix policy workflows. Do not blindly downgrade across storage or capability
+versions; follow the target release's upgrade or rollback guide and restore a compatible backup when
+that guide requires one.
 
 ## 11. Private overlay (public repo, private memory)
 
@@ -286,12 +291,14 @@ Matrix memory home as the CLI; it never writes Hunch JSON directly.
 For a release audit, start with the exact tags and public registry metadata:
 
 ```bash
-npm view @davesheffer/hunch@1.18.1 version dist.integrity dist.attestations --json
-git tag --list v1.18.1 vscode-v0.17.3
+HUNCH_RELEASE=1.33.0
+HUNCH_VSCODE_RELEASE=0.18.2
+npm view "@davesheffer/hunch@$HUNCH_RELEASE" version dist.integrity dist.attestations --json
+git tag --list "v$HUNCH_RELEASE" "vscode-v$HUNCH_VSCODE_RELEASE"
 ```
 
-**Observe:** npm reports `1.18.1`, an integrity digest, and provenance metadata. Open VSX reports
-`0.17.3`. The GitHub Actions run for each tag shows a credential-free validation job followed by
+**Observe:** npm reports `1.33.0`, an integrity digest, and provenance metadata. Open VSX reports
+`0.18.2`. The GitHub Actions run for each tag shows a credential-free validation job followed by
 publication and public byte verification of the same content-addressed artifact.
 
 ## 15. See what Hunch contributed to a task (v1.32.0+)

@@ -1,3 +1,4 @@
+import { RecordVisibilitySchema } from "./recordVisibility.js";
 /**
  * Core entity schema for the Project Hunch (DESIGN.md §3).
  *
@@ -10,9 +11,10 @@ import { createHash } from "node:crypto";
 import { findingId, resourceId, resourceRelationshipId } from "./ids.js";
 import { ProvenanceSchema, SENSITIVE_METADATA_KEY, isCredentialFreeText, type Provenance } from "./provenance.js";
 import {
-  ActionReceiptSchema, CommitmentSchema, DerivedStateSchema, ExternalEntitySchema, StateRelationshipSchema,
-  type ActionReceipt, type Commitment, type DerivedState, type ExternalEntity, type StateRelationship,
+  ConventionSchema, ActionReceiptSchema, CommitmentSchema, DerivedStateSchema, ExternalEntitySchema, StateRelationshipSchema,
+  type Convention, type ActionReceipt, type Commitment, type DerivedState, type ExternalEntity, type StateRelationship,
 } from "./stateRecords.js";
+import { WorkspaceSchema, type Workspace } from "./workspace.js";
 
 // Provenance and the credential-free text check live in the leaf module ./provenance.js so
 // record schemas registered below can import them without a cycle; re-exported unchanged.
@@ -356,6 +358,7 @@ export const PremiseSchema = z.object({
 export type Premise = z.infer<typeof PremiseSchema>;
 
 export const DecisionSchema = z.object({
+  visibility: RecordVisibilitySchema.optional(),
   id: z.string().describe("dec_*"),
   title: z.string(),
   // Decision-grounding anchor: the join key that relates a doc section, a decision,
@@ -409,6 +412,7 @@ export type BugLineage = z.infer<typeof BugLineageSchema>;
 
 /** A bug with root cause and lineage (introduced → fixed → recurred). */
 export const BugSchema = z.object({
+  visibility: RecordVisibilitySchema.optional(),
   id: z.string().describe("bug_*"),
   title: z.string(),
   symptom: z.string().default(""),
@@ -427,6 +431,7 @@ export type Bug = z.infer<typeof BugSchema>;
 
 /** An invariant the system must respect. */
 export const ConstraintSchema = z.object({
+  visibility: RecordVisibilitySchema.optional(),
   id: z.string().describe("con_*"),
   type: z.enum(["security", "performance", "correctness", "architecture", "compliance"]).default("correctness"),
   statement: z.string(),
@@ -491,6 +496,7 @@ export type Runbook = z.infer<typeof RunbookSchema>;
  *  never enters any block path. Lifecycle is `triage`, not valid-time: a finding is
  *  resolved/stale-marked, never superseded. */
 export const FindingSchema = z.object({
+  visibility: RecordVisibilitySchema.optional(),
   id: z.string().describe("fnd_*"),
   title: z.string(),
   observation: z.string().default("").describe("what was observed, in plain words"),
@@ -507,6 +513,47 @@ export const FindingSchema = z.object({
   provenance: ProvenanceSchema,
 });
 export type Finding = z.infer<typeof FindingSchema>;
+
+/** A finished agent task as durable graph memory: what Hunch delivered, what the
+ * agent says it applied, what it saved and checked, and which files it touched.
+ * Written automatically when a task finishes with at least one observation; the
+ * raw observation ledger (.hunch-cache/served.db) stays machine-local. Titles are
+ * the only prose; no prompt text, transcript, or private context payload is kept. */
+export const TaskRecordSchema = z.object({
+  visibility: RecordVisibilitySchema.optional(),
+  id: z.string().describe("htask_*"),
+  title: z.string(),
+  state: z.enum(["completed", "interrupted"]),
+  started_at: z.string(),
+  finished_at: z.string(),
+  coverage: z.enum(["no-delivery-observed", "no-relevant-memory", "delivered"]),
+  lessons: z.array(z.object({
+    kind: z.string(), record_id: z.string(), content_hash: z.string(), title: z.string(),
+  })).default([]).describe("exact record revisions Hunch delivered to the agent"),
+  applied: z.array(z.object({
+    record_id: z.string(), content_hash: z.string(), action: z.string(),
+    supported_by: z.string().nullable().default(null),
+  })).default([]).describe("agent-reported applications; supported_by names Hunch's own rule evaluation when one held"),
+  saved: z.array(z.object({
+    kind: z.string(), record_id: z.string(), content_hash: z.string(),
+    home: z.enum(["public", "private"]), operation: z.enum(["created", "updated"]),
+    durability: z.enum(["local", "committed", "pushed"]),
+  })).default([]).describe("memory the task wrote, with its actual home and proven durability"),
+  checks: z.array(z.object({
+    label: z.string(), state: z.enum(["passed", "failed", "timed out", "cancelled"]), exit_code: z.number().int().nullable(),
+  })).default([]).describe("independently observed command results (hunch task verify)"),
+  conformance: z.array(z.object({
+    kind: z.enum(["constraints", "decisions"]), record_id: z.string(), content_hash: z.string(),
+    outcome: z.enum(["satisfied", "violated", "not-exercised", "unavailable"]),
+  })).default([]).describe("Hunch's deterministic evaluation of each delivered rule against the changed files"),
+  refusals: z.number().int().nonnegative().default(0).describe("edits the native gate denied during the task"),
+  files: z.array(z.string()).default([]).describe("files the task touched: delivery targets, rule-checked changes, denied edits"),
+  supersedes: z.array(z.string()).default([]).describe("older task records this task verified over: same file, shared record, passing check; superseded records are not delivered"),
+  source_snapshot: z.string().nullable().default(null).describe("bounded source snapshot hash at the last check, when one ran"),
+  report_hash: z.string().describe("content hash of the full local report this record summarizes"),
+  provenance: ProvenanceSchema,
+});
+export type TaskRecord = z.infer<typeof TaskRecordSchema>;
 
 export const LANDSCAPE_DRIFT_CANDIDATE_SCHEMA_VERSION = "hunch.landscape-drift-candidate/1" as const;
 const LANDSCAPE_DRIFT_HASH = /^sha256:[a-f0-9]{64}$/;
@@ -652,7 +699,8 @@ export function landscapeDriftCandidateFinding(value: unknown): Finding {
 // loads exactly as before, and an older build ignores directories it does not know.
 export const ENTITY_KINDS = [
   "components", "resources", "edges", "symbols", "decisions", "bugs", "constraints", "runbooks", "findings",
-  "receipts", "commitments", "derived", "entities", "relationships",
+  "receipts", "commitments", "derived", "entities", "relationships", "conventions", "tasks",
+  "workspaces",
 ] as const;
 export type EntityKind = (typeof ENTITY_KINDS)[number];
 
@@ -666,11 +714,14 @@ export const SCHEMAS = {
   constraints: ConstraintSchema,
   runbooks: RunbookSchema,
   findings: FindingSchema,
+  conventions: ConventionSchema,
   receipts: ActionReceiptSchema,
   commitments: CommitmentSchema,
   derived: DerivedStateSchema,
   entities: ExternalEntitySchema,
   relationships: StateRelationshipSchema,
+  tasks: TaskRecordSchema,
+  workspaces: WorkspaceSchema,
 } as const;
 
 export type EntityFor = {
@@ -683,11 +734,14 @@ export type EntityFor = {
   constraints: Constraint;
   runbooks: Runbook;
   findings: Finding;
+  conventions: Convention;
   receipts: ActionReceipt;
   commitments: Commitment;
   derived: DerivedState;
   entities: ExternalEntity;
   relationships: StateRelationship;
+  tasks: TaskRecord;
+  workspaces: Workspace;
 };
 
 /** Default provenance helper for deterministic (extracted) records. */

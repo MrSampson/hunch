@@ -12,17 +12,23 @@ import { RootsListChangedNotificationSchema } from "@modelcontextprotocol/sdk/ty
 import { z } from "zod";
 import { hunchPaths, findRoot, toPosixTarget } from "../core/paths.js";
 import { canonicalRootPath, resolveActiveRoot } from "./roots.js";
+import { resolveMcpToolset } from "./toolset.js";
+import { fieldCitationText } from "../core/fieldProvenance.js";
+import type { DerivedState } from "../core/stateRecords.js";
 import { HunchStore } from "../store/hunchStore.js";
-import { StateRefusal, SubscribeResponseSchema, capabilities, partitionOf, readState, recordsState, subscribeState, writeState } from "../store/stateBinding.js";
+import { StateRefusal, SubscribeResponseSchema, capabilities, partitionOf, readState, recordsState, stateHomeFor, subscribeState, writeState } from "../store/stateBinding.js";
 import { captureState, captureBatchState } from "../store/stateCapture.js";
 import { CaptureRequestSchema, CaptureBatchRequestSchema, CaptureBatchResultSchema, STATE_CAPTURE_VERSION, STATE_CAPTURE_BATCH_VERSION } from "../core/stateContract.js";
 import { ReadRequestSchema, ReadResponseSchema, WriteRequestSchema, WriteResultSchema, SubscribeRequestSchema, RecordsRequestSchema, RecordsResponseSchema, STATE_READ_VERSION, STATE_WRITE_VERSION, STATE_SUBSCRIBE_VERSION, STATE_RECORDS_VERSION, stateHash } from "../core/stateContract.js";
 import { selectEmbedder } from "../store/embedder.js";
 import { decisionId, findingId, manualDecisionId } from "../core/ids.js";
 import { buildCorrectionConstraint } from "../core/correction.js";
+import { confirmCommand } from "../core/countersign.js";
 import { knownRepoDeps } from "../synthesis/tripwires.js";
 import { refreshExistingGrounding } from "../integrations/providers.js";
-import { revParse, asOfDate, revExists, lastChangeDate, rangeFiles, rangeDiff, commitFiles, commitDiff, stagedFiles, stagedDiff, workingFiles, workingDiff, pullHunchStatus, sameRemoteUrl, currentBranch, worktreePaths, pathKnownToHistory, type HunchPullStatus } from "../extractors/git.js";
+import { workspaceLedgerView, renderWorktreeTable, renderBranchTable, workspaceSummaryLine, snapshotHasHome, recordWorkspaceSnapshot, branchRows, worktreeRows } from "../integrations/workspaceLedger.js";
+import { readConfig, workspacesConfig } from "../core/config.js";
+import { revParse, asOfDate, revExists, lastChangeDate, rangeFiles, rangeGateDiff, commitFiles, commitGateDiff, stagedFiles, stagedGateDiff, workingFiles, workingGateDiff, pullHunchStatus, sameRemoteUrl, currentBranch, worktreePaths, pathKnownToHistory, type HunchPullStatus } from "../extractors/git.js";
 import { flushCapture, flushMemoryHome, pinSharedRemote } from "../integrations/sync.js";
 import { withWriteLock } from "../serve/writelock.js";
 import { advertisedTeamRemoteContract, ensureTeamOverlay, overlayMatchesTeamRemote, readTeamConfig, teamRemoteContract, teamSharedRef } from "../integrations/team.js";
@@ -84,7 +90,7 @@ import { readActivePendingRepairs, withheldRewrites } from "../core/repairqueue.
 import { scanRecord, publicationWarning, loadVocabulary } from "../core/publication.js";
 import { premiseEscalations } from "../core/premises.js";
 import { applyImportedAdrReview, pendingImportedAdrReviews } from "../core/importReview.js";
-import { issueCaptureToken as issueToken, consumeCaptureToken as consumeToken } from "../core/capturetoken.js";
+import { issueCaptureToken as issueToken, consumeCaptureToken as consumeToken, HUMAN_CONFIRMATION_SCHEMA, isHumanConfirmationAnswer } from "../core/capturetoken.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
@@ -824,6 +830,31 @@ function deliveredContext(
 const issueCaptureToken = (): string => issueToken(randomUUID, Date.now());
 const consumeCaptureToken = (token: string | undefined): boolean => consumeToken(token, Date.now());
 
+/** A consumed capture token proves the interview protocol was issued — inside the agent's
+ *  own channel — not that a human answered. Human authority needs a human act the agent
+ *  cannot perform: here, an MCP elicitation the CLIENT shows the user (standard protocol,
+ *  capability-detected, so no client-specific behavior). A client without form
+ *  elicitation, a failed/timed-out request, decline, cancel, or an unchecked box all
+ *  leave the write as agent testimony. */
+type HumanConfirmation = "confirmed" | "declined" | "unavailable";
+async function askHumanToConfirm(server: McpServer, message: string): Promise<HumanConfirmation> {
+  if (!server.server.getClientCapabilities()?.elicitation?.form) return "unavailable";
+  try {
+    const answer = await server.server.elicitInput({ mode: "form", message, requestedSchema: HUMAN_CONFIRMATION_SCHEMA });
+    return isHumanConfirmationAnswer(answer) ? "confirmed" : "declined";
+  } catch {
+    return "unavailable";
+  }
+}
+
+function unconfirmedReason(c: HumanConfirmation): string {
+  return c === "declined"
+    ? "the human did not confirm it in the client prompt"
+    : "this client could not ask the human to confirm it (no MCP form elicitation, or the request failed)";
+}
+
+const clipForPrompt = (s: string, max = 400): string => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
+
 /** The interrogation protocol returned by hunch_capture_decision. With `deciding`,
  *  the choice is NOT yet made: the verdict loop runs first so the record's
  *  alternatives_rejected are attacks that actually ran — not post-hoc fiction. */
@@ -847,7 +878,7 @@ function grillingProtocol(topic: string | undefined, token: string, deciding = f
     "1. Grill ONE focused question at a time. Push back on hand-wavy answers. Resolve every branch of the decision tree before committing — an unexamined decision poisons the graph.",
     `2. Confirm the TOPIC anchor with the human before committing${topic ? ` (proposed: "${topic}")` : ""}. Exactly one topic per decision; if it spans two, split into two captures.`,
     "3. Capture REJECTED alternatives explicitly — for each, what it was and why not. This is what makes the decision enforceable (Veto/drift check against it).",
-    `4. Commit with hunch_record_decision, passing capture_token:"${token}" and the confirmed topic. The artifact is the graph write, not prose.`,
+    `4. Commit with hunch_record_decision, passing capture_token:"${token}" and the confirmed topic. The artifact is the graph write, not prose. The token is not a human signature: Hunch asks the human to confirm in the client when the client supports it; otherwise the record stays agent testimony until the human runs the \`hunch review --confirm <id>\` command the response prints.`,
     "5. On CONFLICT with an existing live decision for the topic, do NOT auto-supersede — Hunch refuses and presents both; let the human choose to supersede (link), split the topic, or discard.",
     "",
     "Required before commit: topic, title, decision, context (the rationale/why), alternatives_rejected. Missing any → keep grilling.",
@@ -1017,6 +1048,16 @@ export interface RootControlOptions {
   pinned?: boolean;
 }
 
+/** Delivered to every MCP client at initialize — the one grounding channel that
+ * needs no host hook or instruction file. Host-neutral by design (con_e04226bd05);
+ * per-host prose (CLAUDE.md, AGENTS.md) and hooks add to it, never replace it. */
+export const MCP_INSTRUCTIONS = [
+  "Hunch is this repository's engineering memory: decisions, bug history, invariants, components, with provenance.",
+  "Per user task: (1) hunch_task(action:\"start\", title) once — unless the host's prompt hook already printed a task_id, then reuse it; (2) hunch_context(target, task_id) FIRST, before reading or editing, for the file, symbol, or task phrase; (3) hunch_check_constraints(scope) before editing shared code; (4) hunch_task(action:\"finish\", task_id) before the final response and show its contribution card.",
+  "Then by moment: hunch_why(target) for rationale and rejected alternatives, hunch_bug_lineage before fixing a failure, hunch_record_decision after a non-trivial choice, hunch_record_correction when a human corrects you.",
+  "Hosts without lifecycle hooks (Windsurf, Cursor, or Codex before its hooks are trusted) receive no automatic grounding: call these tools yourself.",
+].join("\n");
+
 export function buildServerWithRootControl(initialRoot: string, options: RootControlOptions = {}): RootControlledServer {
   const pinned = options.pinned === true;
   const explicitOverlay = !!process.env.HUNCH_PRIVATE_DIR?.trim();
@@ -1078,12 +1119,16 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
   // hunch_query and stays warm — and hybridSearch degrades to FTS until then.
   const embedderReady = selectEmbedder();
 
-  const server = new McpServer({ name: "hunch", version: HUNCH_VERSION });
+  // Everyday tools by default; specialist groups by evidence, config, or env
+  // (src/mcp/toolset.ts). Hidden tools are never registered, so tools/list is
+  // exactly what the host can call.
+  const toolset = resolveMcpToolset(root, { configSpec: readConfig(hunchPaths(root)).mcp_tools ?? null, pinned });
+  if (toolset.hidden.length) process.stderr.write(`[hunch-mcp] tool groups: ${toolset.groups.length ? toolset.groups.join(", ") : "core only"} (${toolset.source}); ${toolset.hidden.length} specialist tool(s) hidden — HUNCH_MCP_TOOLS=all or .hunch/config.json mcp_tools to expose\n`);
+  const server = new McpServer({ name: "hunch", version: HUNCH_VERSION }, { instructions: MCP_INSTRUCTIONS });
   let activeRequests = 0;
   let pendingRoot: string | null = null;
   let pendingScheduled = false;
   let closed = false;
-
   const activateRoot = (next: string): void => {
     // canonicalRootPath: a case/8.3 spelling difference must not read as a
     // DIFFERENT repo — that closed the live store and re-prepared everything
@@ -1768,6 +1813,11 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
       if (!roadmap.length) L.push("  (empty — record intent as a PROPOSED decision and it appears here)");
       for (const r of roadmap) L.push(`  • ${r.title} (${r.id}${r.topic ? `, ${r.topic}` : ""}, since ${r.date})\n      ${r.note}`);
       if (pendingReview > 0) L.push("", `${pendingReview} legacy un-vouched draft(s) — \`hunch adopt-drafts\` auto-trusts them as advisory (new captures land trusted automatically).`);
+      // Workspace ledger, from stored PUBLIC records only (same jurisdiction rule as the rest
+      // of this view; no git, so the hot view stays fast). Machine labels are user-chosen
+      // and the default is anonymous, so the line is publishable by construction.
+      const ws = workspaceSummaryLine(store.json.loadAll("workspaces"), workspacesConfig(readConfig(hunchPaths(root))));
+      if (ws) L.push("", ws);
       const escalations = pendingEscalations(store.advisoryRecs("decisions"));
       escalations.push(...premiseEscalations(store.advisoryRecs("decisions"), { now: new Date().toISOString(), exists: (p) => existsSync(join(root, p)) }));
       // liveness checked against the full store (repair-provenance reads the
@@ -1784,6 +1834,50 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         L.push("", `⚖ ${actionableNow.length} decision(s) need the human's call — ASK inline (never queue): ${actionableNow.map((e) => e.question).join(" · ")}`);
       }
       return ok(L.join("\n"));
+    },
+  );
+
+  // -- hunch_workspaces (the workspace ledger: worktrees + branches across machines) --
+  // READ-ONLY by design (docs/workspace-ledger.md): an agent can see what is prunable but
+  // can only act through the CLI, where a human confirms. This machine is read live from
+  // git; other machines come from stored records, which are display-only.
+  server.registerTool(
+    "hunch_workspaces",
+    {
+      title: "Worktrees and branches across machines",
+      description:
+        "The workspace ledger: which git worktrees are open on which machine, and every local branch with a deterministic verdict — merged (ancestry / squash / rebase), never pushed, upstream gone, dirty worktree — plus a recommended action per branch. Call this INSTEAD of running git branch / git worktree list / git log to answer 'what is open, what is stale, what can be deleted'. This machine is read live; other machines from memory (a machine older than the staleness window is marked unverified). Read-only: it never deletes anything. Not for design rationale (hunch_why) or code structure (hunch_structure).",
+      inputSchema: {
+        view: z.enum(["inventory", "branches"]).optional().describe("inventory = one row per worktree (default); branches = one row per branch with its verdict and action."),
+        machine: z.string().optional().describe("Only this machine label."),
+        branch: z.string().optional().describe("Only this branch name."),
+        merged_only: z.boolean().optional().describe("branches view: only branches proven merged."),
+      },
+    },
+    async ({ view, machine, branch, merged_only }): Promise<ToolResult> => {
+      const ledger = workspaceLedgerView(store, root);
+      // Publish the observation this read just took, so the machines that ask about the
+      // ledger are also the machines visible IN it — the one moment the data provably
+      // matters, with no timer and no child process (a detached snapshot child held a
+      // Windows clone directory open and broke an unrelated test's teardown). The git
+      // hooks remain the normal path; this covers a host that has none yet. Best effort:
+      // the read never fails because memory could not be written.
+      // HUNCH_WORKSPACE_REFRESH=0 opts out entirely.
+      if (process.env.HUNCH_WORKSPACE_REFRESH !== "0" && snapshotHasHome(store, root)) {
+        try { recordWorkspaceSnapshot(store, root, { live: ledger.live }); } catch { /* the ledger is a side effect of the read, never its blocker */ }
+      }
+      const opts = { staleAfterDays: ledger.config.stale_after_days };
+      if (view === "branches") {
+        let rows = branchRows(ledger.records, opts);
+        if (machine) rows = rows.filter((r) => r.machines.includes(machine));
+        if (branch) rows = rows.filter((r) => r.name === branch);
+        if (merged_only) rows = rows.filter((r) => r.merged.status === "merged");
+        return { content: [{ type: "text", text: renderBranchTable(ledger, rows) }], structuredContent: { machine: ledger.machine.label, branches: rows } };
+      }
+      let rows = worktreeRows(ledger.records, opts);
+      if (machine) rows = rows.filter((r) => r.machine === machine);
+      if (branch) rows = rows.filter((r) => r.branch === branch);
+      return { content: [{ type: "text", text: renderWorktreeTable(ledger, rows) }], structuredContent: { machine: ledger.machine.label, worktrees: rows } };
     },
   );
 
@@ -1930,7 +2024,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     {
       title: "Capture a decision (grilling interview)",
       description:
-        "Start a decision-capture interview: returns the grilling protocol (interrogate ONE question at a time until the decision tree is resolved) plus a capture-session token. Grill the human, then commit via hunch_record_decision with the token + confirmed topic. Use for '/capture', 'record this decision', 'grill me on this'. The token proves the write is the tail of an interview, not a silent guess. Returns the protocol text and the token; it writes nothing. Not for corrections (hunch_record_correction) or observations (hunch_record_finding).",
+        "Start a decision-capture interview: returns the grilling protocol (interrogate ONE question at a time until the decision tree is resolved) plus a capture-session token. Grill the human, then commit via hunch_record_decision with the token + confirmed topic. Use for '/capture', 'record this decision', 'grill me on this'. The token proves the write is the tail of an interview, not a silent guess — it is NOT a human signature: human-confirmed authority needs the human's own confirmation (a client prompt, or `hunch review --confirm <id>`). Returns the protocol text and the token; it writes nothing. Not for corrections (hunch_record_correction) or observations (hunch_record_finding).",
       inputSchema: {
         topic: z.string().optional().describe("proposed topic anchor (confirm with the human before committing)"),
         seed: z.string().optional().describe("what the decision is about, to focus the first question"),
@@ -2027,7 +2121,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
           supersedes: z.string().optional().describe("id of a decision this one replaces — closes its valid-time window (invalidate, don't delete)"),
           private: z.boolean().optional().describe("write into the PRIVATE overlay store (HUNCH_PRIVATE_DIR) instead of the committed repo — for sensitive decisions kept out of a public repo. Errors if no private store is configured."),
         }),
-        capture_token: z.string().optional().describe("token from hunch_capture_decision — proves this write is the tail of a grilling interview. Omit only for a quick manual record (a deprecation nudge is returned)."),
+        capture_token: z.string().optional().describe("token from hunch_capture_decision — proves this write is the tail of a grilling interview (not a human signature: Hunch asks the human to confirm in the client when supported). Omit only for a quick manual record (a deprecation nudge is returned)."),
         task_id: TaskIdSchema.optional().describe("Exact task ID for observing this successful save; reporting never changes capture authority."),
         cwd: cwdHintField,
       },
@@ -2076,34 +2170,37 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         // from the commit) stay upgradeable by a different identity. Same-identity
         // re-record remains the countersign/refine path for every tier.
         const curated = ["human_confirmed", "agent_recorded"].some((t) => existing?.provenance.source.split("+").includes(t));
-        // AUTHORSHIP STAMP (memory supply chain): only a consumed capture token — proof a
-        // grilling interview preceded this write — mints human_confirmed. Any agent can
-        // CALL this tool mid-session, possibly steered by untrusted content it read;
-        // "the human probably asked me to" is testimony, not a signature.
+        // AUTHORSHIP STAMP (memory supply chain): human_confirmed needs a HUMAN act. Any
+        // agent can CALL this tool mid-session, possibly steered by untrusted content it
+        // read; "the human probably asked me to" is testimony, not a signature. A consumed
+        // capture token proves only that hunch_capture_decision was called — also inside
+        // the agent's channel — so it licenses ASKING the human (client elicitation, below)
+        // and nothing more.
         //
-        // Resolved HERE, before the overwrite guard, because the guard's answer depends on
-        // it: testimony must yield to a signature. (Consuming before a possible refusal
-        // burns the token, which is the safe direction — a re-run of /capture mints another.)
+        // Consumed HERE, before the overwrite guard, because the guard's answer depends on
+        // it. (Consuming before a possible refusal burns the token, which is the safe
+        // direction — a re-run of /capture mints another.)
         const gated = consumeCaptureToken(capture_token);
         const existingTiers = existing?.provenance.source.split("+") ?? [];
         const existingIsHuman = existingTiers.includes("human_confirmed");
         // A slot held only by AGENT TESTIMONY must not block a later human capture — the
         // stamp's own contract says so ("never lock the id slot against a later human
-        // capture"), but including agent_recorded in `curated` did exactly that. A
-        // human_confirmed slot stays protected as before (issue #23): a signature is never
-        // displaced by a differently-identified record, vouched or not.
-        const conflictsWithHuman = curated && !sameHumanIdentity && !(gated && !existingIsHuman);
-        if (conflictsWithHuman) {
-          return refused(
-            `Decision id ${id} already identifies a different curated decision: ` +
-            `"${existing!.title}"${existing!.topic ? ` (topic "${existing!.topic}")` : ""}. ` +
-            `Refusing to overwrite it with "${decision.title}"${decision.topic ? ` (topic "${decision.topic}")` : ""}. ` +
-            "Record the additional decision without commit, or reuse the incumbent topic/title when refining the same decision.",
-          );
-        }
+        // capture"). A human_confirmed slot stays protected as before (issue #23): a
+        // signature is never displaced by a differently-identified record, vouched or not.
+        // Testimony yields only to a HUMAN-CONFIRMED write, so an un-tokened write is
+        // refused now and a tokened one is refused below unless the human confirms.
+        const slotConflict = curated && !sameHumanIdentity;
+        const slotRefusal = () => refused(
+          `Decision id ${id} already identifies a different curated decision: ` +
+          `"${existing!.title}"${existing!.topic ? ` (topic "${existing!.topic}")` : ""}. ` +
+          `Refusing to overwrite it with "${decision.title}"${decision.topic ? ` (topic "${decision.topic}")` : ""}. ` +
+          "Record the additional decision without commit, or reuse the incumbent topic/title when refining the same decision.",
+        );
+        if (slotConflict && (existingIsHuman || !gated)) return slotRefusal();
         // Un-token'd writes land as agent_recorded: fully functional advisory memory that
         // never carries human authority (strict/veto gates key on human_confirmed) and
-        // surfaces with a testimony marker. Re-record through /capture to countersign.
+        // surfaces with a testimony marker. A human countersigns it (client prompt during
+        // /capture, or `hunch review --confirm <id>`).
         //
         // A signature already on this slot is INHERITED, never erased. The un-token'd path
         // is exactly what the nudge below tells an agent to do ("re-record… supersedes"),
@@ -2112,10 +2209,8 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         // human had vouched for. That inverts the whole point of the stamp: it exists to
         // stop an agent CLAIMING human authority, not to let one DESTROY it. Downgrading a
         // signature is a human act (`hunch review --reject`, or supersede via /capture).
-        const tier = gated || existingIsHuman ? "human_confirmed" : "agent_recorded";
-        const source = existing && existing.provenance.source.includes("llm_draft")
-          ? `llm_draft+${tier}`
-          : tier;
+        // The tier is resolved after the refusal guards below (it may need the human's
+        // answer), so `rec` carries a placeholder provenance until then.
         const now = new Date().toISOString();
 
         const rec: Decision = {
@@ -2145,7 +2240,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
           valid_from: existing?.valid_from ?? now,
           valid_to: existing?.valid_to ?? null,
           retired: existing?.retired ?? { symbols: [], deps: [] },
-          provenance: { source, confidence: gated ? 0.95 : 0.75, evidence: (decision.related_files ?? existing?.provenance.evidence ?? []).map(toPosixTarget) },
+          provenance: { source: "agent_recorded", confidence: 0.75, evidence: (decision.related_files ?? existing?.provenance.evidence ?? []).map(toPosixTarget) },
           date: now,
         };
         // Where this write will actually land (see captureHome). Resolved BEFORE the
@@ -2176,6 +2271,30 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
             );
           }
         }
+        // Human confirmation: asked only for a tokened write (the /capture tail — never
+        // prompt-spam every agent write), only after every refusal guard has passed (never
+        // ask a human to confirm a write that is then refused), and only through the client
+        // UI, a channel the agent does not control.
+        const confirmation: HumanConfirmation | null = gated
+          ? await askHumanToConfirm(server, [
+            "Hunch: an agent is recording this engineering decision on your behalf. Confirm only if YOU made this decision.",
+            "",
+            `Title: ${clipForPrompt(rec.title, 200)}`,
+            ...(rec.topic ? [`Topic: ${rec.topic}`] : []),
+            `Status: ${rec.status}`,
+            `Decision: ${clipForPrompt(rec.decision || "(none)")}`,
+            ...(rec.alternatives_rejected.length ? [`Rejected: ${clipForPrompt(rec.alternatives_rejected.join("; "))}`] : []),
+            "",
+            "Confirmed, it carries your authority (human_confirmed). Unconfirmed, it is kept as agent testimony.",
+          ].join("\n"))
+          : null;
+        const humanSigned = confirmation === "confirmed";
+        if (slotConflict && !humanSigned) return slotRefusal();
+        const tier = humanSigned || existingIsHuman ? "human_confirmed" : "agent_recorded";
+        const source = existing && existing.provenance.source.includes("llm_draft")
+          ? `llm_draft+${tier}`
+          : tier;
+        rec.provenance = { ...rec.provenance, source, confidence: humanSigned ? 0.95 : 0.75 };
         // Route the write to its ONE home: an explicit private:true goes to the overlay
         // (putPrivate throws rather than silently falling public); in unified ("shared")
         // mode EVERY capture goes to the overlay; else the public store.
@@ -2203,16 +2322,19 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         const flush = flushCapture(store, hunchPaths(root).hunch, !!decision.private, `hunch: capture ${id}`, startupTeamRoute ?? undefined, observed.observe);
         const flushed = flushNote(flush, home, store.mode) + publicHomeNote(home, store.hasPrivate, rec, hunchPaths(root).hunch) + observed.note;
         // Capture-session gate (staged deprecation, §9.3): the token was consumed
-        // above (it also decides the provenance tier). No token still writes
-        // (non-breaking) but lands as agent_recorded with a nudge toward /capture.
-        // A token presented but unknown to THIS process (server restart/expiry) is
-        // not shamed — but it also cannot be VERIFIED, so the record still lands
-        // agent_recorded with a note saying how to countersign.
-        const captureNote = gated
-          ? " [via capture front door]"
-          : capture_token
-            ? `\n\nℹ The capture token could not be verified (server restart or expiry), so this record is stamped agent_recorded. Re-record through hunch_capture_decision → hunch_record_decision to countersign it as human_confirmed.`
-            : `\n\n⚠ Recorded WITHOUT a capture interview — the record stands as agent_recorded TESTIMONY (advisory: it never carries human authority; a /capture interview on the same topic/title countersigns it). Harden it NOW in one exchange instead of switching flows: answer the first grilling question directly — "What alternative did you seriously consider and reject for '${rec.title.slice(0, 60)}', and what breaks if a future session re-introduces it?" — then fold the answer into alternatives_rejected via a /capture interview (hunch_capture_decision → hunch_record_decision(supersedes: ${id})), which countersigns the record as human_confirmed. (A future major version will require a capture token here.)`;
+        // above. No token still writes (non-breaking) but lands as agent_recorded with a
+        // nudge toward /capture. A token — verified or not — is never a signature: only
+        // the human's confirmation (client prompt or `hunch review --confirm`) is.
+        const confirmCmd = confirmCommand(id, { private: home === "private" });
+        const captureNote = humanSigned
+          ? " [via capture front door — confirmed by the human in the client]"
+          : existingIsHuman
+            ? " [the existing human signature on this record is retained]"
+            : gated
+              ? `\n\nℹ Interview recorded, but a capture token is not a human signature and ${unconfirmedReason(confirmation!)}, so this record stands as agent_recorded TESTIMONY (advisory; it never carries human authority). The human confirms it by running: ${confirmCmd}`
+              : capture_token
+                ? `\n\nℹ The capture token could not be verified (server restart or expiry), so this record is stamped agent_recorded. The human confirms it by running: ${confirmCmd}`
+                : `\n\n⚠ Recorded WITHOUT a capture interview — the record stands as agent_recorded TESTIMONY (advisory: it never carries human authority). Harden it NOW in one exchange instead of switching flows: answer the first grilling question directly — "What alternative did you seriously consider and reject for '${rec.title.slice(0, 60)}', and what breaks if a future session re-introduces it?" — then fold the answer into alternatives_rejected via a /capture interview (hunch_capture_decision → hunch_record_decision(supersedes: ${id})). Human authority needs the human's own confirmation: the client prompt during /capture, or \`${confirmCmd}\`. (A future major version will require a capture token here.)`;
         // Quality nudge only when the untokened deprecation nudge isn't already
         // grilling — one advisory voice per response, never two.
         const quality = gated || capture_token ? qualityNudge(rec) : "";
@@ -2251,7 +2373,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         rationale: z.string().optional().describe("Why it must hold."),
         source_decision: z.string().optional().describe("id of a decision this correction derives from."),
         private: z.boolean().optional().describe("write into the PRIVATE overlay store (HUNCH_PRIVATE_DIR) instead of the committed repo — a sensitive rule enforced locally (pre-edit hook + local check) but never exposed in a public PR comment. Errors if no private store is configured."),
-        capture_token: z.string().optional().describe("token from hunch_capture_decision. The rule is recorded and enforced either way — the token only decides whether it may DENY: without one it lands as advisory testimony capped at severity 'warning'."),
+        capture_token: z.string().optional().describe("token from hunch_capture_decision. The rule is recorded and enforced either way, as agent testimony capped at severity 'warning'. A token never lets it DENY: blocking authority comes only from a human running the printed `hunch review --confirm <id> --severity <s>` command."),
         task_id: TaskIdSchema.optional().describe("Exact task ID for observing this successful save; reporting never changes capture authority."),
         cwd: cwdHintField,
       },
@@ -2274,23 +2396,33 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
           input.scope_hint_file ? [toPosixTarget(input.scope_hint_file)] : [],
         );
         if (correctionMisroute) return correctionMisroute;
-        // Same authorship tier as hunch_record_decision: a consumed token mints the
-        // signature, an un-token'd write is testimony. Here the stakes are HIGHER — a
-        // blocking constraint DENIES edits, so an un-vouched write is capped at
-        // "warning" rather than being refused. Never Twice still lands immediately.
-        const vouched = consumeCaptureToken(input.capture_token);
         // root: relativizes an ABSOLUTE scope_hint_file. Agents naturally send absolute
         // paths (edit-tool payloads and MCP roots are absolute) and every consumer matches
         // repo-relative — without this the rule would be blocking-but-inert and would leak
         // the local filesystem path into the committed graph.
-        const rec = buildCorrectionConstraint({ ...input, knownDeps: knownRepoDeps(root), root, vouched }, new Date().toISOString());
+        //
+        // AUTHORSHIP TIER. A correction recorded through MCP is ALWAYS agent testimony: a
+        // capture token (callable and consumable by any agent) proves only that the
+        // interview tool was called, and an in-client confirmation is not used here either.
+        // The stakes are higher than for a decision — a blocking constraint DENIES edits
+        // (the edit hook keys on severity alone) and fails strict checks — so blocking
+        // authority comes only from a human running `hunch review --confirm <id> --severity <s>`
+        // outside the agent channel. The write is capped below blocking rather than refused:
+        // Never Twice still lands immediately and is surfaced at edit time and in CI.
+        const gated = consumeCaptureToken(input.capture_token);
+        const now = new Date().toISOString();
+        const knownDeps = knownRepoDeps(root);
+        // What a human confirmation would grant: the severity the caller requested, after
+        // the repo-wide scope guard.
+        const requested = buildCorrectionConstraint({ ...input, knownDeps, root, vouched: true }, now);
         // Private corrections go to the overlay (enforced locally via the merged read,
         // never rendered into the public CI comment, which is public-only by construction).
         const home = store.captureHome(!!input.private);
-        if (home === "public" && rec.source_decision && !store.json.get("decisions", rec.source_decision)) {
-          const location = store.getPrivateRec("decisions", rec.source_decision) ? "exists only in the private overlay" : "does not exist in the public home";
-          return refused(`source decision ${rec.source_decision} ${location}; refusing to record public correction ${rec.id}.`);
+        if (home === "public" && requested.source_decision && !store.json.get("decisions", requested.source_decision)) {
+          const location = store.getPrivateRec("decisions", requested.source_decision) ? "exists only in the private overlay" : "does not exist in the public home";
+          return refused(`source decision ${requested.source_decision} ${location}; refusing to record public correction ${requested.id}.`);
         }
+        const rec = buildCorrectionConstraint({ ...input, knownDeps, root, vouched: false }, now);
         const existing = home === "private" ? store.getPrivateRec("constraints", rec.id) : store.json.get("constraints", rec.id);
         // Same cross-home twin guard as the decision path above.
         const stored = store.putCapture("constraints", rec, !!input.private);
@@ -2318,11 +2450,13 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         const reviewNote = "\n\nREVIEW PENDING: After the fix is committed, run hunch index; an installed post-commit hook retries this automatically on the fixing commit. Only the supported static ESM import-declaration package projection is eligible, and it remains activation-blocked; the immediate guard is already durable.";
         // Say plainly which tier this landed in. A silent downgrade would be its own
         // dishonesty: the caller asked for "blocking" and must be told it is not.
-        const tierNote = vouched
-          ? ""
-          : `
+        const capped = requested.severity !== rec.severity;
+        const why = gated
+          ? "Recorded after a capture interview, but a capture token is not a human signature"
+          : "Recorded WITHOUT a capture interview or a human confirmation";
+        const tierNote = `
 
-⚠ Recorded WITHOUT a capture interview — this rule is agent_recorded TESTIMONY${input.severity === "blocking" ? ' and was capped from "blocking" to "warning"' : ""}. It IS enforced: the pre-edit hook and CI surface it on every matching edit from now on. What it cannot do is DENY an edit — only a rule a human countersigned may block. Countersign it by re-recording through hunch_capture_decision → hunch_record_correction(capture_token).`;
+⚠ ${why} — this rule is agent_recorded TESTIMONY${capped ? ` and was capped from "${requested.severity}" to "${rec.severity}"` : ""}. It IS enforced: the pre-edit hook and CI surface it on every matching edit from now on. What it cannot do is DENY an edit — only a rule a human confirmed outside the agent channel may block. The human confirms it by running: ${confirmCommand(rec.id, { private: home === "private", severity: requested.severity })}`;
         const dest = destinationNote(resolveDestRoot(home, store, root));
         return ok(`${existing ? "Updated" : "Recorded"} ${rec.severity} constraint ${rec.id}: "${rec.statement}" (scope: ${rec.scope.join(", ")}).${where}${dest} It now ${enforce}.${reviewNote}${tierNote}`);
       } catch (e) {
@@ -2386,7 +2520,11 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
           spawned_decision: finding.spawned_decision ?? existing?.spawned_decision ?? null,
           observed_at: existing?.observed_at ?? now, // first observation wins — updates re-verify, not re-date
           resolved_commit: finding.resolved_commit ?? existing?.resolved_commit ?? null,
-          provenance: { source: "human_confirmed", confidence: 0.95, evidence: finding.evidence ?? existing?.provenance.evidence ?? [], last_verified: now },
+          // Findings have no authenticated capture front door. Calling this MCP tool is
+          // agent testimony, even when the observation is updating a record that a human
+          // confirmed previously; only an explicit human-authored path may mint the
+          // human_confirmed tier.
+          provenance: { source: "agent_recorded", confidence: 0.75, evidence: finding.evidence ?? existing?.provenance.evidence ?? [], last_verified: now },
         };
         const stored = store.putCapture("findings", rec, !!finding.private);
         const observed = observeReportCapture(root, task_id, "findings", stored, home, !!existing, home === "private" ? store.privateDir ?? undefined : hunchPaths(root).hunch);
@@ -2425,6 +2563,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
   };
   const stateResult = (text: string, structured: Record<string, unknown>): ToolResult => ({ content: [{ type: "text", text }], structuredContent: structured });
 
+  if (toolset.enabled("nuryel")) {
   server.registerTool(
     "nuryel_capabilities",
     {
@@ -2460,7 +2599,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         const line = (label: string, ref: { facet: string; id: string }): string => {
           const r = (response.records ?? {})[ref.id] ?? {};
           const g = (k: string): string => { const v = r[k]; return typeof v === "string" ? v : v == null ? "" : JSON.stringify(v); };
-          if (ref.facet === "derived") return `- ${label} derived ${ref.id} · computed ${g("computed_at")} · ${(r.dependencies as unknown[] | undefined)?.length ?? 0} dependencies\n    ${g("content").slice(0, 1200)}`;
+          if (ref.facet === "derived") return `- ${label} derived ${ref.id} · computed ${g("computed_at")} · ${(r.dependencies as unknown[] | undefined)?.length ?? 0} dependencies\n    ${g("content").slice(0, 1200)}${fieldCitationText(r as DerivedState)}`;
           if (ref.facet === "commitments") return `- ${label} commitment ${ref.id} · ${g("status")} · due ${g("due")} · owner ${g("owner")}: ${g("title")}${r.closed_by ? ` · closed by ${g("closed_by")}` : ""}`;
           if (ref.facet === "receipts") {
             const t = (r.target ?? {}) as Record<string, unknown>;
@@ -2486,7 +2625,11 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
                : sor.observed_truncated ? ['- More observations exist; read this subject with observed_page:{} in one partition, then follow next_cursor.'] : []),
              ...(sor.invalidated_by.length ? [`- invalidated by: ${sor.invalidated_by.join(", ")}`] : [])].join("\n") || "(nothing on record for this subject)"
           : "";
-        return stateResult(`${response.receipt_id} · ${summary}${deniedNote}${stateText ? `\n\nState of record:\n${stateText}` : ""}\n\n${envelope.text}`, response);
+        const conventionText = response.conventions ? '\n\nExplicit conventions (advisory; no scope takes precedence):\n' + response.conventions.items.map(item => {
+          const record = response.records?.[item.ref.id];
+          return `- ${item.ref.scope.kind}/${item.ref.scope.id} · ${item.key} · ${record?.status}/${item.currentness}${item.conflict ? ' · CONFLICT' : ''}: ${String(record?.value ?? '').slice(0, 300)} (${item.ref.id})`;
+        }).join('\n') + (response.conventions.truncated ? '\nMore conventions exist; this view is incomplete.' : '') : '';
+        return stateResult(`${response.receipt_id} · ${summary}${deniedNote}${stateText ? `\n\nState of record:\n${stateText}` : ""}\n\n${envelope.text}${conventionText}`, response);
       } catch (e) {
         return stateRefusal(e);
       }
@@ -2498,7 +2641,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     {
       title: "nuryel.state/1 write — provenance + idempotency in, durability out",
       description:
-        "Write one record into a facet (receipts, commitments, derived, entities, relationships, or the legacy decisions/constraints/bugs/findings). The record must carry provenance; the request must carry an idempotency_key — a replay returns the original, a reused key with a different payload is refused. Ids are derived from the record's facts, never chosen. A second live decision on a topic is refused with the incumbent named; pass supersedes to replace it explicitly. organization/team/user partitions never ride a repository: they require an overlay. To show an existing captured observation under another subject without copying it, write a relationship type observation_about with from=observation id, to=subject, observation_hash, lifecycle=active, reason and hashed external evidence of the explicit association. Retire the relationship to unlink; reactivation requires expected_version.",
+        "Write one record into a facet (receipts, commitments, derived, entities, relationships, or the legacy decisions/constraints/bugs/findings). The record must carry provenance; the request must carry an idempotency_key — a replay returns the original, a reused key with a different payload is refused. Ids are derived from the record's facts, never chosen. A second live decision on a topic is refused with the incumbent named; pass supersedes to replace it explicitly. organization/team/user partitions never ride a repository: they require an overlay. To show an existing captured observation under another subject without copying it, write a relationship type observation_about with from=observation id, to=subject, observation_hash, lifecycle=active, reason and hashed external evidence of the explicit association. Retire the relationship to unlink; reactivation requires expected_version. With capability nuryel.field-provenance/1, a derived record may carry field_provenance: [{selector:{kind:json_pointer,path:/field} or {kind:text,start:0,end:10}, value_hash:stateHash(selected scalar or text), dependency_hashes:[stateHash(existing dependency)]}]. Text offsets count Unicode code points, end exclusive. Citations are writer-supplied traceability, not verified support; negotiate support in every shared reader before writing them. With nuryel.record-visibility/1, records may carry visibility:{owner:principal-id,readers:[ids],writers:[ids]}; the owner is implicit in both lists, and writers must be readers. Owner-only audience changes require expected_version, including supersession. Restricted records require a dedicated partition; local stdio principal assertions assume trusted callers.",
       inputSchema: { ...WriteRequestSchema.omit({ schema: true }).shape, cwd: cwdHintField },
       outputSchema: WriteResultSchema.shape,
     },
@@ -2506,7 +2649,8 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
       try {
         // Same cross-process lock `hunch serve` takes: a second agent writing over stdio must
         // not race the HTTP server between the ledger read and the record write.
-        const result = await withWriteLock(hunchPaths(root).hunch, () => writeState(store, { schema: STATE_WRITE_VERSION, ...input }, {
+        const { hunchDir } = stateHomeFor(store, input.scope);
+        const result = await withWriteLock(hunchDir, () => writeState(store, { schema: STATE_WRITE_VERSION, ...input }, {
           flush: (isPrivate, message) => flushCapture(store, hunchPaths(root).hunch, isPrivate, message, startupTeamRoute ?? undefined),
         }));
         return stateResult(`${result.outcome} ${result.record_id} (${result.durability}) ${result.record_hash}`, result);
@@ -2526,7 +2670,8 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     },
     async ({ cwd: _cwd, ...input }): Promise<ToolResult> => {
       try {
-        const result = await withWriteLock(hunchPaths(root).hunch, () => captureState(store, { schema: STATE_CAPTURE_VERSION, ...input }, {
+        const { hunchDir } = stateHomeFor(store, input.scope);
+        const result = await withWriteLock(hunchDir, () => captureState(store, { schema: STATE_CAPTURE_VERSION, ...input }, {
           flush: (isPrivate, message) => flushCapture(store, hunchPaths(root).hunch, isPrivate, message, startupTeamRoute ?? undefined),
         }));
         return stateResult(`${result.outcome} observation ${result.record_id} (${result.durability}); this does not assert currentness. ${result.record_hash}`, result);
@@ -2544,7 +2689,8 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     },
     async ({ cwd: _cwd, ...input }): Promise<ToolResult> => {
       try {
-        const result = await withWriteLock(hunchPaths(root).hunch, () => captureBatchState(store, { schema: STATE_CAPTURE_BATCH_VERSION, ...input }, {
+        const { hunchDir } = stateHomeFor(store, input.scope);
+        const result = await withWriteLock(hunchDir, () => captureBatchState(store, { schema: STATE_CAPTURE_BATCH_VERSION, ...input }, {
           flush: (isPrivate, message) => flushCapture(store, hunchPaths(root).hunch, isPrivate, message, startupTeamRoute ?? undefined),
         }));
         return stateResult(`Capture batch: ${result.results.filter(r => r.status === "saved").length} saved/replayed, ${result.results.filter(r => r.status === "refused").length} refused.${result.reviews ? ` Reviews: ${result.reviews.filter(r => r.status === "saved").length} withdrawn/replayed, ${result.reviews.filter(r => r.status === "refused").length} refused.` : ''} Inspect each indexed result.`, result);
@@ -2592,6 +2738,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
       }
     },
   );
+  } // toolset: nuryel
 
   // -- hunch_findings (read: the open-observations ledger) --------------------
   server.registerTool(
@@ -2724,8 +2871,8 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         const files = commit ? commitFiles(commit, root) : base ? rangeFiles(base, root) : working ? workingFiles(root) : stagedFiles(root);
         const scope = commit ? `commit ${commit}` : base ? `${base}..HEAD` : working ? "working changes" : "staged changes";
         if (!files.length) return ok(`VERDICT: ✅ PASS — no changed files in ${scope}.`);
-        const diff = commit ? commitDiff(commit, root) : base ? rangeDiff(base, root) : working ? workingDiff(root) : stagedDiff(root);
-        const report = store.buildCheckReport(files, diff, { strict: true, lastChange: (f) => lastChangeDate(f, root) });
+        const gate = commit ? commitGateDiff(commit, root) : base ? rangeGateDiff(base, root) : working ? workingGateDiff(root) : stagedGateDiff(root);
+        const report = store.buildCheckReport(files, gate.diff, { strict: true, lastChange: (f) => lastChangeDate(f, root), diffStatus: gate });
         const v = verdict(report);
         const head = v === "block"
           ? "VERDICT: ⛔ BLOCK — this change breaks a recorded invariant or re-opens a known bug."
@@ -2774,8 +2921,8 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         const files = commit ? commitFiles(commit, root) : base ? rangeFiles(base, root) : working ? workingFiles(root) : stagedFiles(root);
         const scope = commit ? `commit ${commit}` : base ? `${base}..HEAD` : working ? "working changes" : "staged changes";
         if (!files.length) return ok(`No changed files in ${scope}.`);
-        const diff = commit ? commitDiff(commit, root) : base ? rangeDiff(base, root) : working ? workingDiff(root) : stagedDiff(root);
-        return ok(renderImpact(store.prImpact(files, diff), scope));
+        const gate = commit ? commitGateDiff(commit, root) : base ? rangeGateDiff(base, root) : working ? workingGateDiff(root) : stagedGateDiff(root);
+        return ok(renderImpact(store.prImpact(files, gate.diff, gate), scope));
       } catch (e) {
         return err(`Failed to compute impact: ${(e as Error).message}`);
       }
@@ -3000,6 +3147,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     },
   );
 
+  if (toolset.enabled("constitution-experiments")) {
   server.registerTool(
     "hunch_constitution_g2_readiness",
     {
@@ -3096,6 +3244,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
       }
     },
   );
+  }
 
   // -- hunch_conformance ----------------------------------------------------
   server.registerTool(
@@ -3122,6 +3271,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     },
   );
 
+  if (toolset.enabled("constitution-experiments")) {
   server.registerTool(
     "hunch_constitution_g2_behavior_candidates",
     {
@@ -3241,6 +3391,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
       }
     },
   );
+  } // toolset: constitution-experiments
 
   return {
     server,

@@ -22,12 +22,14 @@ not a plan.
 | this file | public execution view: status, gates, landscape items, programs |
 | [CHANGELOG.md](CHANGELOG.md) | what shipped, per version; authoritative for "shipped" |
 | [Deterministic organizational state](docs/deterministic-state.md) | the architecture, boundary, pilot sequence and kill criterion |
-| [The state contract](docs/nuryel-state-contract.md) | `nuryel.state/1`: facets, verbs, invariants, served partitions, replay; indexes the capability notes ([observations](docs/agent-observations.md), [links](docs/observation-links.md), [review](docs/observation-review.md), [pages](docs/observation-pages.md), [ledger read reuse](docs/ledger-read-reuse.md)) |
-| [Task contribution reports](docs/task-reports.md) | how the 1.32 reports work; [qualification record](docs/task-report-qualification.md); [release plan](docs/next-release-memory-impact.md) (historical) |
-| [Autonomous development](docs/autonomous-development.md) | the red team of 2026-09-09, the promotion ladder, what has been configured since; [autonomy ladder](docs/autonomy-ladder.md) for the in-code ladders |
-| [Competitive landscape](docs/competitive-landscape.md) | dated snapshots, append-only |
-| [Engineering Landscape](docs/engineering-landscape.md), [Project DNA](docs/project-dna.md), [Project DNA Engine](docs/project-dna-engine.md), [Native change proof](docs/change-proof.md), [Outcome experience protocol](docs/outcome-experience-protocol.md) | shipped engine primitives the state layer builds on |
-| [Outreach pipeline](docs/outreach-pipeline.md), [MCP registry](docs/mcp-registry.md) | founder-led pilot recruitment; per-release registry publish |
+| [The state contract](docs/nuryel-state-contract.md) | `nuryel.state/1`: facets, verbs, invariants, served partitions, replay; indexes the capability notes ([observations](docs/agent-observations.md), [links](docs/observation-links.md), [review](docs/observation-review.md), [pages](docs/observation-pages.md), [ledger read reuse](docs/ledger-read-reuse.md), [field citations](docs/field-provenance.md), [record visibility](docs/record-visibility.md), [state CLI](docs/state-cli.md), [scoped conventions](docs/scoped-conventions.md), [key-bound credentials](docs/key-bound-principals.md)) |
+| [Task contribution reports](docs/task-reports.md) | how the 1.32 reports work; [qualification record](https://github.com/davesheffer/hunch-private/blob/main/projects/hunch/docs/task-report-qualification.md); [release plan](https://github.com/davesheffer/hunch-private/blob/main/projects/hunch/docs/next-release-memory-impact.md) (historical) |
+| [External acceptance operator runbook](https://github.com/davesheffer/hunch-private/blob/main/projects/hunch/docs/external-acceptance-runbook.md) | exact procedure and local evidence format for the two repository-user sessions and Sofia's two-user week |
+| [Autonomous development](https://github.com/davesheffer/hunch-private/blob/main/projects/hunch/docs/autonomous-development.md) | the red team of 2026-09-09, the promotion ladder, what has been configured since; [autonomy ladder](docs/autonomy-ladder.md) for the in-code ladders |
+| [Competitive landscape](https://github.com/davesheffer/hunch-private/blob/main/projects/hunch/docs/competitive-landscape.md) | dated snapshots, append-only |
+| [Engineering Landscape](docs/engineering-landscape.md), [Project DNA](docs/project-dna.md), [Project DNA Engine](docs/project-dna-engine.md), [Native change proof](docs/change-proof.md), [Outcome experience protocol](https://github.com/davesheffer/hunch-private/blob/main/projects/hunch/docs/outcome-experience-protocol.md) | shipped engine primitives the state layer builds on |
+| [Outreach pipeline](https://github.com/davesheffer/hunch-private/blob/main/projects/hunch/docs/outreach-pipeline.md), [MCP registry](docs/mcp-registry.md) | founder-led pilot recruitment; per-release registry publish |
+| [Workspace ledger](docs/workspace-ledger.md) | plan (not shipped): per-machine branch and worktree memory synced through the overlay, with deterministic merged/prunable verdicts |
 | Sofia repository: `docs/sofia-baseline.md`, `docs/sofia-state.md` | the pilot's baseline ledger and Sofia's use of the contract |
 
 A private overlay holds the plan of record, the Constitution dossier and product direction; this
@@ -39,7 +41,7 @@ file is its public view and lags it by design.
 
 The release must distinguish delivered context, agent-reported application, verified checks, and unsupported attribution. Production acceptance requires the completion card to appear during normal work without the user asking about Hunch or running a report command, plus a real-host rehearsal of the original user's setup. Hunch remains provider- and harness-agnostic: Kimi, Codex, Claude, CCC, and Watchtower are consumers of one task/evidence contract, not required product-specific forks. A harness can own task lifecycle and deterministic presentation; standalone integrations receive the same data. Advertise automatic display only where it has been verified. Shipped in 1.32.0 (2026-09-11); hardened by dogfooding in 1.32.1 and 1.32.2 (2026-09-12): `hunch task verify --timeout`, a bounded MCP report summary, hook runtime evidence in `integrations check`, the first-delivery `Hunch recalled:` line, and `drift --fail-on` in the release gate. Usage: [Task contribution reports](docs/task-reports.md).
 
-1.32.0 ships task-scoped reports, command verification, rule-supported applications, local HTML, and managed completion instructions. [Development qualification](docs/task-report-qualification.md) records the flow in real hosts, the original Claude lifecycle failure and its latest-host regression, and the acceptance items still open after publication: interactive-terminal display, the two repository-user acceptance sessions (not the two Sofia users of Gate 0), a live task showing a rule-supported application, and the MCP registry publish for 1.32.x. The shared harness contract and verified capability boundaries are the shipped surface; individual external integrations are not assumed qualified. The [release execution plan](docs/next-release-memory-impact.md) remains the reference for the experience, evidence rules, and remaining gates. Existing live-pilot measurement continues; the organizational-state direction and gates below remain in force.
+1.32.0 ships task-scoped reports, command verification, rule-supported applications, local HTML, and managed completion instructions. [Development qualification](https://github.com/davesheffer/hunch-private/blob/main/projects/hunch/docs/task-report-qualification.md) records the flow in real hosts, the original Claude lifecycle failure and its latest-host regression, and the acceptance items still open after publication: interactive-terminal display, the two repository-user acceptance sessions (not the two Sofia users of Gate 0), a live task showing a rule-supported application, and the MCP registry publish for 1.32.x. The shared harness contract and verified capability boundaries are the shipped surface; individual external integrations are not assumed qualified. The [release execution plan](https://github.com/davesheffer/hunch-private/blob/main/projects/hunch/docs/next-release-memory-impact.md) remains the reference for the experience, evidence rules, and remaining gates. Existing live-pilot measurement continues; the organizational-state direction and gates below remain in force.
 
 ## Status — 2026-09-12
 
@@ -67,7 +69,7 @@ a refusal message, or a verb.
 Hunch competes for the **deterministic state layer** position. It is not alone on the phrase:
 Neotoma (MIT, single author) has described itself as "a deterministic state layer for AI agents"
 since March 2026, and the dated comparison lives in
-[docs/competitive-landscape.md](docs/competitive-landscape.md). The angle Hunch takes is the
+[docs/competitive-landscape.md](https://github.com/davesheffer/hunch-private/blob/main/projects/hunch/docs/competitive-landscape.md). The angle Hunch takes is the
 organizational one, which every peer lists as future or does not attempt:
 
 - partitions per organization, team, person and repository, with a key per agent that decides
@@ -368,6 +370,67 @@ Organization/team/user scope work must include:
 - source references that do not leak credentials/content;
 - an independent kill/suspension path in the agent control plane for consequential automation.
 
+## Agent-gateway readiness — 2026-09-16
+
+Managed agent runtimes (Amazon Bedrock AgentCore and its peers) now run multi-agent systems in
+production: an orchestrator, specialist agents exposed as MCP tools behind a gateway, a sandbox,
+an identity layer and telemetry. What they leave open is the record: two identical requests may
+take different paths, the verdict lives in a trace, the policy an agent relied on is whatever
+retrieval surfaced, and a human escalation is a dead end. That is the state layer's position, and
+every item below is a generic binding or packaging of the existing contract — nothing is built
+for one vendor or one prospect. The boundary section above still holds: Hunch stays the
+system of record beside the runtime, never a request-path proxy and never an orchestrator.
+
+The phases are ordered by what blocks a first external run, then by what blocks a regulated
+deployment. Each item names its acceptance evidence; a checkbox flips only on that evidence.
+
+### Phase A — reachable from a managed runtime
+
+- [ ] **MCP over streamable HTTP in `hunch serve`** (`POST /nuryel/v1/mcp`). The `nuryel_*`
+  tools behind the same bearer/DPoP credential, grants and write lock as the REST routes, through
+  one shared dispatcher — a binding, not a second implementation. Stateless JSON responses.
+  Evidence: a test client speaks MCP over HTTP to a served partition, a write replays and a
+  changed payload is refused with the same problem the REST route returns; `docs/nuryel-state-contract.md`
+  documents the endpoint. Branch `feat/serve-mcp-http`.
+- [ ] **A deployable image.** A published container for `hunch serve` that binds a configurable
+  interface behind TLS termination, with a written reference deployment for one managed cloud
+  (a container service in front of a git-backed partition). Evidence: the image starts from a
+  mounted config, the health route answers, and the reference deployment is reproduced once.
+- [ ] **Python on PyPI plus an agent-framework tool module.** Publish `hunch-state`; ship
+  `read`/`write` wrappers usable as tools in the common Python agent frameworks. Evidence: an
+  independent Python process installs from PyPI and completes the roundtrip fixture.
+- [ ] **Read-or-compute helper in the clients.** The pattern the pilot agent wrote by hand — read
+  the subject, reuse the current record when its dependencies are unchanged, otherwise compute
+  and write with supersession — becomes a documented client helper. Evidence: the emulation's
+  reuse number reproduces through the helper instead of bespoke code.
+- [ ] **A worked multi-agent sample** under `examples/`, never in core: a flagged case, an
+  orchestrator that reads first, specialists that write receipts, a decision record citing them and
+  the policy version, an escalation as an open commitment, a human closure as a correction.
+  Evidence: a deterministic replay over synthetic cases reports reuse, zero contradictions and
+  which decisions rest on a superseded policy.
+
+### Phase B — acceptable to a regulated organization
+
+- [ ] **Erasure.** A subject-scoped deletion path that satisfies retention and privacy
+  obligations without giving up the git-native source of truth: per-subject encryption with key
+  destruction, or a documented mode where history is not retained. Evidence: after erasure the
+  subject's records are unreadable from every copy and replay still reports a consistent ledger.
+- [ ] **External identity.** Accept OIDC/JWT credentials verified against a JWKS and map them to
+  principals and grants, so a runtime's identity layer can be the source of who a principal is.
+  Evidence: a token minted by an external issuer reads a granted partition and is refused outside
+  it, with no Hunch-issued token involved.
+- [ ] **Audit and telemetry export.** OpenTelemetry traces and an audit export of the ledger.
+  Evidence: one served write appears in an external collector with its record id and hash.
+- [ ] **More than one instance.** Shared storage or a leader/follower arrangement behind the write
+  lock, with a measured throughput number for the escalation path. Evidence: two instances serve
+  one partition without a ledger gap under the concurrent-writes test.
+- [ ] **Operator actions.** The shared state view lets an authorized human close a commitment and
+  record a correction, through the existing write verb. Evidence: a closure from the view is a
+  normal ledger event with the human as author.
+
+Deferred until an external partner asks for it, in keeping with the pilot's non-goals: a hosted
+service, vendor-specific adapters, and hot-path scoring.
+
 ## Existing engineering program status
 
 ### Project DNA
@@ -404,7 +467,7 @@ The organizational-state pilot should reuse this edge when state-backed policy n
 
 ## Autonomous development
 
-The development loop itself is promoted by the same rule as a policy: rung by rung, on measured numbers, never switched on. The readiness checklist, the red-team findings of 2026-09-09 and the promotion table are in [Autonomous development](docs/autonomous-development.md); since then the required checks and environment reviewers are configured, `drift --fail-on` gates releases, and memory hygiene is a standing agent obligation (`con_039cee7367`). The loop stands at rung 1: the agent authors, a human merges. The items no agent can do are Gate 5's two-user week (a second participant) and the one approved CRM comment for the approval leg; they are the critical path.
+The development loop itself is promoted by the same rule as a policy: rung by rung, on measured numbers, never switched on. The readiness checklist, the red-team findings of 2026-09-09 and the promotion table are in [Autonomous development](https://github.com/davesheffer/hunch-private/blob/main/projects/hunch/docs/autonomous-development.md); since then the required checks and environment reviewers are configured, `drift --fail-on` gates releases, and memory hygiene is a standing agent obligation (`con_039cee7367`). The loop stands at rung 1: the agent authors, a human merges. The items no agent can do are Gate 5's two-user week (a second participant) and the one approved CRM comment for the approval leg; they are the critical path.
 
 ## Deliberate non-goals for the pilot
 

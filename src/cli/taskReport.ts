@@ -2,11 +2,16 @@ import type { Command } from "commander";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { findRoot } from "../core/paths.js";
 import { writeFileAtomic } from "../core/io.js";
-import { finishReportTask, forgetReportTask, listReportTasks, pruneReportHistory, readTaskReport, readLessonHistory, startReportTask } from "../core/taskReport.js";
+import { finishReportTask, forgetReportTask, listReportTasks, listTaskSummaries, pruneReportHistory, readTaskReport, readLessonHistory, renderTaskStatusLine, startReportTask, summarizeTaskReport, taskReportStats, type TaskSummary } from "../core/taskReport.js";
+import { promptTaskId } from "../core/taskReportHook.js";
 import { DEFAULT_CHECK_TIMEOUT_MS, MAX_CHECK_TIMEOUT_MS, reportSourceSnapshot, runReportCheck, runReportConformance } from "../core/taskReportEvidence.js";
 import { renderTaskReport, writeTaskReportHtml } from "../core/taskReportRender.js";
 import { assertReportPath } from "../core/taskReportPaths.js";
 import { publicTaskReport } from "../core/taskReportPublic.js";
+import { mergeDurableTaskSummaries, persistTaskRecord } from "../core/taskRecord.js";
+import { evaluateTaskRanking, renderRankEval } from "../core/taskRankEval.js";
+import { rankingStatusLine, refreshRankEval, resolveTaskRankingMode } from "../core/taskRankingMode.js";
+import { taskRecordStats } from "../core/taskRecordStats.js";
 import type { HunchStore } from "../store/hunchStore.js";
 
 export function registerTaskReportCommands(program: Command, openStore: () => { store: HunchStore; root: string }): void {
@@ -27,7 +32,98 @@ export function registerTaskReportCommands(program: Command, openStore: () => { 
         try { const opened = openStore(); try { runReportConformance(opened.root, opened.store, id); } finally { opened.store.close(); } } catch { /* disclosed as unverified */ }
       }
       finishReportTask(root, id, opts.interrupted ? "interrupted" : "completed");
-      console.log(renderTaskReport(readTaskReport(root, id, reportSourceSnapshot(root).hash)));
+      // The finished task becomes graph memory (.hunch/tasks/) through the normal
+      // capture path. A failed write is disclosed, never a reason to lose the card.
+      let graph = "";
+      try {
+        const opened = openStore();
+        try {
+          const saved = persistTaskRecord(opened.root, opened.store, id);
+          graph = saved
+            ? `\nGraph     ${saved.changed ? "saved" : "already saved"} as ${saved.record.id} (${saved.home}${saved.flushed ? `, ${saved.flushed}` : ""})`
+            : "\nGraph     nothing to keep (no observation, or task records disabled)";
+        } finally { opened.store.close(); }
+      } catch (error) { graph = `\nGraph     not saved: ${(error as Error).message}`; }
+      console.log(renderTaskReport(readTaskReport(root, id, reportSourceSnapshot(root).hash)) + graph);
+    });
+  task.command("list").description("Recent tasks observed in this repository with what Hunch delivered, saved, guarded, and checked")
+    .option("--limit <n>", "how many recent tasks (max 30)", "30")
+    .option("--json", "machine-readable summaries (consumed by the VS Code Contribution view)")
+    .action((opts: { limit: string; json?: boolean }) => {
+      const root = findRoot();
+      const limit = Number(opts.limit) || 30;
+      let summaries = listTaskSummaries(root, limit, reportSourceSnapshot(root).hash);
+      // Graph records (this machine's or a teammate's) join the local ledger view.
+      try {
+        const opened = openStore();
+        try { summaries = mergeDurableTaskSummaries(opened.store, summaries, limit); } finally { opened.store.close(); }
+      } catch { /* ledger-only view when the store is unavailable */ }
+      if (opts.json) { console.log(JSON.stringify(summaries, null, 2)); return; }
+      if (!summaries.length) { console.log("No task activity observed yet."); return; }
+      for (const s of summaries) console.log(`${s.task.started_at.slice(0, 16).replace("T", " ")}  ${s.task.task_id}  ${s.task.state.padEnd(11)} ${renderTaskStatusLine(s) || "nothing observed"}${s.durable ? `  [graph: ${s.durable.home}${s.task.episode ? ` as ${s.task.episode}` : ""}]` : ""}${s.task.continues && !s.durable ? `  (continues ${s.task.continues})` : ""}`);
+    });
+  task.command("stats").description("Adherence over a window: how many prompts Hunch reached (delivery), checked, saved, or guarded — from the ledger, never from agent claims")
+    .option("--days <days>", "window in days", "7")
+    .option("--json", "machine-readable")
+    .action((opts: { days: string; json?: boolean }) => {
+      const stats = taskReportStats(findRoot(), Number(opts.days) || 7);
+      if (opts.json) { console.log(JSON.stringify(stats, null, 2)); return; }
+      const pct = (n: number) => stats.tasks ? `${Math.round((n / stats.tasks) * 100)}%` : "–";
+      console.log(`Hunch adherence, last ${Number(opts.days) || 7} day(s): ${stats.tasks} task(s), ${stats.completed} completed`);
+      console.log(`  reached by memory (delivery)  ${stats.with_delivery}  ${pct(stats.with_delivery)}`);
+      console.log(`  independent check recorded    ${stats.with_check}  ${pct(stats.with_check)}`);
+      console.log(`  application claimed by agent  ${stats.with_claim}  ${pct(stats.with_claim)}`);
+      console.log(`  memory saved                  ${stats.with_save}  ${pct(stats.with_save)}`);
+      console.log(`  edit denied                   ${stats.with_refusal}  ${pct(stats.with_refusal)}`);
+      console.log(`  nothing observed              ${stats.empty}  ${pct(stats.empty)}`);
+      // Graph-record proxies (dec_66925aa0ee): do agents redo verified work, or repeat a violation?
+      try {
+        const opened = openStore();
+        try {
+          const rs = taskRecordStats(opened.store.recs("tasks"));
+          const rate = (r: number | null, n: number) => r === null ? "–" : `${Math.round(r * 100)}% of ${n}`;
+          console.log(`Graph task records: ${rs.records}`);
+          console.log(`  re-verified an earlier check (24h)  ${rate(rs.reverification_rate, rs.reverify_candidates)}`);
+          console.log(`  repeated an earlier violation       ${rate(rs.repeat_violation_rate, rs.violation_candidates)}`);
+          console.log(`  ${rankingStatusLine(resolveTaskRankingMode(opened.root, opened.store))}`);
+        } finally { opened.store.close(); }
+      } catch { /* no store: ledger stats only */ }
+    });
+  task.command("rank-eval").description("Offline leave-one-out check of task-record ranking against 'latest 3 on the file' (Hit@5, MRR, paired bootstrap CI); the pre-registered metric behind dec_66925aa0ee")
+    .option("--since <days>", "only task records finished in the last N days", "365")
+    .option("--split <fraction>", "evaluate the newest fraction of cases (temporal split)", "0.3")
+    .option("--json", "machine-readable report")
+    .action((opts: { since: string; split: string; json?: boolean }) => {
+      const { store } = openStore();
+      try {
+        const cutoff = Date.now() - (Number(opts.since) || 365) * 86_400_000;
+        const records = store.recs("tasks").filter((r) => (Date.parse(r.finished_at) || 0) >= cutoff);
+        const report = evaluateTaskRanking(records, { split: Math.min(1, Math.max(0.05, Number(opts.split) || 0.3)) });
+        // Keep the automatic cache current too, so delivery and `hunch now` agree with what was just printed.
+        refreshRankEval(findRoot(), store, { force: true });
+        console.log(opts.json ? JSON.stringify(report, null, 2) : renderRankEval(report));
+      } finally { store.close(); }
+    });
+  task.command("status").description("One line for a terminal status line: the current prompt's task when Claude Code's status-line JSON arrives on stdin, otherwise the most recent task here")
+    .option("--json", "machine-readable summary")
+    .action(async (opts: { json?: boolean }) => {
+      const input = process.stdin.isTTY ? "" : await readStdinText();
+      let root = findRoot();
+      let taskId: string | null = null;
+      try {
+        const host = input.trim() ? JSON.parse(input) as { cwd?: string; session_id?: string; prompt_id?: string; workspace?: { current_dir?: string } } : {};
+        const dir = host.workspace?.current_dir ?? host.cwd;
+        if (dir) root = findRoot(dir);
+        if (host.session_id && host.prompt_id) taskId = promptTaskId(root, host.session_id, host.prompt_id);
+      } catch { /* a malformed host payload falls back to the most recent task */ }
+      let summary: TaskSummary | null = null;
+      try {
+        const snapshot = reportSourceSnapshot(root).hash;
+        summary = taskId ? summarizeTaskReport(root, taskId, snapshot) : listTaskSummaries(root, 1, snapshot)[0] ?? null;
+      } catch { summary = null; }
+      if (opts.json) { console.log(JSON.stringify(summary)); return; }
+      const line = renderTaskStatusLine(summary);
+      if (line) console.log(line);
     });
   task.command("forget <id>").description("Delete this closed task's local observations and generated report; retains project memory")
     .action((id: string) => { forgetReportTask(findRoot(), id); console.log("Task report history removed; project memory retained."); });
@@ -93,7 +189,31 @@ export function registerTaskReportCommands(program: Command, openStore: () => { 
       }
       if (opts.html) { console.log(writeTaskReportHtml(root, id, opts.publicOnly)); return; }
       if (opts.publicOnly) { console.log(JSON.stringify(publicTaskReport(root, id), null, 2)); return; }
-      const report = readTaskReport(root, id, reportSourceSnapshot(root).hash);
+      let report: ReturnType<typeof readTaskReport>;
+      try { report = readTaskReport(root, id, reportSourceSnapshot(root).hash); }
+      catch (error) {
+        // Not in this machine's ledger: the graph record (if any) is what remains.
+        const opened = openStore();
+        try {
+          const record = opened.store.getRec("tasks", id);
+          if (!record) throw error;
+          console.log(opts.json ? JSON.stringify(record, null, 2) : `Task ${record.id} · ${record.state} · ${record.title}\nGraph record only (no local observation ledger for it here): ${record.lessons.length} lesson(s), ${record.applied.length} applied, ${record.saved.length} saved, ${record.checks.length} check(s), ${record.refusals} denied. Files: ${record.files.join(", ") || "none recorded"}.`);
+          return;
+        } finally { opened.store.close(); }
+      }
       console.log(opts.json ? JSON.stringify(report, null, 2) : renderTaskReport(report));
     });
+}
+
+function readStdinText(): Promise<string> {
+  return new Promise(resolve => {
+    let data = "";
+    const done = () => resolve(data);
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", chunk => { data += chunk; });
+    process.stdin.on("end", done);
+    process.stdin.on("error", done);
+    // A host that opened stdin but never writes must not hang the status line.
+    setTimeout(done, 1500).unref();
+  });
 }

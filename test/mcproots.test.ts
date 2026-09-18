@@ -13,6 +13,7 @@ import { constraintId, findingId, manualDecisionId } from "../src/core/ids.js";
 import { resolveActiveRoot } from "../src/mcp/roots.js";
 import { pathKnownToHistory } from "../src/extractors/git.js";
 import { buildServerWithRootControl, wireClientRoots, misroutedWorktreeCandidates } from "../src/mcp/server.js";
+import { startHookReport } from "../src/core/taskReportHook.js";
 
 function git(root: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
@@ -1035,6 +1036,60 @@ test("a stale roots/list response cannot overwrite a newer workspace", async (t)
   release();
   await new Promise((resolve) => setTimeout(resolve, 25));
   assert.equal(control.getRoot(), second);
+});
+
+test("a native prompt hook supplies the exact cwd that re-homes a stale MCP session before task writes", async (t) => {
+  const fixture = repoWithWorktree();
+  writeFileSync(
+    join(fixture.worktree, ".hunch", "local.json"),
+    `${JSON.stringify({ autoCommit: false })}\n`,
+  );
+  const hookText = startHookReport(fixture.worktree, "codex", {
+    hook_event_name: "UserPromptSubmit",
+    session_id: "thread-native-cwd",
+    prompt_id: "turn-native-cwd",
+    cwd: fixture.worktree,
+  });
+  assert.ok(hookText);
+  const cwdLiteral = /cwd:\s*("(?:\\.|[^"])*")/.exec(hookText)?.[1];
+  assert.ok(cwdLiteral, `the native instruction must carry a machine-copyable cwd: ${hookText}`);
+  const routedCwd = JSON.parse(cwdLiteral) as string;
+  assert.equal(routedCwd, realpathSync(fixture.worktree), "the hook routes by canonical physical worktree");
+
+  const control = buildServerWithRootControl(fixture.root);
+  const client = new Client({ name: "native-hook-cwd-test", version: "0.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  t.after(async () => {
+    await client.close().catch(() => {});
+    await control.server.close().catch(() => {});
+    fixture.cleanup();
+  });
+  await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
+
+  const taskId = /htask_[a-f0-9]+/.exec(hookText)?.[0];
+  assert.ok(taskId);
+  const titleLiteral = /title:\s*("(?:\\.|[^"])*")/.exec(hookText)?.[1];
+  assert.ok(titleLiteral, `the test must follow the hook's exact task title: ${hookText}`);
+  const task = await client.callTool({
+    name: "hunch_task",
+    arguments: { action: "start", task_id: taskId, title: JSON.parse(titleLiteral), cwd: routedCwd },
+  }) as { isError?: boolean };
+  assert.equal(!!task.isError, false);
+  assert.equal(control.getRoot(), fixture.worktree, "the first instructed task call leaves the stale spawn root");
+
+  const title = "Native prompt worktree routing";
+  const capture = await client.callTool({
+    name: "hunch_record_finding",
+    arguments: {
+      task_id: taskId,
+      cwd: routedCwd,
+      finding: { title, observation: "The native prompt routed this capture to its physical worktree.", evidence: ["native hook cwd"] },
+    },
+  }) as { isError?: boolean };
+  assert.equal(!!capture.isError, false);
+  const filename = `${findingId(title)}.json`;
+  assert.equal(existsSync(join(fixture.worktree, ".hunch", "findings", filename)), true);
+  assert.equal(existsSync(join(fixture.root, ".hunch", "findings", filename)), false);
 });
 
 // Claude Code CLI never advertises `roots`/`roots/list_changed` for an agent-driven

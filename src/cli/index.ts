@@ -26,11 +26,13 @@ import { looksLikeCorrection, CORRECTION_NUDGE } from "../core/correction.js";
 import { HUNCH_VERSION } from "../core/version.js";
 import { registerIntegrationCommands } from "./integrations.js";
 import { registerTaskReportCommands } from "./taskReport.js";
+import { registerStateCommands } from "./state.js";
 import { registerServeCommands } from "./serve.js";
 import { registerUpdateCommand } from "./update.js";
 import { registerReviewMemoryCommands } from "./reviewMemory.js";
 import { detectInitiator, normalizeInitiator } from "../synthesis/initiator.js";
 import { inspectIntegrations, formatIntegrationHealth, integrationHealthFails, integrationSessionWarning } from "../integrations/health.js";
+import { publishedStatus, type PublishedStatus } from "../integrations/registry.js";
 import { HunchStore } from "../store/hunchStore.js";
 import { JsonStore } from "../store/jsonStore.js";
 import { selectEmbedder } from "../store/embedder.js";
@@ -38,15 +40,15 @@ import { assertCompleteRepoScan, indexRepo, scanRepo } from "../extractors/index
 import { syncCommit, recordFailure, captureTestRun } from "../synthesis/synthesize.js";
 import { parseTestReport } from "../extractors/testreport.js";
 import {
-  normalizeProviderName,
   readSynthesisPreference,
   resolveSynthesisProvider,
   selectProvider,
   SYNTH_PREFERENCES,
   writeSynthesisPreference,
+  normalizeProviderName,
   type SynthPreference,
 } from "../synthesis/provider.js";
-import { isGitRepo, isGitRepoRoot, sameGitPublication, sameRemoteUrl, canonicalRemoteUrl, repositoryUsesRemote, headSha, isolatedHeadSha, logSince, lastChangeDate, firstCommitForFile, stagedFiles, workingFiles, commitFiles, asOfDate, stagedDiff, workingDiff, commitDiff, rangeFiles, rangeDiff, rangeSubjects, revExists, revParse, commitAndPushHunch, pullHunchStatus, syncExistingHunch, gitUntrackCached, gitCommonDir, hooksDir, isLinkedWorktree, mainWorktreeRoot, gitMemoryLog, memoryMoveDiff, revertMemoryMove, pushCurrentBranch, commitChanges, commitRepairStatus, mergeRangeChanges, commitsExist, type HunchPullStatus } from "../extractors/git.js";
+import { isGitRepo, isGitRepoRoot, sameGitPublication, sameRemoteUrl, canonicalRemoteUrl, repositoryUsesRemote, headSha, isolatedHeadSha, logSince, lastChangeDate, firstCommitForFile, stagedFiles, workingFiles, commitFiles, asOfDate, stagedGateDiff, workingGateDiff, commitGateDiff, rangeFiles, rangeGateDiff, rangeSubjects, revExists, revParse, commitAndPushHunch, pullHunchStatus, syncExistingHunch, gitUntrackCached, gitCommonDir, hooksDir, isLinkedWorktree, mainWorktreeRoot, gitMemoryLog, memoryMoveDiff, revertMemoryMove, pushCurrentBranch, commitChanges, commitRepairStatus, mergeRangeChanges, commitsExist, type HunchPullStatus } from "../extractors/git.js";
 import { parseMemoryLog, type MemoryMove } from "../core/memorylog.js";
 import { renamesOf, planRepair, repairDecision, repairConstraint, type RepairPlan } from "../core/repair.js";
 import { orphanedCommitDecisions, planCommitRepair, repairDecisionCommit, pickRewrite, commitRepairReviewHash, mergeRewrites, firstFor, deadRewrites, resolvedRewriteIds, withoutDropped, addDropped, withheldForUnresolvableTo, type CommitRewrite, type DroppedRewrite } from "../core/commitrepair.js";
@@ -59,11 +61,11 @@ import type { Runbook } from "../core/types.js";
 import { extractInlineIntent } from "../extractors/comments.js";
 import { renderText, renderMarkdown, renderSarif, renderImpact, reportFailsStrict, type CheckReport, type SarifExtras } from "../core/checkreport.js";
 import { partitionReview, isReviewDraft, READY_MIN_GROUNDED, type ReviewItem } from "../core/reviewqueue.js";
-import { installPostCommitHook, installPreCommitHook, installPostMergeHook, hookStatus } from "../integrations/hooks.js";
+import { installPostCommitHook, installPreCommitHook, installPostMergeHook, installPostCheckoutHook, hookStatus, hookReport, formatHookInstall } from "../integrations/hooks.js";
 import { ensureSharedOverlayPointer } from "../integrations/worktree.js";
 import { flushCapture, flushMemoryHome, flushMemoryHomes, pinSharedRemote, sharedRemoteFor, type MemoryHome } from "../integrations/sync.js";
 import { installMergeDriver } from "../integrations/mergeDriver.js";
-import { ensureGitignore, ignoreHunchMemory, HUNCH_MEMORY_DIRS } from "../integrations/gitignore.js";
+import { ensureGitignore, ignoreHunchMemory, HUNCH_MEMORY_DIRS, upgradeManagedGitignore, describeGitignoreUpgrade } from "../integrations/gitignore.js";
 import { writeCiWorkflow } from "../integrations/ciAction.js";
 import { updateClaudeMd, renderHunchSection } from "../integrations/claudemd.js";
 import { classifyGroundingBlock, describeGroundingFreshness } from "../core/groundingLag.js";
@@ -73,6 +75,9 @@ import { scaffoldProviders, regenerateGrounding, refreshExistingGrounding, refre
 import { healClaudeConfigCaseSplit } from "../integrations/claudeConfig.js";
 import { formatContext, formatSearchHit, formatStructure } from "../core/format.js";
 import { isStateKind, renderStateLine, stateSupplements, type StateRecord } from "../core/stateDelivery.js";
+import { taskSelectionSupplements } from "../core/taskDelivery.js";
+import { buildTaskRankingQuery } from "../core/taskQuery.js";
+import { rankingStatusLine, resolveTaskRankingMode } from "../core/taskRankingMode.js";
 import { diagnoseIssueCorrectionStage, formatCorrectionStageDiagnostic } from "../core/correctionStage.js";
 import { compileVerifiedEvidenceMap, formatVerifiedEvidenceMap } from "../core/evidenceMap.js";
 import { collectCorrectionStageSources } from "../extractors/correctionSources.js";
@@ -82,8 +87,11 @@ import { deriveChangeProof } from "../core/changeProof.js";
 import { discoverProjectDna, evaluateProjectDnaMatch, type ProjectDnaArtifact } from "../core/projectDna.js";
 import { diffProjectDna } from "../core/projectDnaDelta.js";
 import { projectDnaDeliverySupplement } from "../core/projectDnaDelivery.js";
-import { readConfig, writeConfig, FIRMNESS_LEVELS, isFirmness, type Firmness } from "../core/config.js";
-import { blockingInScope, vetoInScope, proposedEditLines } from "../core/hookpolicy.js";
+import { readConfig, writeConfig, FIRMNESS_LEVELS, isFirmness, type Firmness, workspacesConfig } from "../core/config.js";
+import { loadOrCreateMachine, setMachineLabel, machineFile, labelLeaksIdentity } from "../core/machine.js";
+import { worktreeRows, branchRows } from "../core/workspace.js";
+import { workspaceLedgerView, recordWorkspaceSnapshot, renderWorktreeTable, renderBranchTable, workspaceSummaryLine, prunePlanFor, renderPrunePlan, applyPrune, confirmPrune, pruneConfirmQuestion } from "../integrations/workspaceLedger.js";
+import { blockingInScope, vetoInScope, proposedEditLines, type BlockingHit } from "../core/hookpolicy.js";
 import { isHumanConfirmed } from "../core/strictgate.js";
 import { appendEvent, readEvents } from "../core/events.js";
 import { computeStats, formatStats } from "../core/stats.js";
@@ -92,9 +100,10 @@ import { recordServed, servedSummary } from "../core/served.js";
 import { recordTaskDelivery, reportActivity, reportPresentationEnabled, unseenLessons } from "../core/taskReport.js";
 import { snapshotDeliveredRecords } from "../core/taskReportEvidence.js";
 import { renderRecalledLine } from "../core/taskReportRender.js";
-import { hookReportTaskId, startHookReport, stopHookReport, observeHookDenial } from "../core/taskReportHook.js";
+import { closeHookTask, hookReportTaskId, nativeHookCwd, settleHookSession, startHookReport, stopHookReport, observeHookDenial } from "../core/taskReportHook.js";
+import { persistTaskRecord } from "../core/taskRecord.js";
 import { recordHookObservation } from "../core/hookObservations.js";
-import { contextHookOutput, denyHookOutput, hookProvider, normalizeHookEvent, stopHookOutput, type HookProvider } from "../core/agenthook.js";
+import { contextHookOutput, denyHookOutput, hookProvider, normalizeHookEvent, stopHookOutput, type HookProvider, type HunchHookEvent, type HunchToolInput } from "../core/agenthook.js";
 import {
   PIPELINE_LOOP,
   armExecutionObligations,
@@ -122,10 +131,11 @@ import { loadGoldenSet, evaluateRetrieval, evaluateTraversalLift } from "../eval
 import { loadGuardCases, evalGuards, generateGuardCases } from "../eval/guards.js";
 import { DRIFT_KINDS, computeDrift } from "../core/drift.js";
 import { renderCompilerScorecard, scoreCompilerCaseBank } from "../constitution/scorecard.js";
-import { generateWiki, wikiStatus, wikiPrompt, publicHome, privateHome, readWikiManifestAt, nowData, type WikiPack } from "../wiki/wiki.js";
+import { generateWiki, wikiStatus, wikiPrompt, publicHome, privateHome, readWikiManifestAt, nowData, unconfirmedRoadmapMarker, type WikiPack } from "../wiki/wiki.js";
 import { adoptProsePrompt } from "../wiki/adopt.js";
 import { topicCollisions, isInForce, liveForTopic } from "../core/topics.js";
 import { ADR_DIR_CANDIDATES, ADR_FILE_RE, mapAdrCorpus } from "../extractors/adrImport.js";
+import { countersignConstraint, countersignDecision } from "../core/countersign.js";
 import { applyImportedAdrReview, carryImportedAdrReview, importedAdrReviewHash, importedAdrSourceHash, isImportedAdrDecision, pendingImportedAdrReviews } from "../core/importReview.js";
 import { exportMadrCorpus, isRegenerableMadr } from "../integrations/madrExport.js";
 import { buildMadrManifest, writeMadrManifest, refreshMadrCorpus } from "../integrations/madrManifest.js";
@@ -164,7 +174,7 @@ import { ENTITY_KINDS } from "../core/types.js";
 import { planCompaction } from "../store/compact.js";
 import { repairDecisionReference } from "../core/refrepair.js";
 import { resolveInvocation, dim, synthesisStatusLines, maybeWarnOllamaContext } from "./invocation.js";
-import { checkForUpdate, formatUpdateNotice, shouldCheckForUpdate } from "../core/updatecheck.js";
+import { formatUpdateNotice, scheduleUpdateCheck, shouldCheckForUpdate } from "../core/updatecheck.js";
 
 const program = new Command();
 program.name("hunch").description("Hunch — engineering memory and a deterministic Change Gate for AI-assisted codebases.").version(HUNCH_VERSION);
@@ -191,6 +201,7 @@ registerIntegrationCommands(program, () => {
 });
 registerTaskReportCommands(program, () => { const { store, root } = storeFor(); return { store, root }; });
 registerServeCommands(program);
+registerStateCommands(program);
 registerUpdateCommand(program);
 registerReviewMemoryCommands(program, (records, repository, privateOnly) => {
   const { store, root } = storeFor();
@@ -222,26 +233,21 @@ registerReviewMemoryCommands(program, (records, repository, privateOnly) => {
     ? store.recs("constraints") : store.json.loadAll("constraints") };
 });
 
-// Fire-and-forget: never awaited, so a slow/unreachable registry never delays
-// the command's own work. See shouldCheckForUpdate for the full gate
-// (PLUMBING_COMMANDS, non-TTY, not-installed, CI/HUNCH_NO_UPDATE_CHECK).
+// Read an already-known update and schedule any registry refresh in a detached
+// worker. No network handle is opened in this command's process, so the
+// advisory cannot delay command completion or process exit.
 program.hook("preAction", (_thisCommand, actionCommand) => {
-  // Matches updatecheck.ts's own never-block posture (con_03a0b94b2e): the
-  // synchronous gate-evaluation half is provably total today, but a hook that
-  // could abort every command belongs behind the same guarantee the module
-  // itself claims, not an implicit "nothing here happens to throw."
   try {
+    const path = [actionCommand.name()];
+    for (let parent = actionCommand.parent; parent && parent !== program; parent = parent.parent) path.unshift(parent.name());
     const gate = {
-      commandName: actionCommand.name(),
+      commandName: path.join(" "),
       isTTY: process.stderr.isTTY === true,
       installed: resolveInvocation().installed,
     };
     if (!shouldCheckForUpdate(gate)) return;
-    void checkForUpdate()
-      .then((result) => {
-        if (result) console.error(dim(formatUpdateNotice(result)));
-      })
-      .catch(() => {});
+    const result = scheduleUpdateCheck();
+    if (result) console.error(dim(formatUpdateNotice(result)));
   } catch {
     // Never let the update-check advisory abort the command it's piggybacking on.
   }
@@ -368,6 +374,9 @@ program
     // switches). The .hunch/*.json graph stays tracked.
     const gi = ensureGitignore(root);
     if (gi.action !== "unchanged") console.log(`  ✓ .gitignore ${gi.action} (Hunch runtime index excluded)`);
+    // A repo migrated to a private overlay by an older release: bring its private-only
+    // block up to date (and stop publishing newly ignored memory dirs).
+    for (const line of describeGitignoreUpgrade(upgradeManagedGitignore(root))) console.log(`  ✓ ${line}`);
 
     if (opts.index !== false) {
       if (isGitRepo(root) && revExists("HEAD", root)) {
@@ -419,9 +428,11 @@ program
     if (isGitRepo(root)) {
       const syncToOverlay = !!(opts.privateSync || opts.sharedSync);
       const h = installPostCommitHook(root, inv.shell, { private: syncToOverlay, commit: opts.autoCommit, localOnly: syncToOverlay });
-      console.log(`  ✓ post-commit hook ${h.action} (learning loop)${syncToOverlay ? " — syncs to the shared overlay" : ""}${opts.autoCommit ? " — auto-commit on" : ""}`);
+      for (const line of formatHookInstall(root, "post-commit hook", h, ` (learning loop)${syncToOverlay ? " — syncs to the shared overlay" : ""}${opts.autoCommit ? " — auto-commit on" : ""}`)) console.log(line);
       const pm = installPostMergeHook(root, inv.shell);
-      console.log(`  ✓ post-merge hook ${pm.action} (squash-merge provenance repair + re-syncs grounding docs after a merge that brought memory in)`);
+      for (const line of formatHookInstall(root, "post-merge hook", pm, " (squash-merge provenance repair + re-syncs grounding docs after a merge that brought memory in)")) console.log(line);
+      const pc = installPostCheckoutHook(root, inv.shell);
+      for (const line of formatHookInstall(root, "post-checkout hook", pc, " (workspace ledger: records this machine's branches + worktrees on checkout)")) console.log(line);
       const m = installMergeDriver(root, inv.shell);
       console.log(`  ✓ team merge driver ${m.action}`);
       // Auto-install the pre-commit guard by default (advisory: flags invariants
@@ -430,7 +441,7 @@ program
       if (opts.enforce !== false || opts.enforceStrict) {
         const strict = !!opts.enforceStrict;
         const p = installPreCommitHook(root, inv.shell, strict);
-        console.log(`  ✓ pre-commit constraint guard ${p.action} (${strict ? "strict — fails only on direct, high-confidence, non-stale blocking invariants" : "advisory — flags invariants in scope or blast radius"})`);
+        for (const line of formatHookInstall(root, "pre-commit constraint guard", p, ` (${strict ? "strict — fails only on direct, high-confidence, non-stale blocking invariants" : "advisory — flags invariants in scope or blast radius"})`)) console.log(line);
       }
     } else {
       console.log("  ⚠ not a git repo — skipped hooks (run `git init` to enable the learning loop)");
@@ -506,7 +517,10 @@ program
   .action((opts: { autoCommit: boolean }) => {
     const { store, root } = storeFor();
     store.json.ensureDirs();
-    ensureGitignore(root); // keep the derived SQLite index out of git (idempotent)
+    // Keep the derived SQLite index out of git (idempotent). Adds a missing block but
+    // never rewrites an existing one: `index` runs in CI/release gates on a clean
+    // checkout. Older blocks are upgraded by `hunch update` / init / private setup.
+    ensureGitignore(root, { upgradeExisting: false });
     // The post-merge hook only ever got installed by `hunch init`/`hunch
     // private`/`hunch shared` — a repo that already ran init before this hook
     // existed never receives it. `hunch index` already self-heals gitignore
@@ -514,7 +528,11 @@ program
     // re-running init by hand. Gated on already having post-commit: `index`
     // is not a setup command (it runs in CI, on any git repo), so it must
     // never be what FIRST hooks a repo that never ran init at all.
-    if (isGitRepo(root) && hookStatus(root).postCommit) installPostMergeHook(root, resolveInvocation().shell);
+    if (isGitRepo(root) && hookStatus(root).postCommit) {
+      const inv = resolveInvocation().shell;
+      installPostMergeHook(root, inv);
+      installPostCheckoutHook(root, inv); // same upgrade path for the workspace-ledger hook
+    }
     const res = indexRepo(store, root, { requireClean: true });
     const { counts } = store.reindex();
     const correctionSweep = new ConstitutionService(store, root).upgradeCorrections();
@@ -723,7 +741,7 @@ program
         const sweep = constitution.g2ShadowSweep();
         g2Recorded = sweep.recorded.length;
         if (!opts.quiet) {
-          console.log(`  ↳ G2 shadow: ${sweep.recorded.length} recorded · ${sweep.existing.length} existing · ${sweep.failures.length} failed; authority none`);
+          console.log(`  ↳ G2 shadow: ${sweep.recorded.length} recorded · ${sweep.existing.length} existing · ${sweep.failures.length} failed${sweep.retired.length ? ` · ${sweep.retired.length} retired (skipped)` : ""}; authority none`);
         }
       }
     } catch (e) {
@@ -1263,9 +1281,12 @@ function configureOverlay(dir: string | undefined, opts: OverlaySetupOpts, mode:
   if (opts.hook && isGitRepo(root)) {
     freshSetup?.markHookWrite();
     const h = installPostCommitHook(root, inv.shell, { private: true, commit: opts.autoCommit, localOnly: mode === "private" });
-    hookNote = `  ✓ post-commit hook ${h.action} — captured decisions route here${opts.autoCommit ? " (auto-commit+push on)" : ""}\n`;
+    const note = (lines: string[]): string => lines.map((l) => `${l}\n`).join("");
+    hookNote = note(formatHookInstall(root, "post-commit hook", h, ` — captured decisions route here${opts.autoCommit ? " (auto-commit+push on)" : ""}`));
     const pm = installPostMergeHook(root, inv.shell);
-    hookNote += `  ✓ post-merge hook ${pm.action} (squash-merge provenance repair + re-syncs grounding docs after a merge that brought memory in)\n`;
+    hookNote += note(formatHookInstall(root, "post-merge hook", pm, " (squash-merge provenance repair + re-syncs grounding docs after a merge that brought memory in)"));
+    const pc = installPostCheckoutHook(root, inv.shell);
+    hookNote += note(formatHookInstall(root, "post-checkout hook", pc, " (workspace ledger: this machine's branches + worktrees sync through the overlay)"));
   }
 
   // 5) one-time migration: MOVE existing public memory INTO the overlay, then make
@@ -1316,6 +1337,11 @@ function configureOverlay(dir: string | undefined, opts: OverlaySetupOpts, mode:
           : "  ⚠ private overlay files remain local; no memory commit was created\n") +
       `  next: review, then commit the PUBLIC repo:\n` +
       `      git add -A && git commit -m "chore: move engineering memory to a private overlay" && git push\n`;
+  } else {
+    // Re-running setup on a repo migrated by an older release upgrades its private-only
+    // block in place and stops publishing memory dirs that block did not yet list.
+    const upgraded = describeGitignoreUpgrade(upgradeManagedGitignore(root));
+    if (upgraded.length) migrateNote = upgraded.map((line) => `  ✓ ${line}\n`).join("");
   }
 
   const lead = mode === "private"
@@ -1418,12 +1444,188 @@ program
         openStore = null;
       }
     }
+    // 4) the workspace ledger: the new worktree is exactly what other machines want to know about.
+    let ledgerNote = "";
+    try {
+      const lstore = openTeamStore(root).store;
+      try {
+        const out = recordWorkspaceSnapshot(lstore, root);
+        if (out.status === "written") ledgerNote = `\n  ✓ workspace ledger updated (${out.record.worktrees.length} worktree(s) on this machine → ${out.home === "private" ? "overlay" : "public .hunch/"})`;
+      } finally { lstore.close(); openStore = null; }
+    } catch { /* the ledger is a side effect; the worktree itself is what this command promised */ }
     console.log(
       `✓ worktree created → ${dest}${opts.branch ? ` (new branch ${opts.branch})` : ""}\n` +
-      `${shareNote}${indexNote}\n` +
+      `${shareNote}${indexNote}${ledgerNote}\n` +
       `  hooks + MCP server are shared (worktree-aware) — open your assistant in the new worktree to start.\n` +
       `  (needs \`hunch\` installed globally; a worktree has no node_modules of its own)`,
     );
+  });
+
+// ---- workspaces / branches (workspace ledger — docs/workspace-ledger.md) ---------------
+// One shared code path (src/integrations/workspaceLedger.ts): this machine is always read
+// LIVE from git, other machines from the store, and stored records are display-only.
+const workspacesCmd = program
+  .command("workspaces")
+  .description("Workspace ledger: which worktrees are open on which machine (this machine live, other machines from memory). Read-only unless you run `snapshot`.");
+
+workspacesCmd
+  .command("list", { isDefault: true })
+  .description("Every worktree across machines: branch, dirty, last commit, when the machine last reported.")
+  .option("--machine <label>", "only this machine")
+  .option("--branch <name>", "only worktrees on this branch")
+  .option("--fetch", "run `git fetch --prune` first (network; off by default)")
+  .option("--json", "emit the rows as JSON")
+  .action((opts: { machine?: string; branch?: string; fetch?: boolean; json?: boolean }) => {
+    const { store, root } = storeFor();
+    try {
+      if (!isGitRepo(root)) return fail("`hunch workspaces` needs a git repo");
+      const view = workspaceLedgerView(store, root, { fetch: opts.fetch });
+      let rows = worktreeRows(view.records, { staleAfterDays: view.config.stale_after_days });
+      if (opts.machine) rows = rows.filter((r) => r.machine === opts.machine);
+      if (opts.branch) rows = rows.filter((r) => r.branch === opts.branch);
+      if (opts.json) return console.log(JSON.stringify({ machine: view.machine.label, worktrees: rows }, null, 2));
+      console.log(renderWorktreeTable(view, rows));
+    } finally {
+      store.close();
+    }
+  });
+
+workspacesCmd
+  .command("snapshot")
+  .description("Record this machine's worktrees and branches into memory (the overlay when one is configured). Offline unless --fetch. Also run by the post-checkout / post-commit hooks and at MCP session start.")
+  .option("--fetch", "run `git fetch --prune` first (network; off by default)")
+  .option("--dry-run", "print the record that WOULD be written and write nothing")
+  .option("--json", "print the record as JSON")
+  .option("--quiet", "no output on success (for hooks)")
+  .action((opts: { fetch?: boolean; dryRun?: boolean; json?: boolean; quiet?: boolean }) => {
+    const { store, root } = storeFor();
+    try {
+      if (!isGitRepo(root)) return fail("`hunch workspaces snapshot` needs a git repo");
+      const out = recordWorkspaceSnapshot(store, root, { fetch: opts.fetch, dryRun: opts.dryRun });
+      if (out.status !== "off" && (opts.dryRun || opts.json)) console.log(JSON.stringify(out.record, null, 2));
+      if (opts.quiet || out.status === "dry-run") return;
+      switch (out.status) {
+        case "off":
+          return console.log("workspaces.publish is \"off\" in .hunch/config.json — nothing recorded.");
+        case "no-home":
+          console.log("No memory overlay is configured, so this machine's record is not written (queries read this machine live).");
+          console.log("  · run `hunch private` or `hunch shared --repo <url>` to sync workspaces across machines");
+          return console.log("  · or set .hunch/config.json {\"workspaces\":{\"publish_public\":true}} to commit it into this repo's .hunch/");
+        case "unchanged":
+          return console.log(`✓ unchanged since ${out.previous.observed_at} (${out.record.id}) — nothing written`);
+        case "collision":
+          return fail(`not written: ${out.reason}\n  · \`hunch workspaces forget ${out.record.id}\` removes the stale copy (a normal, revertable memory move), then snapshot again`);
+        case "written":
+          return console.log(`✓ recorded ${out.record.worktrees.length} worktree(s), ${out.record.branches.length} branch(es) as ${out.record.machine.label} (${out.record.id}, publish=${out.record.publish}) → ${out.home === "private" ? "overlay" : "public .hunch/"}${out.flushed ? `, ${out.flushed}` : ""}`);
+      }
+    } finally {
+      store.close();
+    }
+  });
+
+workspacesCmd
+  .command("prune")
+  .description("Branches and worktrees that are provably merged and safe to delete. Prints the exact git commands per machine (dry run). --apply runs them on THIS machine only — never a remote, never another machine — from a live snapshot, with `git branch -d` / `git worktree remove` (no force flags), after confirmation.")
+  .option("--apply", "execute this machine's commands (asks for confirmation; --yes in a non-interactive shell)")
+  .option("--yes", "skip the confirmation prompt (required with --apply when stdin is not a terminal)")
+  .option("--fetch", "run `git fetch --prune` first (network; off by default)")
+  .option("--json", "emit the plan (and results) as JSON")
+  .action(async (opts: { apply?: boolean; yes?: boolean; fetch?: boolean; json?: boolean }) => {
+    const { store, root } = storeFor();
+    try {
+      if (!isGitRepo(root)) return fail("`hunch workspaces prune` needs a git repo");
+      const view = workspaceLedgerView(store, root, { fetch: opts.fetch });
+      const plan = prunePlanFor(view, root);
+      if (!opts.apply) {
+        if (opts.json) return console.log(JSON.stringify({ machine: view.machine.label, plan }, null, 2));
+        console.log(renderPrunePlan(view, plan));
+        return console.log(plan.local.length ? "\n(dry run — `hunch workspaces prune --apply` runs this machine's commands after confirmation)" : "\n(dry run — nothing to apply on this machine)");
+      }
+      if (!plan.local.length) {
+        if (opts.json) return console.log(JSON.stringify({ machine: view.machine.label, plan, results: [] }, null, 2));
+        console.log(renderPrunePlan(view, plan));
+        return console.log("\nnothing to apply on this machine");
+      }
+      if (!opts.json) console.log(renderPrunePlan(view, plan));
+      if (!opts.yes) {
+        const ok = await confirmPrune(pruneConfirmQuestion(view, plan));
+        if (!ok) return fail(process.stdin.isTTY ? "not confirmed — nothing was deleted" : "refusing to apply without confirmation: stdin is not a terminal; pass --yes to confirm explicitly");
+      }
+      const results = applyPrune(root, plan.local);
+      // Memory follows what actually happened: re-snapshot so other machines see the change.
+      // Best effort — the deletions above are real whatever the ledger write says.
+      let recorded: string;
+      try { recorded = recordWorkspaceSnapshot(store, root).status; } catch (error) { recorded = `failed: ${(error as Error).message}`; }
+      if (opts.json) return console.log(JSON.stringify({ machine: view.machine.label, plan, results, recorded }, null, 2));
+      console.log("");
+      for (const r of results) console.log(`  ${r.outcome === "deleted" ? "✓" : r.outcome === "skipped" ? "–" : "✗"} ${r.step.branch}: ${r.detail}`);
+      const failed = results.filter((r) => r.outcome === "failed").length;
+      const skipped = results.filter((r) => r.outcome === "skipped").length;
+      const ledger = recorded === "written" ? " · ledger updated" : recorded === "unchanged" || recorded === "no-home" || recorded === "off" ? "" : ` · ledger not updated (${recorded})`;
+      console.log(`\n${results.length - failed - skipped} deleted, ${skipped ? `${skipped} skipped (nothing changed), ` : ""}${failed} refused by git${ledger}`);
+      if (failed || skipped) process.exitCode = 1;
+    } finally {
+      store.close();
+    }
+  });
+
+workspacesCmd
+  .command("label [label]")
+  .description("Show or set this machine's label (what other machines see). Defaults to machine-<id>; never the hostname.")
+  .action((label?: string) => {
+    const identity = label ? setMachineLabel(label) : loadOrCreateMachine();
+    console.log(`${identity.label}  (${identity.id}, ${machineFile()})`);
+    const leak = labelLeaksIdentity(identity.label);
+    if (leak) console.log(`  ⚠ the label equals this machine's ${leak}; in a shared store every teammate sees it`);
+  });
+
+workspacesCmd
+  .command("forget <machine>")
+  .description("Remove a machine's stored workspace record (by label or id) — e.g. a retired laptop. A memory move like any other: revertable via `hunch log`.")
+  .action((machine: string) => {
+    const { store, root } = storeFor();
+    try {
+      const victims = store.recs("workspaces").filter((r) => r.machine.label === machine || r.machine.id === machine || r.id === machine);
+      if (!victims.length) return fail(`no workspace record for "${machine}" — \`hunch workspaces\` lists the machines in memory`);
+      // Decide each record's home BEFORE deleting it, then flush exactly those homes.
+      const homes: MemoryHome[] = victims.map((v) => store.getPrivateRec("workspaces", v.id) ? "private" : "public");
+      for (const v of victims) store.deleteWhereItLives("workspaces", v.id);
+      pumpMemoryHomes(store, root, homes, `hunch: forget workspace ${machine}`);
+      console.log(`✓ forgot ${victims.length} record(s) for ${machine}`);
+    } finally {
+      store.close();
+    }
+  });
+
+program
+  .command("branches")
+  .description("Every local branch across machines with a deterministic verdict: merged (ancestry / squash / rebase), pushed, dirty worktree, and a recommended action. Read-only; never deletes anything.")
+  .option("--merged", "only branches proven merged")
+  .option("--unpushed", "only branches with no upstream")
+  .option("--stale <days>", "only branches whose last commit is older than N days")
+  .option("--machine <label>", "only branches present on this machine")
+  .option("--fetch", "run `git fetch --prune` first (network; off by default)")
+  .option("--json", "emit the rows as JSON")
+  .action((opts: { merged?: boolean; unpushed?: boolean; stale?: string; machine?: string; fetch?: boolean; json?: boolean }) => {
+    const { store, root } = storeFor();
+    try {
+      if (!isGitRepo(root)) return fail("`hunch branches` needs a git repo");
+      const view = workspaceLedgerView(store, root, { fetch: opts.fetch });
+      const now = new Date();
+      let rows = branchRows(view.records, { staleAfterDays: view.config.stale_after_days, now });
+      if (opts.merged) rows = rows.filter((r) => r.merged.status === "merged");
+      if (opts.unpushed) rows = rows.filter((r) => r.upstream === null);
+      if (opts.machine) rows = rows.filter((r) => r.machines.includes(opts.machine!));
+      if (opts.stale) {
+        const days = Number(opts.stale);
+        if (!Number.isFinite(days) || days < 0) return fail("--stale takes a number of days");
+        rows = rows.filter((r) => !r.last_commit_at || now.getTime() - Date.parse(r.last_commit_at) > days * 86_400_000);
+      }
+      if (opts.json) return console.log(JSON.stringify({ machine: view.machine.label, branches: rows }, null, 2));
+      console.log(renderBranchTable(view, rows));
+    } finally {
+      store.close();
+    }
   });
 
 // ---- query ----------------------------------------------------------------
@@ -3635,14 +3837,17 @@ program
     // vacuous green (deletions are excluded by the enumerators' --diff-filter=ACMR, so
     // such a PR enumerates zero files) — including a deletion of the very symbol a
     // blocking conformance predicate or an active policy guards.
-    const diff = files.length
-      ? (exactCommit ? commitDiff(exactCommit, root) : opts.base ? rangeDiff(opts.base, root) : opts.working ? workingDiff(root) : stagedDiff(root))
-      : "";
+    // The COMPLETE diff (no synthesis byte budget); an incomplete one is flagged so
+    // content-matched blocking invariants fail closed instead of passing unseen.
+    const gate = files.length
+      ? (exactCommit ? commitGateDiff(exactCommit, root) : opts.base ? rangeGateDiff(opts.base, root) : opts.working ? workingGateDiff(root) : stagedGateDiff(root))
+      : { diff: "" };
     const report: CheckReport = files.length
-      ? store.buildCheckReport(files, diff, {
+      ? store.buildCheckReport(files, gate.diff, {
         strict: !!opts.strict,
         lastChange: (f) => lastChangeDate(f, root),
         publicOnly: !!opts.publicOnly,
+        diffStatus: gate,
       })
       : emptyReport;
     if (opts.blast && !markdown && !sarif && files.length) {
@@ -3715,7 +3920,7 @@ program
         }
       } else {
         console.log("");
-        renderPolicyEvaluations(policyResults).forEach((line) => console.log(line));
+        renderPolicyEvaluations(policyResults, { compact: true }).forEach((line) => console.log(line));
       }
     }
 
@@ -3778,8 +3983,8 @@ const vetoCmd = program
       store.close();
       return;
     }
-    const diff = opts.commit ? commitDiff(opts.commit, root) : opts.base ? rangeDiff(opts.base, root) : stagedDiff(root);
-    const full = store.buildCheckReport(files, diff, { strict: !!opts.strict, lastChange: (f) => lastChangeDate(f, root) });
+    const gate = opts.commit ? commitGateDiff(opts.commit, root) : opts.base ? rangeGateDiff(opts.base, root) : stagedGateDiff(root);
+    const full = store.buildCheckReport(files, gate.diff, { strict: !!opts.strict, lastChange: (f) => lastChangeDate(f, root), diffStatus: gate });
     if (!full.vetoes.length) {
       console.log(`✓ ${files.length} changed file(s) reverse no decision you rejected.`);
       store.close();
@@ -4027,14 +4232,14 @@ program
       decisionCorpus: store.recs("decisions"),
       historical: !!asOf,
       profile: opts.profile as DeliveryProfile,
-      supplements: stateGrounding,
+      supplements: [...stateGrounding, ...(asOf ? [] : taskSelectionSupplements(store.selectTasksAuto(target, buildTaskRankingQuery(root, opts.task ?? null, target)), target))],
     });
     process.stdout.write(envelope.text);
     if (opts.task) {
       try {
         const records = asOf ? [] : snapshotDeliveredRecords(store, envelope);
         const recalled = renderRecalledLine(unseenLessons(root, opts.task, records));
-        const occurrence = recordTaskDelivery(root, opts.task, envelope, records);
+        const occurrence = recordTaskDelivery(root, opts.task, envelope, records, undefined, target);
         console.log(`\n${recalled ? `${recalled}\n` : ""}Task evidence: ${opts.task} · occurrence ${occurrence}`);
       } catch {
         console.error(`Task evidence could not be recorded for ${opts.task}; context remains available but report attribution is unverified.`);
@@ -4112,9 +4317,9 @@ program
   .action(async (value: string | undefined) => {
     const root = findRoot();
     if (value != null) {
-      const preference = normalizeProviderName(value.trim());
-      if (!preference || !(SYNTH_PREFERENCES as readonly string[]).includes(preference)) {
-        return fail(`provider must be one of: ${SYNTH_PREFERENCES.join(", ")} (or alias "ollama" for openai-compat)`);
+      const preference = normalizeProviderName(value.trim()) ?? value.trim();
+      if (!(SYNTH_PREFERENCES as readonly string[]).includes(preference)) {
+        return fail(`provider must be one of: ${SYNTH_PREFERENCES.join(", ")}`);
       }
       try {
         writeSynthesisPreference(root, preference as SynthPreference);
@@ -4283,17 +4488,23 @@ program
   .option("--provider <provider>", "hook event dialect: claude | vscode | cursor | windsurf | antigravity", "claude")
   .action(async (opts: { provider?: string }) => {
     // A hook MUST NEVER break the agent: on ANY error or unrecognized input we
-    // emit nothing and exit 0 (the action defers to Claude Code's normal flow).
+    // exit 0 and never deny (the action defers to the host's normal flow).
+    // Unrecognized input stays silent; an error after the event was recognized
+    // says "grounding unavailable" in one context line — see the catch below.
     let store: HunchStore | null = null;
+    // Hoisted so the fail-open catch below can still say which grounding was lost.
+    let provider: HookProvider | null = null;
+    let eventName: HunchHookEvent | null = null;
     try {
-      const provider = hookProvider(opts.provider);
+      provider = hookProvider(opts.provider);
       if (!provider) return;
       const evt = normalizeHookEvent(JSON.parse(await readStdin()), provider);
       if (!evt) return;
+      eventName = evt.hook_event_name;
       const root = findRoot();
       // The host delivered this event: runtime evidence for `hunch integrations check`,
       // recorded before any policy decision so firmness never hides delivery itself.
-      recordHookObservation(root, provider, evt.hook_event_name);
+      recordHookObservation(root, provider, evt.hook_event_name, evt.tool_outcome?.status);
       const paths = hunchPaths(root);
       const firmness = readConfig(paths).firmness;
       if (firmness === "off") return;
@@ -4306,11 +4517,12 @@ program
         const before = st;
         let activity: Parameters<typeof proofCheckpoint>[2] | null = null;
         if (/^(Edit|Write|MultiEdit)$/.test(evt.tool_name ?? "")) {
-          const p = evt.tool_input?.file_path;
-          if (p) {
-            st = onEdit(st, toRepoRel(root, p));
-            activity = { kind: "edit" };
-          }
+          // A Codex apply_patch touches every file it lists (and each Move-to
+          // destination); the Stop gate must see all of them, not only the first.
+          const patchPaths = evt.tool_input?.patch_files?.flatMap((f) => f.moved_to ? [f.path, f.moved_to] : [f.path]);
+          const edited = patchPaths?.length ? patchPaths : evt.tool_input?.file_path ? [evt.tool_input.file_path] : [];
+          for (const p of edited) st = onEdit(st, toRepoRel(root, p));
+          if (edited.length) activity = { kind: "edit" };
         } else if (evt.tool_name === "Bash" || evt.tool_name === "PowerShell") {
           const command = String(evt.tool_input?.command ?? "");
           st = onCommand(st, command, evt.tool_outcome);
@@ -4339,6 +4551,12 @@ program
             return;
           }
         }
+        // The turn is over: close the prompt's task and keep its record, whether
+        // or not the agent called finish. Fail-open: the card below still renders.
+        try {
+          const closed = closeHookTask(root, provider, evt);
+          if (closed.length) { store ??= new HunchStore(paths); for (const id of closed) persistTaskRecord(root, store, id); }
+        } catch { /* the ledger and the card remain authoritative; the next finish retries */ }
         const report = stopHookReport(root, provider, evt);
         if (report) console.log(JSON.stringify(report));
         return;
@@ -4362,6 +4580,12 @@ program
           const report = startHookReport(root, provider, evt);
           if (report) { text += `\n\n${report}`; mustDeliver = true; }
         } catch { /* passive reporting remains fail-open */ }
+        // A task an earlier prompt of this session left open (interrupted before
+        // its Stop) is over now: close it and keep its record.
+        try {
+          const settled = settleHookSession(root, provider, evt, { keepId: hookReportTaskId(root, provider, evt), keepNewest: true });
+          if (settled.length) { store ??= new HunchStore(paths); for (const id of settled) persistTaskRecord(root, store, id); }
+        } catch { /* the next Stop or prompt retries */ }
         // Pipeline turn bookkeeping (fresh block budget) + the one nag that must
         // repeat: edits from an earlier turn still unverified.
         if (evt.session_id && pipelineEnabled()) {
@@ -4395,6 +4619,11 @@ program
         // explorers get the indexed shape, planners get live decisions + what
         // was already rejected, everyone else gets the invariant digest. Public
         // store only; cheap reads.
+        const routedCwd = nativeHookCwd(root, provider, evt);
+        // A native host that supplied cwd made an explicit scope claim. If it is
+        // malformed or names another checkout, serving this process root's memory
+        // would cross worktrees; stay silent instead of guessing which side is right.
+        if ((provider === "claude" || provider === "codex") && evt.cwd !== undefined && !routedCwd) return;
         const s = new HunchStore(paths);
         try {
           const clip1 = (text: string, max: number): string => {
@@ -4404,10 +4633,15 @@ program
           const type = (evt.agent_type ?? "").toLowerCase();
           const L: string[] = [];
           const served: Array<{ kind: string; record_id: string; token_cost: number }> = [];
+          const route = routedCwd
+            ? `Worktree routing: call hunch_context first with cwd: ${JSON.stringify(routedCwd)}, and pass the same cwd to hunch_task, hunch_report, and every Hunch capture/write call in this delegated task.`
+            : null;
+          const activeProvider = provider;
+          const emitRouteOnly = (): void => { if (route) emitContext(activeProvider, "SubagentStart", route); };
           if (/explore|search|investigat/.test(type)) {
             // Orient from the graph, not grep rounds: the component map IS the shape.
             const components = s.advisoryRecs("components").filter((c) => c.status === "active");
-            if (!components.length) return;
+            if (!components.length) { emitRouteOnly(); return; }
             L.push(`🧠 Hunch — repo shape for a delegated explorer: ${components.length} component(s).`);
             for (const c of components.slice(0, 12)) {
               const line = `- ${c.name}${c.paths.length ? ` (${c.paths.slice(0, 2).join(", ")})` : ""}${c.responsibility ? ` — ${clip1(c.responsibility, 90)}` : ""}`;
@@ -4421,7 +4655,7 @@ program
             const decisions = s.advisoryRecs("decisions")
               .filter((d) => d.status === "accepted")
               .sort((a, b) => (a.date < b.date ? 1 : -1));
-            if (!decisions.length) return;
+            if (!decisions.length) { emitRouteOnly(); return; }
             L.push(`🧠 Hunch — live decisions for a delegated planner (${decisions.length} in force; plans must not re-propose the rejected).`);
             for (const d of decisions.slice(0, 6)) {
               const line = `- ${d.title} (${d.id})${d.alternatives_rejected.length ? ` — rejected: ${clip1(d.alternatives_rejected[0]!, 80)}` : ""}`;
@@ -4434,7 +4668,7 @@ program
             const constraints = s.advisoryRecs("constraints")
               .filter((c) => c.status === "active")
               .sort((a, b) => sevRank[a.severity] - sevRank[b.severity]);
-            if (!constraints.length) return;
+            if (!constraints.length) { emitRouteOnly(); return; }
             L.push(`🧠 Hunch — delegated agent grounding: ${constraints.length} invariant(s) in force in this repo.`);
             for (const c of constraints.slice(0, 8)) {
               const line = `- [${c.severity}] ${clip1(c.statement, 140)}${c.scope.length ? ` (scope: ${c.scope.slice(0, 3).join(", ")})` : ""}`;
@@ -4444,6 +4678,7 @@ program
             if (constraints.length > 8) L.push(`…and ${constraints.length - 8} more — hunch_check_constraints(scope) for your files.`);
             L.push("Before editing: hunch_check_constraints(scope) · hunch_why(target). Orient: hunch_context(task).");
           }
+          if (route) L.push(route);
           // No dedup here: the hook event carries the PARENT session id, but each
           // spawned agent is a fresh empty context — deduping would ground the
           // first Explore and silently starve every later one.
@@ -4533,7 +4768,9 @@ program
             for (const r of recent) L.push(`  ${r.date} [${r.status}] ${r.title} (${r.id})`);
           }
           if (roadmap.length) {
-            L.push(`Roadmap (${roadmap.length} live proposed): ${roadmap.slice(0, 3).map((r) => r.title).join(" · ")}${roadmap.length > 3 ? " · …" : ""}`);
+            L.push(`Roadmap (${roadmap.length} live proposed): ${roadmap.slice(0, 3).map((r) => (r.unconfirmed ? `${r.title} [unconfirmed, ${r.id}]` : r.title)).join(" · ")}${roadmap.length > 3 ? " · …" : ""}`);
+            const unconfirmed = roadmap.filter((r) => r.unconfirmed).length;
+            if (unconfirmed) L.push(`${unconfirmed} roadmap item(s) are unconfirmed agent testimony — the human confirms each with \`hunch review --confirm <id>${s.unified ? " --private" : ""}\`.`);
           }
           if (pendingReview > 0) L.push(`${pendingReview} legacy un-vouched draft(s) — adopt as advisory memory with \`hunch adopt-drafts\` (new captures auto-trust).`);
           if (actionableEsc.length) {
@@ -4557,17 +4794,16 @@ program
       }
       if (evt.hook_event_name !== "PreToolUse") return;
 
-      const abs = evt.tool_input?.file_path;
-      if (!abs) return;
-      const target = toRepoRel(root, abs);
-      // Outside the repo (".." prefix) or on another drive (absolute, e.g. "D:/…")
-      // → nothing for Hunch to say.
-      if (!target || target.startsWith("..") || /^[a-zA-Z]:/.test(target)) return;
+      const targets = editTargets(root, evt.tool_input);
+      // Nothing inside the repo → nothing for Hunch to say.
+      if (!targets.length) return;
+      // Grounding below stays about the first in-repo file; the strict gate checks every target.
+      const { abs, target } = targets[0]!;
 
       // A compiled red→green probe is only meaningful if its red receipt exists
       // before implementation. Firm/strict may deny two edits per prompt, then
       // fail open so a malformed or unavailable probe can never deadlock work.
-      if ((firmness === "firm" || firmness === "strict") && evt.session_id && pipelineEnabled() && isProductPath(target)) {
+      if ((firmness === "firm" || firmness === "strict") && evt.session_id && pipelineEnabled() && targets.some((t) => isProductPath(t.target))) {
         const baseline = beforeEditProbeVerdict(loadPipelineState(evt.session_id));
         if (baseline.block) {
           savePipelineState(evt.session_id, baseline.state);
@@ -4578,15 +4814,16 @@ program
 
       // Pre-edit grounding must resolve the same advertised graph as every CLI
       // and MCP consumer. Any unavailable/mismatched team route falls through to
-      // the outer fail-open catch and emits nothing, preserving the hook's
-      // non-blocking invariant without false-passing against public/stale memory.
+      // the outer fail-open catch: one "grounding unavailable" line, never a deny,
+      // never grounding from public/stale memory (dec_77d99014e0).
       const opened = openTeamStore(root, { requireFreshTeamMemory: firmness === "strict" });
       store = opened.store;
       if (firmness === "strict" && opened.teamPullStatus
         && opened.teamPullStatus !== "updated" && opened.teamPullStatus !== "current") {
         // A strict deny is only trustworthy when it includes the latest team
         // rules. Offline/busy/unconfigured team memory is unavailable, so the
-        // non-blocking hook emits nothing instead of denying from stale state.
+        // non-blocking hook says so instead of denying from stale state.
+        emitContext(provider, "PreToolUse", `Hunch grounding unavailable for this edit; it proceeds ungrounded (team memory is ${opened.teamPullStatus}; strict mode never denies from stale rules). Run \`hunch doctor\`.`);
         return;
       }
 
@@ -4600,23 +4837,25 @@ program
         store.reindex();
         // The lines this edit would ADD — so a content-matched invariant denies only
         // when the edit actually trips it (not on every edit in scope), and the Veto
-        // Guard can test the proposed text. Covers Edit/Write/MultiEdit.
-        const proposedLines = proposedEditLines(evt.tool_input);
-        const deny = blockingInScope(store, target, proposedLines);
-        if (deny) {
-          appendEvent(paths, { at: new Date().toISOString(), file: target, ...deny.event });
-          emitDeny(provider, deny.reason);
-          observeHookDenial(root, provider, evt, target, deny);
-          return;
+        // Guard can test the proposed text. Covers Edit/Write/MultiEdit, and each
+        // file of a Codex apply_patch with that file's own added lines.
+        const denials: Array<{ target: string; hit: BlockingHit }> = [];
+        for (const t of targets) {
+          // Veto Guard (live): the proposed edit text re-introduces an approach an
+          // in-force decision REJECTED. The agent self-corrects before staging;
+          // only human-confirmed tripwires deny.
+          const hit = blockingInScope(store, t.target, t.lines) ?? (t.lines.length ? vetoInScope(store, t.target, t.lines) : null);
+          if (hit) denials.push({ target: t.target, hit });
         }
-        // Veto Guard (live): the proposed edit text re-introduces an approach an
-        // in-force decision REJECTED. The agent self-corrects before staging;
-        // only human-confirmed tripwires deny.
-        const vetoDeny = proposedLines.length ? vetoInScope(store, target, proposedLines) : null;
-        if (vetoDeny) {
-          appendEvent(paths, { at: new Date().toISOString(), file: target, ...vetoDeny.event });
-          emitDeny(provider, vetoDeny.reason);
-          observeHookDenial(root, provider, evt, target, vetoDeny);
+        if (denials.length) {
+          for (const d of denials) appendEvent(paths, { at: new Date().toISOString(), file: d.target, ...d.hit.event });
+          // One denied file keeps the single-file reason verbatim; several are
+          // listed so the agent knows every file it must reconsider.
+          const reason = denials.length === 1
+            ? denials[0]!.hit.reason
+            : `Hunch: this patch is denied for ${denials.length} files (${denials.map((d) => d.target).join(", ")}).\n${denials.map((d) => d.hit.reason).join("\n")}`;
+          emitDeny(provider, reason);
+          for (const d of denials) observeHookDenial(root, provider, evt, d.target, d.hit);
           return;
         }
       }
@@ -4636,6 +4875,7 @@ program
       // from this file. No diff exists yet, so this is context — "don't re-add X" —
       // not a block; the commit-time `hunch check` does the actual gating.
       const retired = store.retiredForFile(target).filter((r) => r.symbols.length || r.deps.length);
+      const recentTasks = taskSelectionSupplements(store.selectTasksAuto(target, buildTaskRankingQuery(root, hookReportTaskId(root, provider, evt), target)), target);
       const hasContent =
         ctx.constraints.length ||
         ctx.decisions.length ||
@@ -4645,6 +4885,7 @@ program
         ctx.landscape?.resources.length ||
         ctx.landscape?.relationships.length ||
         retired.length ||
+        recentTasks.length ||
         docGround;
       if (!hasContent) return; // no noise on files Hunch hasn't learned yet
       const envelope = buildDeliveryEnvelope(ctx, {
@@ -4661,6 +4902,7 @@ program
             text: `⚠ Deliberately RETIRED from this file — do not re-introduce without cause: ${retired.map((r) => `${[...r.symbols, ...r.deps].join(", ")} (${r.decision})`).join("; ")}.`,
           }] : []),
           ...(docGround ? [{ id: "doc-grounding", kind: "doc-grounding", priority: 100, text: docGround }] : []),
+          ...recentTasks,
         ],
       });
       const text = envelope.text.trim();
@@ -4670,19 +4912,27 @@ program
       // Delivery receipts (dec_925f4bcaad): the ledger of what actually reached
       // an agent. A full injection is a serve; a delta one-liner attests the
       // earlier serve is still standing. Never throws, never blocks.
-      const receipts = (event: "served" | "refreshed") => recordServed(root, envelope.delivered.map((item) => ({
-        event,
-        kind: item.kind,
-        record_id: item.record_id,
-        target,
-        session_id: evt.session_id,
-        rank: item.rank,
-        delivery_reason: item.delivery_reason,
-        provenance_status: item.provenance_status,
-        token_cost: item.token_cost,
-        delivery_profile: envelope.profile,
-        ranking_policy: envelope.ranking_policy,
-      })));
+      const receipts = (event: "served" | "refreshed") => recordServed(root, [
+        ...envelope.delivered.map((item) => ({
+          event,
+          kind: item.kind,
+          record_id: item.record_id,
+          target,
+          session_id: evt.session_id,
+          rank: item.rank,
+          delivery_reason: item.delivery_reason,
+          provenance_status: item.provenance_status,
+          token_cost: item.token_cost,
+          delivery_profile: envelope.profile,
+          ranking_policy: envelope.ranking_policy,
+        })),
+        // Delivered task lines are receipts too: they feed access-based recency.
+        ...envelope.supplements.filter((s) => s.kind === "recent-task" && s.delivered).map((s) => ({
+          event, kind: "tasks", record_id: s.id, target, session_id: evt.session_id,
+          rank: s.rank, delivery_reason: "supplemental", token_cost: s.token_cost,
+          delivery_profile: envelope.profile, ranking_policy: envelope.ranking_policy,
+        })),
+      ]);
       const reportTaskId = hookReportTaskId(root, provider, evt);
       // A new authoritative prompt gets its own full delivery. An earlier
       // prompt's session-level delta cannot establish this task's receipt.
@@ -4704,13 +4954,20 @@ program
           // The first time a lesson reaches this prompt's task, tell the USER in one
           // line (systemMessage); repeats of the same revision stay silent.
           recalled = reportPresentationEnabled(root) ? renderRecalledLine(unseenLessons(root, reportTaskId, snapshots)) : null;
-          const occurrence = recordTaskDelivery(root, reportTaskId, envelope, snapshots);
+          const occurrence = recordTaskDelivery(root, reportTaskId, envelope, snapshots, undefined, target);
           reportNotice = `\n\nHunch task ${reportTaskId} · delivery ${occurrence}. Inspect exact application references with hunch_report(task_id).`;
         } catch { reportNotice = "\n\nTask report observation unavailable; this delivery's task contribution remains unverified."; recalled = null; }
       }
       emitContext(provider, "PreToolUse", text + reportNotice, recalled ?? undefined);
-    } catch {
-      // swallow — never block an edit on a hook failure
+    } catch (e) {
+      // Never block an edit on a hook failure — and never go silent either: an
+      // ungrounded edit that looks grounded gets diagnosed as model flakiness.
+      // One context line, exit 0 (the launcher itself failing stays out of reach).
+      const reason = e instanceof Error ? e.message.split("\n")[0] : "unknown error";
+      if (provider && (eventName === "PreToolUse" || eventName === "SessionStart" || eventName === "UserPromptSubmit")) {
+        const what = eventName === "PreToolUse" ? "for this edit; it proceeds ungrounded" : "for this session";
+        try { emitContext(provider, eventName, `Hunch grounding unavailable ${what} (${reason}). Run \`hunch doctor\`.`); } catch { /* stdout gone */ }
+      }
     } finally {
       store?.close();
     }
@@ -4816,6 +5073,8 @@ program
   .description("Answer hash-bound imported-ADR questions, or triage deliberate proposed drafts.")
   .option("--accept <id>", "promote a decision to accepted/human-confirmed (confirms its tripwires)")
   .option("--reject <id>", "reject a draft decision with a durable lifecycle tombstone")
+  .option("--confirm <id>", "countersign an agent-recorded decision (dec_…) or correction (con_…) as human-confirmed WITHOUT changing its status or content — the human act a capture token alone cannot stand in for")
+  .option("--severity <s>", "with --confirm on a correction: the severity you grant (advisory | warning | blocking); default keeps its current severity")
   .option("--approve-import <id>", "approve one exact imported ADR as human-confirmed authority")
   .option("--decline-import <id>", "record that one exact imported ADR was reviewed and must stay advisory")
   .option("--expected-source-hash <hash>", "exact sha256 source hash printed with the imported-ADR question")
@@ -4825,12 +5084,13 @@ program
   .option("--reject-duplicates", "batch-reject drafts that near-duplicate an accepted record (deterministic term+file similarity — hygiene, not judgment)")
   .option("--min-grounded <n>", "grounded-ness threshold for the ready group / --accept-verified", String(READY_MIN_GROUNDED))
   .option("--private", "include local private/shared-overlay drafts; terminal output may contain private memory")
-  .action((opts: { accept?: string; reject?: string; approveImport?: string; declineImport?: string; expectedSourceHash?: string; expectedReviewHash?: string; reviewedBy?: string; acceptVerified?: boolean; rejectDuplicates?: boolean; minGrounded?: string; private?: boolean }) => {
+  .action((opts: { accept?: string; reject?: string; confirm?: string; severity?: string; approveImport?: string; declineImport?: string; expectedSourceHash?: string; expectedReviewHash?: string; reviewedBy?: string; acceptVerified?: boolean; rejectDuplicates?: boolean; minGrounded?: string; private?: boolean }) => {
     const { store, root } = storeFor();
     const minGrounded = Number.isFinite(Number(opts.minGrounded)) ? Number(opts.minGrounded) : READY_MIN_GROUNDED;
     if (opts.private && !store.hasPrivate) { store.close(); return fail("--private needs HUNCH_PRIVATE_DIR set to a private store"); }
-    const actionCount = [opts.accept, opts.reject, opts.approveImport, opts.declineImport, opts.acceptVerified, opts.rejectDuplicates].filter(Boolean).length;
+    const actionCount = [opts.accept, opts.reject, opts.confirm, opts.approveImport, opts.declineImport, opts.acceptVerified, opts.rejectDuplicates].filter(Boolean).length;
     if (actionCount > 1) { store.close(); return fail("choose exactly one review action at a time"); }
+    if (opts.severity && !opts.confirm) { store.close(); return fail("--severity applies only with --confirm on a correction"); }
     const decisions = () => opts.private ? store.recs("decisions") : store.json.loadAll("decisions");
     let publicGroundingChanged = false;
     const touchedHomes = new Set<MemoryHome>();
@@ -4863,6 +5123,40 @@ program
       } catch (error) {
         store.close();
         return fail(error instanceof Error ? error.message : String(error));
+      }
+    } else if (opts.confirm) {
+      // Human countersign of agent testimony. A capture token proves only that the
+      // interview tool was called (inside the agent's channel), so agent-written records
+      // land as agent_recorded; this is the out-of-channel human act that signs them.
+      // Content and status are untouched: confirming a proposed decision is not shipping it.
+      const id = opts.confirm;
+      const SEV = ["advisory", "warning", "blocking"] as const;
+      if (opts.severity && !(SEV as readonly string[]).includes(opts.severity)) { store.close(); return fail(`--severity must be one of: ${SEV.join(", ")}`); }
+      const now = new Date().toISOString();
+      const d = opts.private ? store.getRec("decisions", id) : store.json.get("decisions", id);
+      const c = d ? undefined : opts.private ? store.getRec("constraints", id) : store.json.get("constraints", id);
+      if (!d && !c) { store.close(); return fail(`no decision or constraint ${id} found${opts.private ? "" : " in the public home (add --private for overlay records)"}`); }
+      let home: MemoryHome;
+      if (d) {
+        if (opts.severity) { store.close(); return fail("--severity applies only when confirming a correction (con_…), not a decision"); }
+        if (isImportedAdrDecision(d)) { store.close(); return fail(`imported ADR ${d.id} requires the hash-bound --approve-import flow shown by hunch review`); }
+        home = opts.private ? decisionMemoryHome(store, d.id) : "public";
+        putDecisionInHome(store, countersignDecision(d, now), home);
+        console.log(`✓ confirmed decision ${id} as human_confirmed (status ${d.status} unchanged)`);
+      } else {
+        home = opts.private && store.getPrivateRec("constraints", id) ? "private" : "public";
+        const next = countersignConstraint(c!, now, opts.severity as (typeof SEV)[number] | undefined);
+        if (home === "private") store.putPrivate("constraints", next);
+        else store.json.put("constraints", next);
+        const repoWide = next.scope.length === 1 && next.scope[0] === "**";
+        console.log(`✓ confirmed ${next.severity} constraint ${id} as human_confirmed (scope: ${next.scope.join(", ")})`);
+        if (next.severity === "blocking" && repoWide) console.log("  ⚠ repo-wide blocking rule: it can deny any edit at strict firmness and fail hunch check --strict.");
+      }
+      touchedHomes.add(home);
+      store.reindex();
+      if (home === "public") {
+        publicGroundingChanged = true;
+        if (!store.autoCommit) refreshExistingGrounding(root, store);
       }
     } else if (opts.accept) {
       const d = opts.private ? store.getRec("decisions", opts.accept) : store.json.get("decisions", opts.accept);
@@ -4965,7 +5259,7 @@ program
           }
           if (dupCount) console.log(`\n   Batch-reject the ${dupCount} duplicate(s): hunch review --reject-duplicates`);
         }
-        console.log(`\nAccept: hunch review --accept <id>   Reject: hunch review --reject <id>`);
+        console.log(`\nAccept: hunch review --accept <id>   Reject: hunch review --reject <id>   Confirm (sign, keep status): hunch review --confirm <id>`);
       }
     }
     if (touchedHomes.size) pumpMemoryHomes(store, root, touchedHomes, "hunch: review decision lifecycle");
@@ -5947,8 +6241,8 @@ program
         console.log(`No changed files in ${scope}.`);
         return;
       }
-      const diff = opts.commit ? commitDiff(opts.commit, root) : base ? rangeDiff(base, root) : opts.working ? workingDiff(root) : stagedDiff(root);
-      console.log(renderImpact(store.prImpact(files, diff), scope));
+      const gate = opts.commit ? commitGateDiff(opts.commit, root) : base ? rangeGateDiff(base, root) : opts.working ? workingGateDiff(root) : stagedGateDiff(root);
+      console.log(renderImpact(store.prImpact(files, gate.diff, gate), scope));
     } finally {
       store.close();
     }
@@ -6088,8 +6382,13 @@ program
       for (const r of recent) console.log(`  ${r.date}  [${r.status}] ${r.title}  (${r.id}${r.topic ? `, ${r.topic}` : ""})`);
       console.log(`\n🗺 Roadmap — live proposed decisions (${roadmap.length}):`);
       if (!roadmap.length) console.log("  (empty — record what's next as a PROPOSED decision via /capture and it appears here)");
-      for (const r of roadmap) console.log(`  • ${r.title}  (${r.id}${r.topic ? `, ${r.topic}` : ""}, since ${r.date})\n      ${r.note}`);
+      for (const r of roadmap) console.log(`  • ${r.title}  (${r.id}${r.topic ? `, ${r.topic}` : ""}, since ${r.date})${r.unconfirmed ? `\n      ${unconfirmedRoadmapMarker(r, { private: !!opts.private })}` : ""}\n      ${r.note}`);
       if (pendingReview > 0) console.log(`\n  (${pendingReview} legacy un-vouched draft(s) — \`hunch adopt-drafts\` to auto-trust them as advisory)`);
+      // Task-record ranking: evaluated automatically on every task write; the kill rule applies itself.
+      try { console.log(`\n📊 ${rankingStatusLine(resolveTaskRankingMode(store.publicRoot, store))}`); } catch { /* no task records or no cache dir: nothing to say */ }
+      // Workspace ledger, from stored records only (no git) so the hot view stays fast.
+      const ws = workspaceSummaryLine(opts.private ? store.recs("workspaces") : store.json.loadAll("workspaces"), workspacesConfig(readConfig(hunchPaths(store.publicRoot))));
+      if (ws) console.log(`\n${ws}`);
     } finally {
       store.close();
     }
@@ -6306,6 +6605,19 @@ program
   .action(async () => {
     const integrations = inspectIntegrations(findRoot());
     console.log(formatIntegrationHealth(integrations));
+    // A pin npm cannot serve kills every npx launcher (hooks and MCP) before Hunch
+    // runs, and the hosts report nothing. Name it here; bounded, offline-safe.
+    const published = new Map<string, PublishedStatus>();
+    for (const v of new Set([integrations.expectedVersion, ...integrations.pins.map(p => p.version)])) published.set(v, publishedStatus(v));
+    const expectedUnpublished = published.get(integrations.expectedVersion) === "unpublished";
+    for (const pin of integrations.pins) {
+      if (published.get(pin.version) !== "unpublished") continue;
+      console.log(`ERROR ${pin.file}: pins Hunch ${pin.version}, which npm cannot serve (ETARGET) — every hook run and MCP launch from this file fails before Hunch starts, silently. Run \`hunch integrations repair-pins\`${expectedUnpublished ? " once the release publishes" : ""}.`);
+      process.exitCode = 1;
+    }
+    if (expectedUnpublished && integrations.pins.every(p => p.version !== integrations.expectedVersion)) {
+      console.log(`note: package.json says ${integrations.expectedVersion}, which is not on npm yet; machine-local pins stay on the last published release until it is (then run \`hunch integrations repair-pins\`).`);
+    }
     // A shared-memory or CLI-only checkout may intentionally have no local
     // assistant config. The explicit integrations check still fails that case.
     if (integrations.harnesses.length > 0 && integrationHealthFails(integrations)) process.exitCode = 1;
@@ -6318,16 +6630,42 @@ program
     // squash-merge went unrepaired. pre-commit is opt-out (`--no-enforce`),
     // so its absence is informational only, never a warning.
     if (isGitRepo(root)) {
+      const report = hookReport(root);
       const hooks = hookStatus(root);
-      const missing = [!hooks.postCommit && "post-commit", !hooks.postMerge && "post-merge"].filter((h): h is string => !!h);
+      const missing = [report.postCommit.state === "missing" && "post-commit", report.postMerge.state === "missing" && "post-merge"].filter((h): h is string => !!h);
+      // A block that is present but never runs (after an exec/exit, or inside a
+      // hook manager's regenerated file — issue #311) is NOT installed.
+      const unreachable = ([["post-commit", report.postCommit], ["post-merge", report.postMerge], ["pre-commit", report.preCommit], ["post-checkout", report.postCheckout]] as const)
+        .filter(([, e]) => e.state === "unreachable");
       // `hunch index` only ever installs post-merge onto an existing
       // post-commit install (it never hooks an un-hooked repo — see
-      // isGitRepo(root) && hookStatus(root).postCommit above) — so the fix
-      // hint must not point there when post-commit itself is missing.
-      const fix = !hooks.postCommit ? "run `hunch init` for the full setup" : "run `hunch index` to install it";
-      console.log(`hooks:      ${missing.length
-        ? `⚠ missing ${missing.join(", ")} — ${fix}`
+      // isGitRepo(root) && hookStatus(root).postCommit above) and never writes
+      // into a manager-owned hook — so the fix hint must not point there when
+      // post-commit itself is missing or a hook manager is in play.
+      const managedMissing = [report.postCommit, report.postMerge].find((e) => e.state === "missing" && e.manager !== "none");
+      const fix = managedMissing
+        ? `${managedMissing.manager === "exec-exit" ? "the existing hook exits before an appended block would run" : `a hook manager (${managedMissing.manager}) owns these hooks`}; run \`hunch init\` to print the snippet to add to ${rel(root, managedMissing.path)}`
+        : !hooks.postCommit ? "run `hunch init` for the full setup" : "run `hunch index` to install it";
+      const problems = [
+        missing.length ? `⚠ missing ${missing.join(", ")} — ${fix}` : "",
+        unreachable.length ? `⚠ installed but unreachable: ${unreachable.map(([n]) => n).join(", ")} — never runs; run \`hunch init\` to print the snippet for your hook manager` : "",
+      ].filter(Boolean);
+      console.log(`hooks:      ${problems.length
+        ? problems.join("\n            ")
         : `post-commit, post-merge installed${hooks.preCommit ? " (+ pre-commit)" : ""}`}`);
+      for (const [name, e] of unreachable) {
+        console.log(dim(`            ↳ ${name}: ${e.reason ?? "the block sits where git never reaches it"} (${rel(root, e.path)})`));
+      }
+      // Workspace ledger: what this machine is called, whether its record is in memory,
+      // and whether the checkout hook that keeps it fresh is installed.
+      try {
+        const machine = loadOrCreateMachine();
+        const stored = store.recs("workspaces").find((r) => r.machine.id === machine.id);
+        const others = store.recs("workspaces").filter((r) => r.machine.id !== machine.id).length;
+        const leak = labelLeaksIdentity(machine.label);
+        console.log(`workspaces: this machine is ${machine.label}${leak ? ` (⚠ label equals the ${leak})` : ""} · record in memory: ${stored ? `yes (${stored.observed_at})` : "no"} · ${others} other machine(s)` +
+          `${hooks.postCheckout ? " · post-checkout hook installed" : report.postCheckout.state === "unreachable" ? " · ⚠ post-checkout hook unreachable" : hooks.postCommit ? " · post-checkout hook not installed (`hunch index` adds it)" : ""}`);
+      } catch { /* no machine file writable: nothing to report */ }
     }
     // In unified mode the public .hunch directory is only a routing shell.
     // Report the same effective manifest that `hunch migrate` reads and stamps,
@@ -6486,6 +6824,26 @@ function realpathNorm(p: string): string {
  *  file as outside the repo, silently dropping all context (dec_e0a36efbf5). */
 function toRepoRel(root: string, abs: string): string {
   return relative(realpathNorm(root), realpathNorm(abs)).split("\\").join("/");
+}
+
+/** The in-repo files a pre-edit event would change, each with the lines the edit
+ *  ADDS to that file. A Codex apply_patch yields one entry per touched path (a
+ *  Move-to destination is its own entry, carrying the section's added lines);
+ *  every other edit tool yields its single `file_path`. Paths outside the repo
+ *  ("..") or on another drive ("D:/…") are skipped. */
+function editTargets(root: string, input: HunchToolInput | undefined): Array<{ abs: string; target: string; lines: string[] }> {
+  const raw = input?.patch_files?.length
+    ? input.patch_files.flatMap((f) => (f.moved_to ? [f.path, f.moved_to] : [f.path]).map((abs) => ({ abs, lines: f.added_lines })))
+    : input?.file_path ? [{ abs: input.file_path, lines: proposedEditLines(input) }] : [];
+  const byTarget = new Map<string, { abs: string; target: string; lines: string[] }>();
+  for (const { abs, lines } of raw) {
+    const target = toRepoRel(root, abs);
+    if (!target || target.startsWith("..") || /^[a-zA-Z]:/.test(target)) continue;
+    const seen = byTarget.get(target);
+    if (seen) seen.lines = [...seen.lines, ...lines];
+    else byTarget.set(target, { abs, target, lines });
+  }
+  return [...byTarget.values()];
 }
 
 function emitContext(

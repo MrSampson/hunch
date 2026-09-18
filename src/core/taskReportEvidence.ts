@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
+import { canonicalReportRoot } from "./taskReportPaths.js";
+import { resolveSpawnCommand } from "./spawnCommand.js";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { HunchStore } from "../store/hunchStore.js";
 import { analyzeDiff } from "../extractors/diff.js";
-import { workingDiff, workingFiles } from "../extractors/git.js";
+import { workingGateDiff, workingFiles } from "../extractors/git.js";
 import { assertCompleteRepoScan, scanRepo } from "../extractors/indexer.js";
 import { checkConformance, type ConformanceGraph } from "./conformance.js";
 import { effectiveForbids, matchForbids } from "./constraintmatch.js";
@@ -35,7 +37,7 @@ export interface ReportSnapshot { hash: string | null; limitations: string[] }
 export function reportSourceSnapshot(root: string): ReportSnapshot {
   const limitations = ["Git-ignored files, Hunch memory/cache, and external dependencies are outside this source snapshot."];
   try {
-    const base = realpathSync(root);
+    const base = canonicalReportRoot(root);
     const env: NodeJS.ProcessEnv = { ...process.env, GIT_OPTIONAL_LOCKS: "0" };
     for (const key of Object.keys(env)) if (key.startsWith("GIT_") && key !== "GIT_OPTIONAL_LOCKS") delete env[key];
     const paths = execFileSync("git", ["-C", base, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { env, timeout: 5_000, maxBuffer: 4_000_000 }).toString("utf8").split("\0").filter(Boolean);
@@ -77,15 +79,15 @@ export function reportSourceSnapshot(root: string): ReportSnapshot {
  * `not-exercised` or `unavailable` — never "satisfied" by file overlap. */
 export function runReportConformance(root: string, store: HunchStore, taskId: string): ReportConformance[] {
   const report = readTaskReport(root, taskId);
-  if (report.task.state !== "open") throw new Error("cannot evaluate rules for a closed task");
+  if (report.task.state !== "open" && report.task.closed_by !== "host") throw new Error("cannot evaluate rules for a closed task");
   const delivered = [...new Map(report.deliveries.flatMap(d => d.records).filter(r => r.kind === "constraints" || r.kind === "decisions").map(r => [`${r.kind}:${r.record_id}:${r.content_hash}`, r])).values()];
   if (!delivered.length) return [];
   const before = reportSourceSnapshot(root).hash;
   const files = workingFiles(root);
   const changed = new Set(files);
-  const diff = workingDiff(root);
-  const analysis = analyzeDiff(diff);
-  const truncated = diff.endsWith("…(diff truncated)…");
+  const gate = workingGateDiff(root);
+  const analysis = analyzeDiff(gate.diff);
+  const unread = new Set(gate.unreadFiles ?? []);
   let graph: ConformanceGraph | null | undefined;
   const workingGraph = (): ConformanceGraph | null => {
     if (graph !== undefined) return graph;
@@ -105,7 +107,7 @@ export function runReportConformance(root: string, store: HunchStore, taskId: st
       if (!forbids) { note("constraint-forbids", "unavailable", "This constraint declares no forbids matcher; a scope-only rule cannot be verified deterministically."); continue; }
       const scoped = files.filter(f => store.checkConstraints(f).some(c => c.id === constraint.id));
       if (!scoped.length) { note("constraint-forbids", "not-exercised", "No changed file falls in this constraint's scope."); continue; }
-      if (truncated) { note("constraint-forbids", "unavailable", "The working diff exceeds the bounded analysis budget; added lines were not fully inspected.", scoped); continue; }
+      if (gate.incomplete || scoped.some(f => unread.has(f))) { note("constraint-forbids", "unavailable", "The complete working diff could not be read; added lines were not fully inspected.", scoped); continue; }
       const match = matchForbids(forbids, new Set(analysis.addedDeps), scoped.flatMap(f => analysis.addedLinesByFile.get(f) ?? []));
       if (match) note("constraint-forbids", "violated", `Added code trips the ${match.tier} rule: ${match.evidence.slice(0, 3).join("; ")}`, scoped);
       else note("constraint-forbids", "satisfied", `Added lines in ${scoped.length} scoped file(s) trip none of the forbidden ${[forbids.deps.length && "dependencies", forbids.symbols.length && "symbols", forbids.patterns.length && "patterns"].filter(Boolean).join("/")}.`, scoped);
@@ -135,11 +137,14 @@ export function runReportConformance(root: string, store: HunchStore, taskId: st
   });
 }
 
-export const DEFAULT_CHECK_TIMEOUT_MS = 120_000;
+/** A full suite is the usual check; two minutes turned passing suites into
+ * recorded timeouts (#268). The bound is a safety net for an abandoned runner,
+ * not a verdict. */
+export const DEFAULT_CHECK_TIMEOUT_MS = 15 * 60_000;
 export const MAX_CHECK_TIMEOUT_MS = 6 * 60 * 60_000;
 /** A deliberately explicit command wrapper. The caller chooses the command;
  * reports never execute commands automatically to validate submitted claims. */
-export async function runReportCheck(root: string, taskId: string, command: string[], label: string, timeoutMs = 120_000, options: {
+export async function runReportCheck(root: string, taskId: string, command: string[], label: string, timeoutMs = DEFAULT_CHECK_TIMEOUT_MS, options: {
   signal?: AbortSignal;
   onStdout?: (chunk: Buffer) => void;
   onStderr?: (chunk: Buffer) => void;
@@ -149,14 +154,38 @@ export async function runReportCheck(root: string, taskId: string, command: stri
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_CHECK_TIMEOUT_MS) throw new Error(`verification timeout must be between 1 and ${MAX_CHECK_TIMEOUT_MS} ms`);
   options.signal?.throwIfAborted();
   const task = readTaskReport(root, taskId).task;
-  if (task.state !== "open") throw new Error("cannot verify a closed task");
+  if (task.state !== "open" && task.closed_by !== "host") throw new Error("cannot verify a closed task");
   const before = reportSourceSnapshot(root);
   // Validate sensitive arguments before executing or writing anything.
   ReportCheckSchema.parse({ label, command, exit_code: null, output_hash: reportHash(""), before_snapshot: before.hash, after_snapshot: null, snapshot_limitations: before.limitations, timed_out: false, source: "local-command-runner" });
-  const checkId = beginReportCheck(root, taskId, label);
+  const checkId = beginReportCheck(root, taskId, label, timeoutMs);
   const result = await new Promise<{ code: number | null; timedOut: boolean; cancelled: boolean; hash: string }>((resolveResult) => {
-    const child = spawn(command[0]!, command.slice(1), { cwd: root, shell: false, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, detached: process.platform !== "win32" });
+    // Windows launchers (npx.cmd, npm.cmd, other .cmd/.bat shims) cannot be spawned
+    // without a shell; resolve them first so a check actually runs instead of
+    // silently recording exit_code null (fnd: every Windows card said "no result").
     const stdout = createHash("sha256"), stderr = createHash("sha256");
+    const launchFailure = (error: unknown) => {
+      // A launch failure is a result the user must see (ENOENT is the common
+      // one); it is hashed like any other stderr and streamed to the caller.
+      const text = error instanceof Error ? error.message : String(error);
+      return Buffer.from(`hunch: could not start ${JSON.stringify(command[0])}: ${text}\n`);
+    };
+    const started = (() => {
+      try {
+        const resolved = resolveSpawnCommand(command);
+        return spawn(resolved.file, resolved.args, { cwd: root, shell: false, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, detached: process.platform !== "win32", windowsVerbatimArguments: resolved.windowsVerbatimArguments === true });
+      } catch (error) {
+        // An argument the launcher cannot carry, or a synchronous spawn refusal
+        // (EINVAL for a batch file), is the same visible failure as ENOENT.
+        return launchFailure(error);
+      }
+    })();
+    if (Buffer.isBuffer(started)) {
+      stderr.update(started); options.onStderr?.(started);
+      resolveResult({ code: null, timedOut: false, cancelled: false, hash: reportHash({ stdout: stdout.digest("hex"), stderr: stderr.digest("hex") }) });
+      return;
+    }
+    const child = started;
     let timedOut = false, cancelled = false, settled = false;
     let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
     const settle = (code: number | null) => {
@@ -186,7 +215,11 @@ export async function runReportCheck(root: string, taskId: string, command: stri
     // Separate streaming digests are stable across stdout/stderr chunk ordering.
     child.stdout.on("data", chunk => { if (!settled) { stdout.update(chunk); options.onStdout?.(chunk); } });
     child.stderr.on("data", chunk => { if (!settled) { stderr.update(chunk); options.onStderr?.(chunk); } });
-    child.once("error", () => settle(null));
+    child.once("error", (error) => {
+      const message = launchFailure(error);
+      if (!settled) { stderr.update(message); options.onStderr?.(message); }
+      settle(null);
+    });
     child.once("close", code => settle(code));
     options.signal?.addEventListener("abort", cancel, { once: true });
     if (options.signal?.aborted) cancel();

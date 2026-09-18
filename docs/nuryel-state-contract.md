@@ -1,11 +1,15 @@
 # nuryel.state/1 — the state contract
 
-Status: **proposed, frozen as code, bound to the store, MCP and HTTP (`hunch serve`).** Verbs, canonical hashing,
+Status: **shipped in Hunch 1.33.0, bound to the store, MCP and HTTP (`hunch serve`).** Reviewed 2026-09-14. The capability notes below distinguish shipped additions from remaining limits. Broader deployment remains a pilot.
+
+This is the technical contract behind Hunch's shared record: decisions, actions, commitments and the evidence they depend on. It lets authorized agents read and update that record through the same rules. A stored action record preserves the writer's verification status; writing it is not independent proof that the external action happened.
+
+Verbs, canonical hashing,
 id derivation and invariants live in `src/core/stateContract.ts`; the record schemas (facets) in
 `src/core/stateRecords.ts`, a leaf module so the store's kind registry can reference them without
 an import cycle (`stateContract` re-exports them — one module to import). The ONE implementation
 of the verbs over a store is `src/store/stateBinding.ts`; the per-scope change ledger is
-`src/store/changeLedger.ts`; the MCP binding is the four `nuryel_*` tools in `src/mcp/server.ts`.
+`src/store/changeLedger.ts`; the MCP bindings include `nuryel_capabilities`, `nuryel_read`, `nuryel_write`, `nuryel_subscribe` and `nuryel_records` in `src/mcp/server.ts`.
 Tests: `test/state-contract.test.ts`, `test/state-kinds.test.ts`, `test/state-binding.test.ts`,
 `test/mcp-state.test.ts`.
 
@@ -15,16 +19,15 @@ path (store, overlay safety, private migrate, reindex, `dropAll`) picks them up 
 entities and relationships are index-file stored like resources because their ids are not safe
 file names, and the gitignore writer whitelists the new directories. The verbs **are** wired
 into the store (`readState` / `writeState` / `subscribeState`), exposed over MCP
-(`nuryel_capabilities`, `nuryel_read`, `nuryel_write`, `nuryel_subscribe`) and over HTTP by
-`hunch serve` with a typed client. Every transport calls the same three functions — a transport
+(`nuryel_capabilities`, `nuryel_read`, `nuryel_write`, `nuryel_subscribe`, `nuryel_records`) when state tools are enabled, and over HTTP by
+`hunch serve` with a typed client. Every transport calls the shared store binding — a transport
 that re-implements a rule is a bug.
 
-> Agents are probabilistic. Organizations need deterministic state. Nuryel is the state layer
-> between them.
+The product name is **Hunch**. `nuryel.state/1` and `nuryel_*` are existing contract and tool identifiers; they do not name a separate product.
 
-Every orchestrator and agent — Sofia, Codex, Claude Code, whatever comes next — speaks this one
-contract to one state graph. Protocols are bindings of it, never separate integrations. No
-adapters live in Nuryel: the orchestrator owns the mapping from its world to the contract.
+An integrated orchestrator or agent — Sofia, Codex, Claude Code or another client — can use this
+contract. Each owns the mapping from its source tools to Hunch records. Hunch does not fetch or
+change CRM, email or chat data on the client's behalf.
 
 ## Scope model
 
@@ -48,7 +51,7 @@ is decided against grants *before* retrieval; the read assertion checks it again
 | changed | what moved in an external system | `ExternalRef` — credential-free version pointer | **new** |
 | current | what is true now, and on what it rests | `nuryel.derived/1` — `DerivedState` with mandatory dependencies | **new** |
 | entity / relationship | who and what, and how they connect | `nuryel.entity/1`, `nuryel.relationship/1` (Landscape-shaped ids) | **new** |
-| DNA | how this user / team / organization works | `hunch.project-dna/1` profiles keyed by scope | profile exists; scope keying new |
+| DNA | observed working conventions, distinct from decisions and rules | `hunch.project-dna/1` | repository profiles ship; broader scope profiles are a direction |
 
 Each new facet is lifted from a record Sofia already keeps:
 
@@ -174,19 +177,42 @@ scope's home, appended atomically): the strictly ordered `ChangeEvent` stream (s
 plus the idempotency table. A record write and its event land in one atomic ledger write after
 the record; a ledger that is not contiguous is an error, never silently restarted.
 
-**write** in order: grants → provenance → home → normalize (partition scope stamped on new
+**Partitions sharing a home stay separate.** Organization, team and user partitions all live in
+the one overlay, so every rule that looks for an incumbent compares the record's partition with the
+write's: one current derived statement per subject and transform, the supersede target and its
+still-open check are all counted within the write's own partition. A `supersedes` that names a
+record in another partition is a `conflict` (reason `supersede target in another partition`) —
+closing it from here would put its `superseded` event in the wrong ledger — and a write whose id is
+already on record in another partition of the same home (entity and relationship ids do not derive
+from the scope) is a `conflict` (reason `record id held by another partition`), never an overwrite.
+When the principal cannot read that record either refusal is `outside-grants` and describes nothing.
+Legacy kinds (decisions, constraints, bugs, findings) carry no partition scope and are read as the
+store's own partition, so they are written only under that scope; any other scope is refused
+`unsupported`.
+
+**write** in order: grants → provenance → legacy kinds only under the store's own partition → home → normalize (partition scope stamped on new
 facets, dropped from legacy ones; an agent principal cannot sign `human_confirmed` — it is
 rewritten to `agent_recorded`, a human principal can) → identity (a supplied id must equal the
 derived one, `identity` refusal otherwise; receipts, commitments and derived state derive their
-ids, entities and relationships are checked by their schemas) → facet schema → idempotency (same
-key + same payload = `replayed`; same key + other payload = `idempotency` refusal naming the
-incumbent; same content under a new key = `replayed`, the key is remembered) → `expected_version`
+ids, entities and relationships are checked by their schemas) → facet schema → exact replay (same
+key + same payload for the same record = `replayed`, checked right here, before identity,
+visibility and link checks: a retry of a write that succeeded returns what it wrote even when an
+entity has since claimed its subject, so a writer whose response was lost never re-derives a
+duplicate) → identity / visibility / link checks → idempotency (same key + other payload =
+`idempotency` refusal naming the incumbent; same content under a new key = `replayed`, the key is
+remembered; when that record is a receipt, commitment, derived statement, entity or relationship
+the ledger has never seen — no event names it and no idempotency entry references it — the replay
+also appends its missing `created` event with the hash on file, so the record stops being an
+orphan instead of being hidden behind the idempotency table) → `expected_version`
 (a record hash or the record's latest seq; mismatch = `conflict`) → one-live-decision-per-topic
 (`conflict` naming the incumbent; explicit `supersedes` closes it and yields `superseded`) →
 supersede target still open (a `supersedes` that names an already-closed commitment or derived
 record is a `conflict` naming the record that is current now — two writers racing to replace
 the same incumbent can never leave two current records for one subject; the writer that closed
-it itself, same id under a new key, is exempt) → put → ledger → reindex → durability from the flush (`local` when nothing committed). Every
+it itself, same id under a new key, is exempt) → events built and validated → put → ledger →
+reindex → durability from the flush (`local` when nothing committed). The change events are
+validated BEFORE the record is written, so a refusal never leaves a record on file without its
+event. Every
 refusal is a typed `StateRefusal { code, conflict? }`; MCP renders it as
 `nuryel.state/1 refused [code]: …`.
 
@@ -224,9 +250,37 @@ The served product is the fold of Hunch Memory into Hunch. `hunch serve --config
 `127.0.0.1` (put it behind SSH or a reverse proxy; never expose the port) and hosts partitions
 over HTTP with the same three verbs: `GET /nuryel/v1/capabilities`, `POST /nuryel/v1/read`,
 `POST /nuryel/v1/write`, `POST /nuryel/v1/subscribe` (request bodies are the contract's request
-schemas minus `schema` and `principal`), plus `GET /nuryel/v1/health`. Errors are problem+json;
+schemas minus `schema` and `principal`), plus `GET /nuryel/v1/health` and the MCP endpoint
+`POST /nuryel/v1/mcp` described below. Errors are problem+json;
 a `StateRefusal` maps to 403 outside-grants, 409 conflict / idempotency, 422 identity, 400
-malformed / unsupported, 404 no-partition-home.
+malformed / unsupported, 404 no-partition-home. A server-side failure (500 internal, 503
+write-lock-timeout) carries only a generic `detail`; lock owners, host names and filesystem
+paths are written to the server's stderr, never to the response.
+
+`GET /nuryel/v1/health` needs no credential and then answers liveness only:
+`{ ok, version, protocol }`. With a valid credential in `Authorization` (the same bearer or DPoP
+check as every other route) the response adds `partitions`, the served partition ids. A presented
+but invalid credential is refused with 401 rather than answered anonymously.
+
+**MCP over streamable HTTP.** `POST /nuryel/v1/mcp` serves the `nuryel_*` tools
+(`nuryel_capabilities`, `read`, `write`, `capture`, `capture_batch`, `subscribe`, `records`) to any
+MCP client that speaks the streamable HTTP transport — an agent gateway, a remote orchestrator, a
+hosted agent framework — with the same bearer or DPoP credential in the `Authorization` header as
+the REST routes. The endpoint is stateless (one JSON-RPC message per POST, JSON responses, no
+session id; GET and DELETE are 405) because every verb is a single request/response. Tool
+arguments are the contract's request schemas minus `schema` and `principal`; the credential
+decides the principal and a smuggled one is ignored. A refusal is a tool error whose
+`structuredContent` is the REST problem body (`status`, `title`, `detail`, `conflict`), so an MCP
+caller sees exactly the 403/409/422/400 the REST caller would. Both transports call one
+dispatcher in `src/serve/app.ts` (`src/serve/mcpHttp.ts` only registers the tools), so the
+grants, the write lock and the flush cannot diverge. This is a second binding of the contract,
+not a second implementation; `hunch mcp` over stdio remains the local, trusted-caller binding.
+
+**Shared state view (shipped in 1.33.0).** `/operator` serves a static, read-only browser client for the
+existing capabilities, read, records and subscribe endpoints. It introduces no state verb or
+storage format. The public HTML and assets contain no workspace data; reads use the token's
+existing grants. The view retains its token only in memory and renders sources as text without
+external fetches. See the [operator walkthrough](deterministic-state.md#shared-state-view).
 
 A **served partition is a directory whose `.hunch/partition.json` names the scope it IS** — so
 user, team and organization state need no overlay: the partition is the store, and
@@ -270,7 +324,10 @@ returns the record as stored so a writer verifies what landed. The `records` ver
 because subscribe events name records and reads only returned refs.
 
 Amendments made while binding (all additive, called out for the review): `ChangeEvent.subject`
-(optional); `SubscribeResponse`; `ReadResponse.records` (optional, the records behind the refs); `WriteResult.record`; the `records` verb (`nuryel.state.records/1`, in the capability list); the union read — `ReadRequest.scopes` (optional, 1..64) with `ReadResponse.scopes` and `ReadResponse.receipts` (optional; the partitions read and one receipt each; `assertReadWithinGrants` checks both against the grants) and `mergeReadResponses` in the binding; the token grammar is written as explicit character classes
+(optional; bounded at 512 characters — a record subject longer than that, such as a receipt's
+`object_type:object_key` with a long key, an entity id, a relationship endpoint or a decision topic,
+is omitted from the event rather than truncated or refused, and the record keeps it in full; a
+subscriber still matches that event by `record_id`); `SubscribeResponse`; `ReadResponse.records` (optional, the records behind the refs); `WriteResult.record`; the `records` verb (`nuryel.state.records/1`, in the capability list); the union read — `ReadRequest.scopes` (optional, 1..64) with `ReadResponse.scopes` and `ReadResponse.receipts` (optional; the partitions read and one receipt each; `assertReadWithinGrants` checks both against the grants) and `mergeReadResponses` in the binding; the token grammar is written as explicit character classes
 instead of an `i` flag so it survives zod → JSON schema in MCP output validation;
 `assertWriteWellFormed` compares the record's scope only when it is a partition scope (a legacy
 constraint carries path globs under the same key).
@@ -314,6 +371,37 @@ reverse — re-key or retire the survivor, then write the entity active again wi
 (refused while any active entity still carries its keys) — and the ledger shows `retired` then
 `updated`. `test/state-entity-merge.test.ts`.
 
+## Read or compute
+
+A writer of derived state repeats one pattern: read the subject, reuse the current statement when
+nothing it rests on moved, otherwise compute and write the replacement. Both clients ship it —
+`readOrCompute(client, request)` in `@davesheffer/hunch/state` and `read_or_compute(client, ...)`
+in `hunch_state` — so the rules below are applied once instead of re-derived by every writer:
+
+1. **Reuse by dependency set.** A current statement on the subject under the same
+   `transform_version` whose dependency set equals the request's is returned and `compute` never
+   runs. Order is irrelevant, exactly as for `derivedId`.
+2. **Compute once, write current.** Otherwise `compute` runs once and its content is written as
+   the subject's current statement (`content_hash` computed client-side with the canonical form
+   above; both clients are tested byte for byte against the server's `stateHash`).
+3. **The idempotency key names the request**: statement identity (scope, subject, transform,
+   dependency set), content hash and `computed_at`. A key without the content hash collides when
+   the same evidence yields new wording, and the binding refuses a reused key with another
+   payload for good — the pilot's outbox stalled on exactly that. The same request is the same
+   key, so a resend replays.
+4. **Supersede the predecessor.** The statement it replaces under the same transform is named in
+   `supersedes`; the binding keeps one current statement per subject and transform.
+5. **Keep the audience.** Without an explicit `visibility` the new statement keeps its
+   predecessor's; an explicit change sends the predecessor's `record_hash` as `expected_version`,
+   which the binding requires for an audience change during supersession.
+6. **No retries.** Refusals (`StateClientError`) and transport failures surface. Calling again
+   re-reads first, so a write that landed before a lost response is reused, not written twice.
+
+Race: two writers that compute concurrently both miss the reuse; the second write is refused
+`409 conflict` naming the first as incumbent. Calling again reuses it when the dependency sets
+match, or supersedes it when they do not. `test/read-or-compute.test.ts`,
+`clients/python/tests/test_derived.py`, and the live Python round trip.
+
 ## Invariants (exported, asserted, tested)
 
 | Id | Statement | Enforced by |
@@ -328,6 +416,7 @@ reverse — re-key or retire the survivor, then write the entity active again wi
 | `one-entity-per-external-ref` | one external record is one entity per partition; a subject written as an entity's external key is refused with the entity id named; merge/split are ledger events, never silent rewrites | `assertExternalIdentity` in `writeState` (`409 conflict` / `422 identity`), `subjectAliases` on read; `test/state-entity-identity.test.ts` |
 | `human-correction-outranks-agent-writes` | what a human confirmed, an agent or service principal never overwrites or supersedes: it may replay it, write derived state back `stale` with the external cause that moved, or close a commitment with a receipt on record — each keeping the human's provenance; changing what the human said takes a human | `writeState` guard (`409 conflict`, reason `human-confirmed incumbent`, the differing fields named); `test/state-replay.test.ts` |
 | `derived-state-writer-owns-currentness` | the writer of a current derived statement revalidates its sources and writes it back `stale` when they move; other agents may save [source-backed observations](agent-observations.md) as `unknown`, never as current facts | `WriteRequest.cause`, the `invalidated` change, `nuryel_capture`, `state_of_record.observed` |
+| `one-current-derived-per-subject-transform` | a subject holds at most one current derived statement per transform; a new one must name the incumbent in `supersedes` (`409 conflict`, incumbent named), the same identity written again updates or replays it; a different transform is a different statement | `writeState` guard; `test/state-current-derived.test.ts`; found by the half-year farm (a writer that never named its predecessor left up to 58 current summaries on one subject) |
 
 ## Replay determinism (`nuryel.replay/1`)
 
@@ -378,24 +467,40 @@ Additive capabilities specified beside this contract, each with its own schema n
 [observation links](observation-links.md) (`nuryel.observation-links/1`),
 [observation review](observation-review.md) (`nuryel.observation-review/1`),
 [observation pages](observation-pages.md) (`nuryel.observation-pages/1`) and
-[ledger read reuse](ledger-read-reuse.md).
+[ledger read reuse](ledger-read-reuse.md). Hunch 1.33.0 adds optional
+[field citations](field-provenance.md) (`nuryel.field-provenance/1`); upgrade every shared
+reader before writing annotated records.
 
-## Not decided here
+## Capabilities and remaining limits
 
-- **Per-record visibility** inside a scope. Partition-level grants are the v1 permission model
-  (GitHub's repo-level model); finer visibility is the first security primitive to add before a
-  second team shares an organization partition.
+- **Record visibility** ships in 1.33.0 for dedicated partitions: [owner, reader and writer
+  permissions](record-visibility.md), with an old-reader upgrade gate. Partition grants still
+  apply. Shared/private overlay support is explicitly excluded from restricted writes.
 - **Semantic (embedding) recall over state records.** They ride the FTS index and the bounded
   liveness prior (see Delivery above); the optional embedding stream indexes them like any other
-  search doc, but no state-specific recall has been measured.
+  search doc. [State-specific fixture recall](state-recall-evaluation.md) is now measured for
+  keywords and a pinned local model; a production corpus remains unmeasured.
 - **What else of Hunch Memory folds in.** `serve` carries its bind-loopback, bearer, problem+json,
   body-limit and write-lock decisions. Its per-store concurrency gate, context-consistency
   watermarks and the usefulness / Project DNA intake routes are not ported; they return only if a
   served partition needs them.
-- **Per-field provenance on derived state.** A summary cites its sources as a whole; the
-  human-correction guard therefore works per record, not per field.
+- **Per-field authority/currentness.** Optional field citations ship in 1.33.0, but
+  human-correction protection and invalidation continue to apply to the whole record.
 - **Repository-scope private content.** The contract has no `private` flag: scope decides the
   home. Sensitive repository-scope state goes through the existing `hunch_record_*` tools
   with `private:true`, or into a user/team partition.
-- **A CLI binding** for `read` / `write` / `subscribe` (`hunch serve init` and `hunch serve replay` exist; the verbs themselves are HTTP, MCP and the typed client), and FTS / delivery ranking of the new kinds.
+- **State CLI and Python client** ship in 1.33.0: [Python usage](python-state-client.md)
+  covers the generated contract types and repository-installable HTTP client (not yet published
+  to PyPI; independent-consumer adoption remains unverified); [terminal bindings](state-cli.md) for `read`, `write`,
+  `records` and `subscribe` use the existing authenticated HTTP client. State-specific semantic
+  recall has a [repeatable fixture benchmark](state-recall-evaluation.md); production accuracy
+  still needs pilot evidence.
 - **Naming** — engine `hunch` / platform Nuryel, or one name for both.
+
+### Explicit conventions
+
+Shipped in 1.33.0: `nuryel.convention/1` adds user/team/organization/repository conventions as an advisory facet with reviewable sources, explicit supersession and conflict flags. See [Scoped conventions](scoped-conventions.md). These records never activate policy authority or replace Git-derived Project DNA.
+
+### Optional key-bound HTTP credentials
+
+Shipped in 1.33.0: the HTTP binding advertises `nuryel.auth.dpop/1`. Optional [key-bound credentials](key-bound-principals.md) add a signing-key proof to the existing token-to-principal mapping. Upgrade every serving process before enabling them. Facet schemas and grants remain the same; this is not hardware attestation or policy authority.
