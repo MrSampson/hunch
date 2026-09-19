@@ -19,7 +19,7 @@ import { HunchStore } from "../store/hunchStore.js";
 import { StateRefusal, SubscribeResponseSchema, capabilities, partitionOf, readState, recordsState, stateHomeFor, subscribeState, writeState } from "../store/stateBinding.js";
 import { captureState, captureBatchState } from "../store/stateCapture.js";
 import { CaptureRequestSchema, CaptureBatchRequestSchema, CaptureBatchResultSchema, STATE_CAPTURE_VERSION, STATE_CAPTURE_BATCH_VERSION } from "../core/stateContract.js";
-import { ReadRequestSchema, ReadResponseSchema, WriteRequestSchema, WriteResultSchema, SubscribeRequestSchema, RecordsRequestSchema, RecordsResponseSchema, STATE_READ_VERSION, STATE_WRITE_VERSION, STATE_SUBSCRIBE_VERSION, STATE_RECORDS_VERSION, stateHash } from "../core/stateContract.js";
+import { ReadRequestSchema, ReadResponseSchema, WriteRequestSchema, WriteResultSchema, SubscribeRequestSchema, RecordsRequestSchema, RecordsResponseSchema, STATE_READ_VERSION, STATE_WRITE_VERSION, STATE_SUBSCRIBE_VERSION, STATE_RECORDS_VERSION, stateHash, type StateFacet } from "../core/stateContract.js";
 import { selectEmbedder } from "../store/embedder.js";
 import { decisionId, findingId, manualDecisionId } from "../core/ids.js";
 import { buildCorrectionConstraint } from "../core/correction.js";
@@ -198,16 +198,13 @@ const destinationNote = (destRoot: string): string => {
  *  it only catches a related file that's new/untracked at the resolved root but
  *  already exists in a sibling worktree — the common "edited an existing tracked
  *  file" case is invisible to a pure existence check (the file exists at every
- *  worktree, just with different content) and still reproduces (tracked in #75 —
- *  #62, which this guard now covers, was extending it from hunch_record_decision
- *  alone to the other two write tools that accept the SAME structured file-list
- *  evidence and cwd hint: hunch_record_correction's scope_hint_file and
- *  hunch_record_finding's affected_files share it via misrouteGuard below.
- *  nuryel_write is a FOURTH auto-committing tool with the identical exposure
- *  (its facets carry related_files/affected_files too) and is NOT yet guarded —
- *  tracked separately (issue #77, PR #76 review round 9 I2), not silently
- *  left uncovered by an overclaimed "every"/"all". Every matching sibling is
- *  named as a candidate `cwd` and the write is refused rather than risked;
+ *  worktree, just with different content) and still reproduces (tracked in #75).
+ *
+ *  misrouteGuard below covers every auto-committing write tool that names files:
+ *  hunch_record_decision's related_files, hunch_record_correction's
+ *  scope_hint_file, hunch_record_finding's affected_files, and nuryel_write's
+ *  decisions/findings/bugs/constraints facets via fileEvidenceFor. Every matching
+ *  sibling is named as a candidate `cwd` and the write is refused rather than risked;
  *  it returns every match rather than the first, since confidently naming just one
  *  would let a caller that blindly retries as instructed land in the WRONG worktree —
  *  the same failure mode one level removed.
@@ -546,19 +543,21 @@ function existsUnder(dir: string, f: string, worktrees: readonly string[]): bool
   return isFile(join(dir, f));
 }
 
-/** Shared misroute-guard refusal for the three auto-committing write tools that
- *  name files and are guarded today (issue #54, extended to
- *  hunch_record_correction/hunch_record_finding by #62 — nuryel_write is a fourth
- *  tool with the identical exposure, not yet guarded, tracked in #77) — one
- *  message so the three call sites stay in lockstep instead of drifting.
+/** Shared misroute-guard refusal for the auto-committing write tools that name
+ *  files (hunch_record_decision, hunch_record_correction, hunch_record_finding,
+ *  and nuryel_write's decisions/findings/bugs/constraints facets via
+ *  fileEvidenceFor) — one message so every call site stays in lockstep instead
+ *  of drifting.
  *  Returns the refusal ToolResult when misroutedWorktreeCandidates finds a better
  *  home, else null (proceed as normal). `subject` names what's being recorded,
- *  e.g. `"Foo"` or `finding "Foo"`, for the refusal text. Callers pass file evidence
- *  RAW (posix-normalized only) — misroutedWorktreeCandidates itself understands both
- *  relative and absolute entries, so no pre-relativization step is needed or correct
- *  here (see its doc comment on why relativizing against `root` alone would drop the
- *  exact sibling-worktree case this guard exists to catch). */
-function misrouteGuard(root: string, subject: string, relatedFiles: readonly string[]): ToolResult | null {
+ *  e.g. `"Foo"` or `finding "Foo"`, for the refusal text. `extra`, when given, is
+ *  appended as a further sentence — for a caller (nuryel_write) whose retry needs
+ *  more than just `cwd` moved. Callers pass file evidence RAW (posix-normalized
+ *  only) — misroutedWorktreeCandidates itself understands both relative and
+ *  absolute entries, so no pre-relativization step is needed or correct here (see
+ *  its doc comment on why relativizing against `root` alone would drop the exact
+ *  sibling-worktree case this guard exists to catch). */
+function misrouteGuard(root: string, subject: string, relatedFiles: readonly string[], extra?: string): ToolResult | null {
   const misroutes = misroutedWorktreeCandidates(root, relatedFiles);
   if (!misroutes.length) return null;
   const branch = currentBranch(root);
@@ -572,8 +571,52 @@ function misrouteGuard(root: string, subject: string, relatedFiles: readonly str
   return err(
     `Refusing to record ${subject} in ${root}${branch ? ` (branch ${branch})` : ""}: ` +
     `none of the files it names exist there, but ${where}. This call is very likely missing the cwd ` +
-    `argument (issue #54) — ${retry}, or wherever this work actually happened.`,
+    `argument (issue #54) — ${retry}, or wherever this work actually happened.${extra ? ` ${extra}` : ""}`,
   );
+}
+
+/** The file-evidence field, if any, each nuryel_write facet carries: related_files
+ *  for decisions, affected_files for findings/bugs, and scope (the glob list a
+ *  constraint applies to — the same role hunch_record_correction's
+ *  scope_hint_file plays) for constraints. A TOTAL map over StateFacet, not an
+ *  open-ended ternary chain: adding a facet to STATE_FACETS without adding it
+ *  here is a compile error, not a silent gap (a real facet — constraints — went
+ *  unguarded exactly this way before this map existed). null means the facet
+ *  carries no comparable field and is left unguarded rather than inventing one.
+ *  Exported so tests can assert the mapping directly instead of only probing it
+ *  through live misroute behavior (same reasoning as exporting
+ *  misroutedWorktreeCandidates). */
+export const FILE_EVIDENCE_FIELD: Record<StateFacet, string | null> = {
+  decisions: "related_files",
+  findings: "affected_files",
+  bugs: "affected_files",
+  constraints: "scope",
+  receipts: null,
+  commitments: null,
+  derived: null,
+  entities: null,
+  relationships: null,
+  conventions: null,
+};
+
+/** `record` is caller-supplied z.record(string, unknown) — defensive by
+ *  construction, so anything other than an array of strings reads as no
+ *  evidence instead of throwing. */
+export function fileEvidenceFor(facet: StateFacet, record: Record<string, unknown>): string[] {
+  const field = FILE_EVIDENCE_FIELD[facet];
+  if (!field) return [];
+  const value = record[field];
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+}
+
+/** The misrouteGuard `subject` for a nuryel_write call, matching the
+ *  "<kind> \"<label>\"" style hunch_record_decision/_correction/_finding use for
+ *  the same refusal text. Constraints have no title, only a statement. */
+function nuryelWriteSubject(facet: StateFacet, record: Record<string, unknown>): string {
+  const labelField = facet === "decisions" || facet === "findings" || facet === "bugs" ? "title" : facet === "constraints" ? "statement" : null;
+  const label = labelField ? record[labelField] : undefined;
+  const kind = facet.endsWith("s") ? facet.slice(0, -1) : facet;
+  return `${kind}${typeof label === "string" ? ` "${label.slice(0, 60)}"` : ""} (nuryel_write)`;
 }
 
 /** Where a capture keyed to `home` actually lands: the private overlay directory when
@@ -2647,6 +2690,18 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     },
     async ({ cwd: _cwd, ...input }): Promise<ToolResult> => {
       try {
+        // Same misroute guard as hunch_record_decision/_correction/_finding. Unlike those
+        // three, nuryel_write's `scope`/`principal.grants` are a repository partition tied
+        // to the CURRENT root: retrying with only `cwd` moved re-homes the store but leaves
+        // the request scoped to the old root's partition, which fails loudly (not silently)
+        // on the retry — misrouteGuard's `extra` spells out the additional step.
+        const misroute = misrouteGuard(
+          root,
+          nuryelWriteSubject(input.facet, input.record),
+          fileEvidenceFor(input.facet, input.record).map(toPosixTarget),
+          "Also move `scope` (and `principal.grants`) to the repository partition for that worktree — nuryel_write's scope does not follow `cwd` automatically.",
+        );
+        if (misroute) return misroute;
         // Same cross-process lock `hunch serve` takes: a second agent writing over stdio must
         // not race the HTTP server between the ledger read and the record write.
         const { hunchDir } = stateHomeFor(store, input.scope);

@@ -1,9 +1,9 @@
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -12,7 +12,8 @@ import { HunchStore } from "../src/store/hunchStore.js";
 import { constraintId, findingId, manualDecisionId } from "../src/core/ids.js";
 import { resolveActiveRoot } from "../src/mcp/roots.js";
 import { pathKnownToHistory } from "../src/extractors/git.js";
-import { buildServerWithRootControl, wireClientRoots, misroutedWorktreeCandidates } from "../src/mcp/server.js";
+import { buildServerWithRootControl, wireClientRoots, misroutedWorktreeCandidates, fileEvidenceFor } from "../src/mcp/server.js";
+import { STATE_FACETS } from "../src/core/stateContract.js";
 import { startHookReport } from "../src/core/taskReportHook.js";
 
 function git(root: string, ...args: string[]): string {
@@ -1661,6 +1662,190 @@ test("hunch_record_finding with affected_files that exist nowhere still succeeds
     existsSync(join(fixture.root, ".hunch", "findings", `${findingId(title)}.json`)), true,
     "must actually land at root, not just avoid erroring",
   );
+});
+
+// nuryel_write is a fourth auto-committing, cwd-hinted, file-naming tool with the
+// identical #54 exposure as the three hunch_record_* tools above — its decisions,
+// findings, bugs and constraints facets each carry a file-evidence field just like
+// them (issue #77). These tests reproduce that gap and pin the fix. The nuryel
+// tool group is hidden unless the root already stores state or HUNCH_MCP_TOOLS
+// opts in (src/mcp/toolset.ts), so the helper below enables it and restores it.
+async function nuryelRepoScope(client: Client): Promise<{ kind: string; id: string }> {
+  const caps = await client.callTool({ name: "nuryel_capabilities", arguments: {} });
+  return (caps.structuredContent as { repository: { kind: string; id: string } }).repository;
+}
+
+/** A connected nuryel_write-capable client against `root`, plus its repository scope.
+ *  Registers the same cleanup every one of these tests needs (client, server, the
+ *  HUNCH_MCP_TOOLS override, and an optional extra teardown) in one t.after. */
+async function nuryelClient(t: TestContext, root: string, extraCleanup?: () => void): Promise<{ client: Client; repo: { kind: string; id: string } }> {
+  const priorTools = process.env.HUNCH_MCP_TOOLS;
+  process.env.HUNCH_MCP_TOOLS = "all";
+  const control = buildServerWithRootControl(root);
+  const client = new Client({ name: `nuryel-misroute-test-${Math.random().toString(36).slice(2, 8)}`, version: "0.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  t.after(async () => {
+    await client.close().catch(() => {});
+    await control.server.close().catch(() => {});
+    extraCleanup?.();
+    if (priorTools === undefined) delete process.env.HUNCH_MCP_TOOLS; else process.env.HUNCH_MCP_TOOLS = priorTools;
+  });
+  await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
+  return { client, repo: await nuryelRepoScope(client) };
+}
+
+// One table entry per guarded facet: a minimal record carrying that facet's
+// file-evidence field, pointed at whatever filename the test passes in.
+const NURYEL_MISROUTE_FACETS: ReadonlyArray<{ facet: string; record: (file: string) => Record<string, unknown> }> = [
+  { facet: "decisions", record: (file) => ({ title: "worktree-only.ts drives the retry policy", related_files: [file] }) },
+  { facet: "findings", record: (file) => ({ title: "worktree-only.ts is missing null checks", observation: "audited during work entirely in the linked worktree", affected_files: [file] }) },
+  { facet: "bugs", record: (file) => ({ title: "worktree-only.ts throws on null input", symptom: "observed during work entirely in the linked worktree", affected_files: [file] }) },
+  { facet: "constraints", record: (file) => ({ statement: "worktree-only.ts must not be imported from outside its module", scope: [file] }) },
+];
+
+for (const { facet, record } of NURYEL_MISROUTE_FACETS) {
+  test(`nuryel_write (${facet} facet) is refused when its file-evidence only exists in a linked worktree (issue #77)`, async (t) => {
+    const fixture = repoWithWorktree();
+    writeFileSync(join(fixture.worktree, "worktree-only.ts"), "export const onlyHere = 1;\n");
+    const { client, repo } = await nuryelClient(t, fixture.root, fixture.cleanup);
+    const principal = { id: `misroute-nuryel-${facet}-test`, kind: "agent", grants: [repo] };
+
+    const result = await client.callTool({
+      name: "nuryel_write",
+      arguments: {
+        principal,
+        scope: repo,
+        facet,
+        record: record("worktree-only.ts"),
+        idempotency_key: `nuryel-misroute-${facet}-1`,
+        // Deliberately no `cwd`.
+      },
+    }) as { content: Array<{ text: string }>; isError?: boolean };
+
+    assert.equal(result.isError, true, `should refuse rather than silently commit the ${facet} record against the wrong root`);
+    const text = result.content.map((c) => c.text ?? "").join("\n");
+    assert.ok(text.includes(fixture.worktree), `refusal should name the likely-correct worktree: ${text}`);
+    assert.ok(/cwd/.test(text), `refusal should tell the caller to pass cwd: ${text}`);
+    assert.equal(git(fixture.root, "log", "-1", "--format=%s"), "fixture", `primary checkout must have no new commit (facet ${facet})`);
+  });
+}
+
+test("nuryel_write: retrying the refused decisions-facet call WITH cwd actually lands the record in the worktree (issue #77)", async (t) => {
+  const fixture = repoWithWorktree();
+  writeFileSync(join(fixture.worktree, "worktree-only.ts"), "export const onlyHere = 1;\n");
+  const { client, repo } = await nuryelClient(t, fixture.root, fixture.cleanup);
+  // A `cwd` hint re-homes the store to the worktree's OWN partition (its basename), not
+  // the primary root's — the repository scope legacy facets require must follow it.
+  const worktreeRepo = { ...repo, id: basename(fixture.worktree) };
+  const principal = { id: "misroute-nuryel-remedy-test", kind: "agent", grants: [repo, worktreeRepo] };
+
+  const result = await client.callTool({
+    name: "nuryel_write",
+    arguments: {
+      principal,
+      scope: worktreeRepo,
+      facet: "decisions",
+      record: {
+        title: "worktree-only.ts drives the retry policy",
+        related_files: ["worktree-only.ts"],
+        date: new Date().toISOString(),
+        provenance: { source: "agent_recorded", confidence: 0.8 },
+      },
+      idempotency_key: "nuryel-misroute-decisions-remedy-1",
+      cwd: fixture.worktree,
+    },
+  }) as { content: Array<{ text: string }>; isError?: boolean };
+  assert.equal(!!result.isError, false, `the refusal's own remedy must actually work: ${JSON.stringify(result.content)}`);
+  assert.equal(git(fixture.root, "log", "-1", "--format=%s"), "fixture", "primary checkout must still have no new commit");
+  assert.equal(existsSync(join(fixture.worktree, ".hunch", "decisions")), true, "the decision must land in the worktree");
+});
+
+// Unlike hunch_record_decision/_correction/_finding, nuryel_write's `scope` and
+// `principal.grants` are a repository partition tied to the CURRENT root and do not
+// follow `cwd` — the retry-with-cwd test above proves the REMEDY works when the caller
+// already knows to move scope too; this test pins that the refusal TELLS them to.
+test("nuryel_write's refusal names the extra scope/grants step its retry needs, unlike the three hunch_record_* tools (issue #77)", async (t) => {
+  const fixture = repoWithWorktree();
+  writeFileSync(join(fixture.worktree, "worktree-only.ts"), "export const onlyHere = 1;\n");
+  const { client, repo } = await nuryelClient(t, fixture.root, fixture.cleanup);
+  const principal = { id: "misroute-nuryel-extra-message-test", kind: "agent", grants: [repo] };
+
+  const result = await client.callTool({
+    name: "nuryel_write",
+    arguments: {
+      principal,
+      scope: repo,
+      facet: "decisions",
+      record: { title: "worktree-only.ts drives the retry policy", related_files: ["worktree-only.ts"] },
+      idempotency_key: "nuryel-misroute-extra-message-1",
+      // Deliberately no `cwd`.
+    },
+  }) as { content: Array<{ text: string }>; isError?: boolean };
+
+  assert.equal(result.isError, true);
+  const text = result.content.map((c) => c.text ?? "").join("\n");
+  assert.ok(/also move `scope`/i.test(text), `refusal should tell the caller nuryel_write's scope needs moving too, not just cwd: ${text}`);
+  assert.ok(/principal\.grants/.test(text), `refusal should name principal.grants specifically: ${text}`);
+});
+
+test("nuryel_write with affected_files that exist nowhere still succeeds (no false positive, issue #77)", async (t) => {
+  const fixture = repoWithWorktree();
+  const { client, repo } = await nuryelClient(t, fixture.root, fixture.cleanup);
+  const principal = { id: "misroute-nuryel-negative-test", kind: "agent", grants: [repo] };
+
+  const result = await client.callTool({
+    name: "nuryel_write",
+    arguments: {
+      principal,
+      scope: repo,
+      facet: "findings",
+      record: {
+        id: findingId("future-file audit"),
+        title: "future-file audit",
+        observation: "notes ahead of the file that will land here",
+        affected_files: ["not-yet-created.ts"],
+        observed_at: new Date().toISOString(),
+        provenance: { source: "agent_recorded", confidence: 0.8 },
+      },
+      idempotency_key: "nuryel-misroute-negative-1",
+    },
+  }) as { content: Array<{ text: string }>; isError?: boolean };
+  assert.equal(!!result.isError, false, `no plausible alternate worktree means proceed as before: ${JSON.stringify(result.content)}`);
+  assert.equal(existsSync(join(fixture.root, ".hunch", "findings")), true, "must actually land at root, not just avoid erroring");
+});
+
+// A live MCP probe of one unguarded facet (e.g. receipts) is not enough to prove the
+// boundary is exhaustive: receipts' OWN `scope` field is a Scope object, not an array,
+// so Array.isArray alone would save that specific test even if the mapping were wrong
+// for every unguarded facet. Assert fileEvidenceFor directly instead, over every
+// STATE_FACETS entry, including negative cases where a record carries every guarded
+// facet's field name populated as an array — that must still read as no evidence for
+// an unguarded facet, and must not cross-contaminate a DIFFERENT guarded facet's field.
+test("fileEvidenceFor is a total, exhaustive map over every StateFacet (issue #77)", () => {
+  const guarded: ReadonlyArray<{ facet: string; field: string }> = [
+    { facet: "decisions", field: "related_files" },
+    { facet: "findings", field: "affected_files" },
+    { facet: "bugs", field: "affected_files" },
+    { facet: "constraints", field: "scope" },
+  ];
+  const unguarded: readonly string[] = ["receipts", "commitments", "derived", "entities", "relationships", "conventions"];
+  assert.deepEqual([...guarded.map((g) => g.facet), ...unguarded].sort(), [...STATE_FACETS].sort(), "this test's tables must cover every STATE_FACETS entry, or a new facet could ship unguarded silently again");
+
+  for (const { facet, field } of guarded) {
+    assert.deepEqual(fileEvidenceFor(facet, { [field]: ["a.ts", "b.ts"] }), ["a.ts", "b.ts"], `${facet} should read its ${field} array`);
+    assert.deepEqual(fileEvidenceFor(facet, { [field]: "not-an-array" }), [], `${facet}'s ${field} must require an array, not just exist`);
+    assert.deepEqual(fileEvidenceFor(facet, {}), [], `${facet} with no ${field} at all must read as no evidence`);
+    for (const other of guarded) {
+      if (other.field !== field) assert.deepEqual(fileEvidenceFor(facet, { [other.field]: ["x.ts"] }), [], `${facet} must not read ${other.facet}'s ${other.field}`);
+    }
+  }
+  for (const facet of unguarded) {
+    // Every guarded facet's field name, populated as an array, still must not leak
+    // into an unguarded facet's result — this is the exact shape receipts' own `scope`
+    // (an OBJECT, not an array) failed to pin in the round-1 test.
+    const everyGuardedFieldPopulated = Object.fromEntries(guarded.map((g) => [g.field, ["x.ts"]]));
+    assert.deepEqual(fileEvidenceFor(facet, everyGuardedFieldPopulated), [], `${facet} must stay unguarded even when every guarded facet's field name is present as an array`);
+  }
 });
 
 test("a cwd hint that fails to activate (invalid team.json) reports the error and leaves the previous root active", async (t) => {
