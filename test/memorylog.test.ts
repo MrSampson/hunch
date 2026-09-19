@@ -43,6 +43,28 @@ test("parseMemoryLog: classifies capture / adopt / prune and extracts ids, newes
   assert.deepEqual(moves[3]!.decisionIds, ["dec_5e5555"]);
 });
 
+test("parseMemoryLog: classifies retire from a retire-constraint commit, distinct from edit/supersede", () => {
+  const raw = [
+    `${H}ffff6666\tffff666\t2026-09-19T10:00:00Z\thunch: retire constraint con_abc123`,
+    "M\t.hunch/constraints/con_abc123.json",
+  ].join("\n");
+  const moves = parseMemoryLog(raw);
+  assert.equal(moves.length, 1);
+  assert.equal(moves[0]!.kind, "retire");
+  assert.deepEqual(moves[0]!.otherIds, ["con_abc123"]);
+});
+
+test("parseMemoryLog: a subject naming both retire and a rival keyword classifies as retire (retire wins precedence)", () => {
+  // classify() must check /\bretire\b/ before /\brepair\b/, /\badopt/, /supersed/ --
+  // otherwise a retire commit whose subject happens to also contain one of those
+  // words would be misclassified as that rival kind instead of retire.
+  const raw = [
+    `${H}gggg7777\tgggg777\t2026-09-19T10:05:00Z\thunch: retire constraint con_def456 (supersedes and repairs old guidance)`,
+    "M\t.hunch/constraints/con_def456.json",
+  ].join("\n");
+  assert.equal(parseMemoryLog(raw)[0]!.kind, "retire");
+});
+
 test("parseMemoryLog: empty input → no moves", () => {
   assert.deepEqual(parseMemoryLog(""), []);
 });

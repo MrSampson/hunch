@@ -1,0 +1,91 @@
+{
+  "id": "dec_83f670aaa0",
+  "title": "Invalidate-don't-delete pattern for retiring constraints",
+  "topic": null,
+  "status": "accepted",
+  "context": "Constraints had no CLI retirement path; hand-editing JSON was the only way. Decisions already used invalidate-don't-delete via supersede, preserving history while stopping active surfacing. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.); con_902759b3dc (All JSON writes to .hunch/ must be atomic (temp-file + rename) so an interrupted write can never truncate the index); con_a87360128b (Semantic vectors are a derived layer in SQLite, never the source of truth; reconcile by content hash on reindex).",
+  "decision": "retire-constraint command sets status='retired' and valid_to=now instead of deleting, mirroring the decision supersede pattern. Idempotent-refuse (error on nonexistent or already-retired) rather than silent no-op.",
+  "consequences": [
+    "Retired constraints remain queryable in full history (not destructively removed)",
+    "Expired constraints stop appearing in active views (Top invariants, hunch check) but audit trail persists",
+    "Consistent invalidation semantics across decisions and constraints",
+    "CLI rejects redundant retire attempts with explicit error, making user intent visible"
+  ],
+  "alternatives_rejected": [
+    "Destructively delete constraint records (loses audit trail and history)",
+    "Silent idempotent no-op on already-retired constraints (obscures accidental double-retirement)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Destructively delete constraint records (loses audit trail and history)",
+      "scope": [
+        "src/cli/**",
+        "src/store/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Silent idempotent no-op on already-retired constraints (obscures accidental double-retirement)",
+      "scope": [
+        "src/cli/**",
+        "src/store/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_50037f41a9",
+    "cmp_a94a8fe5cc",
+    "cmp_cdfb395bb7",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/cli/index.ts",
+    "src/store/hunchStore.ts",
+    "test/retire-constraint-cli.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "712d0cb5",
+  "valid_from": "2026-09-19T17:05:41+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:712d0cb5",
+      "synth:provider=claude-cli",
+      "branch:27-retire-constraint-cli",
+      "src/cli/index.ts",
+      "src/store/hunchStore.ts",
+      "test/retire-constraint-cli.test.ts"
+    ],
+    "last_verified": "2026-09-19T15:05:57.366Z"
+  },
+  "date": "2026-09-19T17:05:41+02:00"
+}
