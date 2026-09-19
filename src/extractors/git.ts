@@ -1041,7 +1041,17 @@ function overlayAttributeSourcesAreSafe(hunchDir: string, env: NodeJS.ProcessEnv
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         if (dir === canonicalHunch && entry.name === ".hunch-commit.lock") continue;
         const path = join(dir, entry.name);
-        const stat = lstatSync(path);
+        let stat;
+        try {
+          stat = lstatSync(path);
+        } catch (error) {
+          // A concurrent writer's own atomic temp-file+rename (con_902759b3dc) can make an
+          // entry this readdir just listed vanish before lstat sees it -- e.g. a sibling
+          // clone's in-flight JSON write. That's benign churn, not an unsafe tree; only a
+          // real stat failure (permissions, I/O error) should refuse the commit.
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+          throw error;
+        }
         if (stat.isSymbolicLink()) return false;
         if (stat.isDirectory()) {
           if (!walk(path)) return false;
