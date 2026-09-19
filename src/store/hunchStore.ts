@@ -1924,6 +1924,21 @@ export class HunchStore {
     return closed;
   }
 
+  /** Invalidate, don't delete: close a constraint's valid-time window (status → "retired",
+   *  `valid_to` set to now) so a stale invariant stops surfacing in "Top invariants" and
+   *  `hunch check` while its full history stays queryable. Mirrors `supersede`'s
+   *  invalidate-not-erase shape for decisions. Returns the updated constraint, or null if
+   *  no constraint with that id exists in the public store. Refusing an already-retired
+   *  constraint (idempotent-refuse, not a silent no-op) is the CLI's job, since it needs
+   *  the pre-write status to report *when* it was retired. */
+  retireConstraint(id: string): Constraint | null {
+    const existing = this.json.get("constraints", id);
+    if (!existing) return null;
+    const retired: Constraint = { ...existing, status: "retired", valid_to: new Date().toISOString() };
+    this.json.put("constraints", retired);
+    return retired;
+  }
+
   /** Regression Guard: detect a change RE-INTRODUCING something an in-force
    *  decision deliberately removed. Matches the added symbols/deps of a diff
    *  against the `retired` signal of decisions concerning the touched files. A hit

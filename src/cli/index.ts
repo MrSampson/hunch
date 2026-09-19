@@ -3653,6 +3653,35 @@ program
     store.close();
   });
 
+// ---- retire-constraint (close a constraint's valid-time window) -----------
+program
+  .command("retire-constraint")
+  .description('Retire a constraint (invalidate, don\'t delete): closes its valid-time window so it stops surfacing in "Top invariants" and `hunch check`, while its history stays queryable. Hand-editing the JSON is no longer the only way.')
+  .argument("<id>", "constraint id (con_*)")
+  .option("--reason <text>", "why it's being retired (recorded in the commit message)")
+  .action((id: string, opts: { reason?: string }) => {
+    const { store, root } = storeFor();
+    const existing = store.json.get("constraints", id);
+    if (!existing) {
+      const existsInOtherHome = !!store.getPrivateRec("constraints", id);
+      store.close();
+      return fail(existsInOtherHome
+        ? `constraint "${id}" exists only in the private overlay; retire-constraint only handles public constraints`
+        : `constraint "${id}" not found`);
+    }
+    if (existing.status === "retired") {
+      store.close();
+      return fail(`constraint "${id}" is already retired (since ${existing.valid_to?.slice(0, 10) ?? "unknown"})`);
+    }
+    const retired = store.retireConstraint(id);
+    if (!retired) { store.close(); return fail(`constraint "${id}" not found`); }
+    store.reindex();
+    const message = opts.reason ? `hunch: retire constraint ${id} (${opts.reason})` : `hunch: retire constraint ${id}`;
+    pumpMemoryHome(store, root, "public", message);
+    console.log(`✓ ${id} retired — window closed at ${retired.valid_to?.slice(0, 10)}.${opts.reason ? ` Reason: ${opts.reason}` : ""}`);
+    store.close();
+  });
+
 // ---- test (failure-learning loop) -----------------------------------------
 program
   .command("test")
