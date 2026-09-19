@@ -12,8 +12,8 @@ import { HunchStore } from "../src/store/hunchStore.js";
 import { constraintId, findingId, manualDecisionId } from "../src/core/ids.js";
 import { resolveActiveRoot } from "../src/mcp/roots.js";
 import { pathKnownToHistory } from "../src/extractors/git.js";
-import { buildServerWithRootControl, wireClientRoots, misroutedWorktreeCandidates } from "../src/mcp/server.js";
-import { stateHash } from "../src/core/stateContract.js";
+import { buildServerWithRootControl, wireClientRoots, misroutedWorktreeCandidates, fileEvidenceFor } from "../src/mcp/server.js";
+import { STATE_FACETS } from "../src/core/stateContract.js";
 import { startHookReport } from "../src/core/taskReportHook.js";
 
 function git(root: string, ...args: string[]): string {
@@ -1760,6 +1760,34 @@ test("nuryel_write: retrying the refused decisions-facet call WITH cwd actually 
   assert.equal(existsSync(join(fixture.worktree, ".hunch", "decisions")), true, "the decision must land in the worktree");
 });
 
+// Unlike hunch_record_decision/_correction/_finding, nuryel_write's `scope` and
+// `principal.grants` are a repository partition tied to the CURRENT root and do not
+// follow `cwd` — the retry-with-cwd test above proves the REMEDY works when the caller
+// already knows to move scope too; this test pins that the refusal TELLS them to.
+test("nuryel_write's refusal names the extra scope/grants step its retry needs, unlike the three hunch_record_* tools (issue #77)", async (t) => {
+  const fixture = repoWithWorktree();
+  writeFileSync(join(fixture.worktree, "worktree-only.ts"), "export const onlyHere = 1;\n");
+  const { client, repo } = await nuryelClient(t, fixture.root, fixture.cleanup);
+  const principal = { id: "misroute-nuryel-extra-message-test", kind: "agent", grants: [repo] };
+
+  const result = await client.callTool({
+    name: "nuryel_write",
+    arguments: {
+      principal,
+      scope: repo,
+      facet: "decisions",
+      record: { title: "worktree-only.ts drives the retry policy", related_files: ["worktree-only.ts"] },
+      idempotency_key: "nuryel-misroute-extra-message-1",
+      // Deliberately no `cwd`.
+    },
+  }) as { content: Array<{ text: string }>; isError?: boolean };
+
+  assert.equal(result.isError, true);
+  const text = result.content.map((c) => c.text ?? "").join("\n");
+  assert.ok(/also move `scope`/i.test(text), `refusal should tell the caller nuryel_write's scope needs moving too, not just cwd: ${text}`);
+  assert.ok(/principal\.grants/.test(text), `refusal should name principal.grants specifically: ${text}`);
+});
+
 test("nuryel_write with affected_files that exist nowhere still succeeds (no false positive, issue #77)", async (t) => {
   const fixture = repoWithWorktree();
   const { client, repo } = await nuryelClient(t, fixture.root, fixture.cleanup);
@@ -1786,37 +1814,38 @@ test("nuryel_write with affected_files that exist nowhere still succeeds (no fal
   assert.equal(existsSync(join(fixture.root, ".hunch", "findings")), true, "must actually land at root, not just avoid erroring");
 });
 
-test("nuryel_write is unaffected by the misroute guard for facets with no file-evidence field, e.g. receipts (issue #77)", async (t) => {
-  const fixture = repoWithWorktree();
-  writeFileSync(join(fixture.worktree, "worktree-only.ts"), "export const onlyHere = 1;\n");
-  const { client, repo } = await nuryelClient(t, fixture.root, fixture.cleanup);
-  const principal = { id: "misroute-nuryel-receipts-test", kind: "agent", grants: [repo] };
+// A live MCP probe of one unguarded facet (e.g. receipts) is not enough to prove the
+// boundary is exhaustive: receipts' OWN `scope` field is a Scope object, not an array,
+// so Array.isArray alone would save that specific test even if the mapping were wrong
+// for every unguarded facet. Assert fileEvidenceFor directly instead, over every
+// STATE_FACETS entry, including negative cases where a record carries every guarded
+// facet's field name populated as an array — that must still read as no evidence for
+// an unguarded facet, and must not cross-contaminate a DIFFERENT guarded facet's field.
+test("fileEvidenceFor is a total, exhaustive map over every StateFacet (issue #77)", () => {
+  const guarded: ReadonlyArray<{ facet: string; field: string }> = [
+    { facet: "decisions", field: "related_files" },
+    { facet: "findings", field: "affected_files" },
+    { facet: "bugs", field: "affected_files" },
+    { facet: "constraints", field: "scope" },
+  ];
+  const unguarded: readonly string[] = ["receipts", "commitments", "derived", "entities", "relationships", "conventions"];
+  assert.deepEqual([...guarded.map((g) => g.facet), ...unguarded].sort(), [...STATE_FACETS].sort(), "this test's tables must cover every STATE_FACETS entry, or a new facet could ship unguarded silently again");
 
-  // A receipts record carries no related_files/affected_files/scope field at all — even
-  // though "worktree-only.ts" only exists in the linked worktree, there is no file
-  // evidence for the guard to read here, so it must stay silent (issue #77: don't
-  // invent a field the facet doesn't have).
-  const result = await client.callTool({
-    name: "nuryel_write",
-    arguments: {
-      principal,
-      scope: repo,
-      facet: "receipts",
-      record: {
-        schema: "nuryel.receipt/1",
-        scope: repo,
-        actor: "misroute-nuryel-receipts-test",
-        action_kind: "add_comment",
-        target: { system: "crm", object_type: "event", object_key: "1", version: "1", observed_at: new Date().toISOString() },
-        request_fingerprint: stateHash({ eventId: 1 }),
-        state: "verified",
-        occurred_at: new Date().toISOString(),
-        provenance: { source: "agent_recorded", confidence: 0.8 },
-      },
-      idempotency_key: "nuryel-misroute-receipts-1",
-    },
-  }) as { content: Array<{ text: string }>; isError?: boolean };
-  assert.equal(!!result.isError, false, `receipts have no file-evidence field, so the misroute guard must not fire: ${JSON.stringify(result.content)}`);
+  for (const { facet, field } of guarded) {
+    assert.deepEqual(fileEvidenceFor(facet, { [field]: ["a.ts", "b.ts"] }), ["a.ts", "b.ts"], `${facet} should read its ${field} array`);
+    assert.deepEqual(fileEvidenceFor(facet, { [field]: "not-an-array" }), [], `${facet}'s ${field} must require an array, not just exist`);
+    assert.deepEqual(fileEvidenceFor(facet, {}), [], `${facet} with no ${field} at all must read as no evidence`);
+    for (const other of guarded) {
+      if (other.field !== field) assert.deepEqual(fileEvidenceFor(facet, { [other.field]: ["x.ts"] }), [], `${facet} must not read ${other.facet}'s ${other.field}`);
+    }
+  }
+  for (const facet of unguarded) {
+    // Every guarded facet's field name, populated as an array, still must not leak
+    // into an unguarded facet's result — this is the exact shape receipts' own `scope`
+    // (an OBJECT, not an array) failed to pin in the round-1 test.
+    const everyGuardedFieldPopulated = Object.fromEntries(guarded.map((g) => [g.field, ["x.ts"]]));
+    assert.deepEqual(fileEvidenceFor(facet, everyGuardedFieldPopulated), [], `${facet} must stay unguarded even when every guarded facet's field name is present as an array`);
+  }
 });
 
 test("a cwd hint that fails to activate (invalid team.json) reports the error and leaves the previous root active", async (t) => {
