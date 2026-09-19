@@ -1,0 +1,119 @@
+{
+  "id": "dec_03593ff55c",
+  "title": "Push precondition validation from store to caller (CLI)",
+  "topic": null,
+  "status": "accepted",
+  "context": "retireConstraint accepted an optional pre-fetched constraint to skip a redundant lookup. The CLI was the only caller and already fetched the record to distinguish 'not found' from 'already retired' before deciding whether to write at all. The optional path was dead code. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.); con_7217ab24ab (Regression guard: \"Flaky test failure under parallelism: native tree-sitter module resolution race on Windows\" must not recur.); con_8460b6770f (Config/provider writers must merge idempotently into existing user files and refuse to clobber an unparseable file); con_902759b3dc (All JSON writes to .hunch/ must be atomic (temp-file + rename) so an interrupted write can never truncate the index); con_91e6074b66 (Capability pages for functionality shipped in the current release must state that it ships today and must not retain the stale banner 'In development for the next release.'); con_a87360128b (Semantic vectors are a derived layer in SQLite, never the source of truth; reconcile by content hash on reindex).",
+  "decision": "Changed retireConstraint(id, known?) → Constraint | null to retireConstraint(existing) → Constraint. Callers must now fetch and validate preconditions before calling; the store performs only the write.",
+  "consequences": [
+    "Store API is simpler: no nullable return, no optional fallback parameter, no internal lookup",
+    "CLI validation logic stays in CLI, not split between two layers",
+    "Removes dead code path (the not-found guard in CLI action)",
+    "Makes the contract explicit: this method assumes valid input, caller owns precondition checking"
+  ],
+  "alternatives_rejected": [
+    "Keep the id lookup in store (hides the constraint fetch from caller, duplicates work already done)",
+    "Keep nullable return with optional parameter (preserves unused defensive path, adds API complexity)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Keep the id lookup in store (hides the constraint fetch from caller, duplicates work already done)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**",
+        "docs/**",
+        "src/cli/**",
+        "src/integrations/**",
+        "src/store/**",
+        "test/**",
+        "vscode-extension/**",
+        "vscode-extension/src/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Keep nullable return with optional parameter (preserves unused defensive path, adds API complexity)",
+      "scope": [
+        ".github/**",
+        ".windsurf/rules/**",
+        "docs/**",
+        "src/cli/**",
+        "src/integrations/**",
+        "src/store/**",
+        "test/**",
+        "vscode-extension/**",
+        "vscode-extension/src/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_4c40eab00f",
+    "cmp_50037f41a9",
+    "cmp_555e43ab1a",
+    "cmp_863ac67d4a",
+    "cmp_a94a8fe5cc",
+    "cmp_cdfb395bb7",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    ".github/copilot-instructions.md",
+    ".windsurf/rules/hunch.md",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "docs/cookbook.md",
+    "src/cli/index.ts",
+    "src/integrations/claudemd.ts",
+    "src/store/hunchStore.ts",
+    "test/retire-constraint-cli.test.ts",
+    "vscode-extension/README.md",
+    "vscode-extension/src/memoryView.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "ff484d3b",
+  "valid_from": "2026-09-19T17:56:38+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:ff484d3b",
+      "synth:provider=claude-cli",
+      "branch:27-retire-constraint-cli",
+      ".github/copilot-instructions.md",
+      ".windsurf/rules/hunch.md",
+      "AGENTS.md",
+      "CLAUDE.md",
+      "docs/cookbook.md",
+      "src/cli/index.ts",
+      "src/integrations/claudemd.ts",
+      "src/store/hunchStore.ts"
+    ],
+    "last_verified": "2026-09-19T15:56:53.589Z"
+  },
+  "date": "2026-09-19T17:56:38+02:00"
+}
