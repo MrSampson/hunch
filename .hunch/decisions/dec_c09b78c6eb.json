@@ -1,0 +1,104 @@
+{
+  "id": "dec_c09b78c6eb",
+  "title": "Extract facet-to-field mapping as reusable guard extension point",
+  "topic": null,
+  "status": "accepted",
+  "context": "nuryel_write is a fourth auto-committing tool with identical worktree-misroute exposure as the three already-guarded tools, but was left uncovered. Adding a guard per tool risks duplication and divergence; the guard logic itself is already shared. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.); con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
+  "decision": "Extract the facet-to-file-evidence-field mapping into a `fileEvidenceFor` helper function, allowing the existing `misrouteGuard` to work for any tool that names files, rather than embedding field-name knowledge in each tool's handler.",
+  "consequences": [
+    "nuryel_write's decisions/findings/bugs facets are now protected from committing to the wrong worktree when cwd is omitted",
+    "The facet-to-field-name mapping is centralized and explicit, making coverage boundaries visible and preventing silent gaps",
+    "Future auto-committing tools can reuse the same guard pattern without duplication",
+    "bugs facet is protected even though the three older tools never wrote it (consistent coverage)"
+  ],
+  "alternatives_rejected": [
+    "Duplicate misrouteGuard logic in nuryel_write's handler (code duplication, divergence risk)",
+    "Create a separate guard function specific to nuryel_write (unnecessary proliferation)",
+    "Leave nuryel_write unguarded but document it separately (silently defers the hazard)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Duplicate misrouteGuard logic in nuryel_write's handler (code duplication, divergence risk)",
+      "scope": [
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Create a separate guard function specific to nuryel_write (unnecessary proliferation)",
+      "scope": [
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Leave nuryel_write unguarded but document it separately (silently defers the hazard)",
+      "scope": [
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_a94a8fe5cc",
+    "cmp_dfa5b5acde",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/mcp/server.ts",
+    "test/mcproots.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "c3251612",
+  "valid_from": "2026-09-19T16:56:02+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft+summary",
+    "confidence": 0.5,
+    "evidence": [
+      "commit:c3251612",
+      "synth:provider=claude-cli",
+      "branch:77-guard-nuryel-write",
+      "src/mcp/server.ts",
+      "test/mcproots.test.ts"
+    ],
+    "last_verified": "2026-09-19T14:56:37.823Z"
+  },
+  "date": "2026-09-19T16:56:02+02:00"
+}
