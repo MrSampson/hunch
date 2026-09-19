@@ -546,25 +546,28 @@ function existsUnder(dir: string, f: string, worktrees: readonly string[]): bool
   return isFile(join(dir, f));
 }
 
-/** Normalizes file evidence for the misroute guard specifically (issue #80). A
- *  literal backslash byte is a legal POSIX filename character, not a path
- *  separator, so blindly running every entry through `toPosixTarget` before
+/** Normalizes file evidence for the misroute guard specifically. A literal
+ *  backslash byte is a legal POSIX filename character, not a path separator,
+ *  so blindly running every entry through `toPosixTarget` before
  *  `misroutedWorktreeCandidates` sees it can rewrite a real file's name into a
- *  fake extra path segment — turning a correctly-homed write into a false
- *  misroute refusal. The string alone can't disambiguate "Windows separator"
- *  from "literal POSIX byte" (see `toPosixTarget`'s own doc comment for the
- *  Windows-path case it must keep handling), so this asks the filesystem
- *  instead: when the RAW, un-normalized entry already names a real file at
- *  `root`, that settles it — the byte was literal — and the raw string is
- *  kept as-is, bypassing `toPosixTarget` entirely. Otherwise it normalizes
- *  through `toPosixTarget` exactly as before, preserving the legitimate
- *  Windows-separator case (a Windows-style path can never collide with a real
- *  POSIX file, since `\` cannot appear in a Windows filename to begin with).
- *  Scoped to the three misroute-guard call sites only — the stored
- *  related_files/affected_files fields are still normalized separately and
- *  unaffected by this. */
+ *  fake extra path segment. The string alone can't disambiguate "Windows
+ *  separator" from "literal POSIX byte", so this asks the filesystem AND git
+ *  history instead: when the RAW, un-normalized entry already names a real
+ *  file at `root`, OR is a relative path git already knows was tracked (and
+ *  possibly since deleted/renamed) there, that settles it — the byte was
+ *  literal — and the raw string is kept as-is, bypassing `toPosixTarget`
+ *  entirely. Otherwise it normalizes through `toPosixTarget` exactly as
+ *  before, preserving the legitimate Windows-separator case (a Windows-style
+ *  path can never collide with a real or once-tracked POSIX file, since `\`
+ *  cannot appear in a Windows filename to begin with). Scoped to the three
+ *  misroute-guard call sites only — the stored related_files/affected_files
+ *  fields are still normalized separately and unaffected by this. */
+function namesRealEvidence(root: string, f: string): boolean {
+  return isFile(isAbsolute(f) ? f : join(root, f)) || (!isAbsolute(f) && pathKnownToHistory(root, f));
+}
+
 export function guardEvidence(root: string, files: readonly string[]): string[] {
-  return files.map((f) => (f && isFile(isAbsolute(f) ? f : join(root, f)) ? f : toPosixTarget(f)));
+  return files.map((f) => (f && namesRealEvidence(root, f) ? f : toPosixTarget(f)));
 }
 
 /** Shared misroute-guard refusal for the three auto-committing write tools that
@@ -2405,13 +2408,12 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         // Same misroute guard as hunch_record_decision (issue #54, extended here by #62):
         // a scope_hint_file that exists in a sibling linked worktree but not here is very
         // likely a subagent that forgot cwd, about to silently scope-and-commit a
-        // constraint against the wrong checkout. Passed RAW (guardEvidence-normalized
-        // only, issue #80) — misroutedWorktreeCandidates understands absolute paths
-        // itself (see its doc comment). The constraint's own scope glob below is a
-        // DIFFERENT job, still relativized against root by buildCorrectionConstraint
-        // internally — a sibling worktree's absolute path could never become a usable
-        // scope glob against root either way, only this guard's job of naming WHICH
-        // worktree it belongs to.
+        // constraint against the wrong checkout. Passed RAW (guardEvidence-normalized) —
+        // misroutedWorktreeCandidates understands absolute paths itself (see its doc
+        // comment). The constraint's own scope glob below is a DIFFERENT job, still
+        // relativized against root by buildCorrectionConstraint internally — a sibling
+        // worktree's absolute path could never become a usable scope glob against root
+        // either way, only this guard's job of naming WHICH worktree it belongs to.
         const correctionMisroute = misrouteGuard(
           root,
           `correction "${input.rule.slice(0, 60)}"`,

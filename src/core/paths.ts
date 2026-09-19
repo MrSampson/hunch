@@ -15,10 +15,9 @@ export const HUNCH_DIR = ".hunch";
  *  could be a Windows-style path with a literal separator, or a POSIX path
  *  whose filename legitimately contains a backslash BYTE (illegal on Windows,
  *  legal on POSIX/git) — the string alone can't say which, and this function
- *  always assumes the former. A caller that can check the filesystem and needs
- *  the correct answer for a REAL file (e.g. the misroute guard in
- *  src/mcp/server.ts, issue #80) should decide from disk instead of trusting
- *  this blindly; see `guardEvidence` there for that pattern. */
+ *  always assumes the former. A caller that can check the filesystem/git
+ *  history and needs the correct answer for a real file should decide from
+ *  that evidence instead of trusting this blindly. */
 export function toPosixTarget(target: string): string {
   return target.replace(/\\/g, "/").replace(/^\.\//, "");
 }

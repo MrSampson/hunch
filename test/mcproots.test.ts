@@ -786,8 +786,7 @@ test("misroutedWorktreeCandidates: direct unit coverage (issue #54 review, I2)",
   }
 });
 
-test("guardEvidence: a literal POSIX backslash byte in a real filename must not be misread as a path separator (issue #80)", () => {
-  if (process.platform === "win32") return; // a literal backslash byte in a filename cannot exist on Windows
+test("guardEvidence: a literal POSIX backslash byte in a real filename must not be misread as a path separator (issue #80)", { skip: process.platform === "win32" ? "a literal backslash byte in a filename cannot exist on Windows" : false }, () => {
   const fixture = repoWithWorktree();
   const evidence = "docs/notes\\notes.md"; // one literal backslash byte, not a separator
   mkdirSync(join(fixture.root, "docs"), { recursive: true });
@@ -832,6 +831,109 @@ test("guardEvidence: a genuine Windows-style separator still normalizes when no 
     );
   } finally {
     fixture.cleanup();
+  }
+});
+
+test("guardEvidence: a DELETED file with a literal backslash byte must not be misread as a path separator (issue #80 C1)", { skip: process.platform === "win32" ? "a literal backslash byte in a filename cannot exist on Windows" : false }, () => {
+  const root = repo("hunch-roots-backslash-delete-");
+  const name = "docs/notes\\notes.md"; // one literal backslash byte, not a separator
+  mkdirSync(join(root, "docs"), { recursive: true });
+  writeFileSync(join(root, "docs", "notes\\notes.md"), "root note\n");
+  git(root, "add", "-A");
+  git(root, "commit", "-qm", "add docs/notes-backslash-notes.md");
+  const worktree = `${root}-wt`;
+  git(root, "worktree", "add", "-q", "-b", "feature-backslash-delete", worktree);
+  git(root, "rm", "-q", "--", name);
+  git(root, "commit", "-qm", "drop docs/notes-backslash-notes.md");
+  // An unrelated file at the posix-mangled path in the sibling worktree is what
+  // makes this reproduce a false positive: existsUnder alone can't vouch for the
+  // deleted file (nothing on disk to check), so only pathKnownToHistory can.
+  mkdirSync(join(worktree, "docs", "notes"), { recursive: true });
+  writeFileSync(join(worktree, "docs", "notes", "notes.md"), "unrelated sibling note\n");
+  try {
+    assert.deepEqual(
+      guardEvidence(root, [name]),
+      [name],
+      "a file git already knows by its raw (backslash) name must not be posix-mangled by the guard",
+    );
+    assert.deepEqual(
+      misroutedWorktreeCandidates(root, guardEvidence(root, [name])),
+      [],
+      "deleting a correctly-homed file whose name contains a literal backslash byte must not be refused as a misroute",
+    );
+  } finally {
+    try { git(root, "worktree", "remove", "--force", worktree); } catch { /* best effort */ }
+    try { rmSync(worktree, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+    try { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp only */ }
+  }
+});
+
+test("guardEvidence: an ABSOLUTE path naming a real backslash-byte file in a sibling worktree is now correctly flagged (fixes a pre-existing false negative)", { skip: process.platform === "win32" ? "a literal backslash byte in a filename cannot exist on Windows" : false }, () => {
+  const fixture = repoWithWorktree();
+  mkdirSync(join(fixture.worktree, "docs"), { recursive: true });
+  writeFileSync(join(fixture.worktree, "docs", "notes\\notes.md"), "worktree note\n");
+  const absoluteEvidence = join(fixture.worktree, "docs", "notes\\notes.md");
+  try {
+    // Before this fix, an absolute evidence path was unconditionally posix-mangled
+    // before misroutedWorktreeCandidates ever saw it, so the mangled path (which
+    // names nothing real anywhere) silently produced no candidates at all -- a
+    // false NEGATIVE, the opposite failure mode from the disk-exists case: a
+    // genuinely misrouted write with a literal-backslash-byte filename slipped
+    // through instead of being refused.
+    assert.deepEqual(guardEvidence(fixture.root, [absoluteEvidence]), [absoluteEvidence]);
+    assert.deepEqual(
+      misroutedWorktreeCandidates(fixture.root, guardEvidence(fixture.root, [absoluteEvidence])),
+      [fixture.worktree],
+      "an absolute path naming a real backslash-byte file that lives only in a sibling worktree must be flagged",
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("hunch_record_decision / hunch_record_correction / hunch_record_finding each route their file evidence through guardEvidence, not a bare toPosixTarget (issue #80 R3)", { skip: process.platform === "win32" ? "a literal backslash byte in a filename cannot exist on Windows" : false }, async (t) => {
+  const cases: Array<{ tool: string; args: (evidence: string) => Record<string, unknown> }> = [
+    {
+      tool: "hunch_record_decision",
+      args: (f) => ({ decision: { title: "backslash evidence probe", context: "c", decision: "d", related_files: [f] } }),
+    },
+    {
+      tool: "hunch_record_correction",
+      args: (f) => ({ rule: "backslash evidence probe must not misroute", scope_hint_file: f }),
+    },
+    {
+      tool: "hunch_record_finding",
+      args: (f) => ({ finding: { title: "backslash evidence probe", observation: "o", affected_files: [f] } }),
+    },
+  ];
+
+  for (const { tool, args } of cases) {
+    const fixture = repoWithWorktree();
+    const evidence = "docs/notes\\notes.md";
+    mkdirSync(join(fixture.root, "docs"), { recursive: true });
+    writeFileSync(join(fixture.root, "docs", "notes\\notes.md"), "root note\n");
+    mkdirSync(join(fixture.worktree, "docs", "notes"), { recursive: true });
+    writeFileSync(join(fixture.worktree, "docs", "notes", "notes.md"), "unrelated sibling note\n");
+    const control = buildServerWithRootControl(fixture.root);
+    const client = new Client({ name: `misroute-guard-wiring-${tool}`, version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
+      const result = await client.callTool({ name: tool, arguments: args(evidence) }) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
+      assert.equal(
+        !!result.isError,
+        false,
+        `${tool} must not refuse a correctly-homed write whose evidence is a real file with a literal backslash byte: ` +
+          `${(result.content ?? []).map((c) => c.text ?? "").join("\n")}`,
+      );
+    } finally {
+      await client.close().catch(() => {});
+      await control.server.close().catch(() => {});
+      fixture.cleanup();
+    }
   }
 });
 
