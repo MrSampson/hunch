@@ -427,13 +427,17 @@ export function writeAntigravityHooks(root: string, inv: Invocation): string {
 
 /** Every generated grounding doc's writer, keyed by its relative path — the single table
  *  every consumer (regenerateGrounding, groundingTargets, tests) reads from, so a provider
- *  can never appear in one and not another. */
+ *  can never appear in one and not another. Keys are always forward-slash: they're compared
+ *  against .gitattributes content (hunchAttributesAreSafe, always POSIX-style regardless of
+ *  OS) and passed to git as pathspecs (isGitCleanPath/headFileContent), both of which treat a
+ *  Windows path.join backslash as literally not matching -- join(".github", "x") produces
+ *  ".github\x" on Windows, which is never equal to the ".github/x" every consumer expects. */
 const GROUNDING_WRITERS = {
   "CLAUDE.md": updateClaudeMd,
   "AGENTS.md": writeAgentsMd,
-  [join(".github", "copilot-instructions.md")]: writeCopilotInstructions,
-  [join(".cursor", "rules", "hunch.mdc")]: writeCursorRule,
-  [join(".windsurf", "rules", "hunch.md")]: writeWindsurfRule,
+  ".github/copilot-instructions.md": writeCopilotInstructions,
+  ".cursor/rules/hunch.mdc": writeCursorRule,
+  ".windsurf/rules/hunch.md": writeWindsurfRule,
 } as const satisfies Record<string, (root: string, store: HunchStore) => string>;
 
 /** The relative paths of every generated grounding doc, in GROUNDING_WRITERS order —
@@ -476,8 +480,8 @@ export function refreshExistingGrounding(root: string, store: HunchStore): strin
  *  in full). Any dirt in these is generated dirt by contract — there is no user
  *  prose to protect, so a stale copy is always safe to regenerate and stage. */
 const WHOLLY_OWNED_GROUNDING = new Set([
-  join(".cursor", "rules", "hunch.mdc"),
-  join(".windsurf", "rules", "hunch.md"),
+  ".cursor/rules/hunch.mdc",
+  ".windsurf/rules/hunch.md",
 ]);
 
 /** Is a DIRTY grounding doc's divergence from HEAD confined to generated content?
