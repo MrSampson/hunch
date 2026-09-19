@@ -1046,10 +1046,14 @@ function overlayAttributeSourcesAreSafe(hunchDir: string, env: NodeJS.ProcessEnv
           stat = lstatSync(path);
         } catch (error) {
           // A concurrent writer's own atomic temp-file+rename (con_902759b3dc) can make an
-          // entry this readdir just listed vanish before lstat sees it -- e.g. a sibling
-          // clone's in-flight JSON write. That's benign churn, not an unsafe tree; only a
-          // real stat failure (permissions, I/O error) should refuse the commit.
-          if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+          // entry this readdir just listed vanish (ENOENT) before lstat sees it -- e.g. a
+          // sibling clone's in-flight JSON write. On Windows the same contention can
+          // surface as EPERM/EBUSY/EACCES instead: renameSync there can't replace a file
+          // another process holds open, even for read (io.ts's isRenameContention, the
+          // same class). Either way this is a trusted sibling's own atomic write in
+          // progress, not an unsafe tree; only a genuinely unexpected error refuses.
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code === "ENOENT" || code === "EPERM" || code === "EBUSY" || code === "EACCES") continue;
           throw error;
         }
         if (stat.isSymbolicLink()) return false;

@@ -30,11 +30,15 @@ export function safeOverlayTree(root: string): boolean {
           stat = lstatSync(entry);
           real = realpathSync(entry);
         } catch (error) {
-          // A concurrent writer's own atomic temp-file+rename (con_902759b3dc) can make
-          // an entry this readdir just listed vanish before lstat/realpath sees it --
-          // e.g. a sibling clone's in-flight JSON write. That's benign churn, not an
-          // unsafe tree; only a real stat failure (permissions, I/O error) refuses.
-          if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+          // A concurrent writer's own atomic temp-file+rename (con_902759b3dc) can make an
+          // entry this readdir just listed vanish (ENOENT) before lstat/realpath sees it --
+          // e.g. a sibling clone's in-flight JSON write. On Windows the same contention can
+          // surface as EPERM/EBUSY/EACCES instead: renameSync there can't replace a file
+          // another process holds open, even for read (io.ts's isRenameContention, the same
+          // class). Either way this is a trusted sibling's own atomic write in progress, not
+          // an unsafe tree; only a genuinely unexpected error refuses.
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code === "ENOENT" || code === "EPERM" || code === "EBUSY" || code === "EACCES") continue;
           throw error;
         }
         if (stat.isSymbolicLink()) return false;
