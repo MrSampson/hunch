@@ -1,0 +1,106 @@
+{
+  "id": "dec_f2915adaa6",
+  "title": "Replace ternary facet-to-field chain with total, exported Record map",
+  "topic": null,
+  "status": "accepted",
+  "context": "Round-2 review found fileEvidenceFor's open-ended ternary chain left the coverage boundary silently extensible: adding a facet to STATE_FACETS without guarding it would not cause a compile error, replicating the exact bug (unguarded `constraints`) that motivated this guard in the first place. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.); con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
+  "decision": "Replace the private ternary-chain function with an exported `FILE_EVIDENCE_FIELD: Record<StateFacet, string | null>` that exhaustively maps every StateFacet to its file-evidence field (or null). The function becomes a thin lookup into this map.",
+  "consequences": [
+    "Adding a new facet to STATE_FACETS now causes a compile error if FILE_EVIDENCE_FIELD is not updated — the boundary is enforced at build time, not silently extensible",
+    "The facet-to-field mapping is now visible as a declaration, not buried in a conditional chain, making coverage decisions explicit and auditable",
+    "Tests can assert the mapping directly in isolation, replacing the prior 'vacuous' test (receipts' own `scope` object field made Array.isArray pass regardless of correctness) with exhaustive positive and negative cases",
+    "Null entries explicitly document which facets intentionally carry no file evidence, preventing confusion about whether an entry is missing or just not needed"
+  ],
+  "alternatives_rejected": [
+    "Keep the ternary chain and rely on code review / linter rules to catch missing entries — still silent and procedure-dependent, not enforced at compile time",
+    "Use TypeScript's exhaustiveness checking (`never` at the call site) without exporting the map — would catch errors at the use site but prevent independent testing of the boundary",
+    "Keep the map private and only test via live misroute behavior — loses the ability to pinpoint mapping bugs without probing the entire guard's behavior"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Keep the ternary chain and rely on code review / linter rules to catch missing entries — still silent and procedure-dependent, not enforced at compile time",
+      "scope": [
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Use TypeScript's exhaustiveness checking (`never` at the call site) without exporting the map — would catch errors at the use site but prevent independent testing of the boundary",
+      "scope": [
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [
+          "never"
+        ],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Keep the map private and only test via live misroute behavior — loses the ability to pinpoint mapping bugs without probing the entire guard's behavior",
+      "scope": [
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_a94a8fe5cc",
+    "cmp_dfa5b5acde",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/mcp/server.ts",
+    "test/mcproots.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "0f6cf996",
+  "valid_from": "2026-09-19T18:06:17+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:0f6cf996",
+      "synth:provider=claude-cli",
+      "branch:77-guard-nuryel-write",
+      "src/mcp/server.ts",
+      "test/mcproots.test.ts"
+    ],
+    "last_verified": "2026-09-19T16:06:36.333Z"
+  },
+  "date": "2026-09-19T18:06:17+02:00"
+}
