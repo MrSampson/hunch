@@ -1,0 +1,98 @@
+{
+  "id": "dec_7c5abcdae8",
+  "title": "Use forward slashes for git paths, never path.join()",
+  "topic": null,
+  "status": "accepted",
+  "context": "path.join() produces backslash-separated paths on Windows (e.g., `.github\\x`). These keys are written to .gitattributes and passed to git as pathspecs, both of which are always POSIX-style. On Windows, the backslash string never matches the forward-slash allowlist in hunchAttributesAreSafe, causing .gitattributes validation to fail deterministically. Four prior fix attempts failed because they didn't address the content mismatch at the source. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.); con_8460b6770f (Config/provider writers must merge idempotently into existing user files and refuse to clobber an unparseable file).",
+  "decision": "Replace path.join() calls in GROUNDING_WRITERS and WHOLLY_OWNED_GROUNDING with hardcoded forward-slash strings (e.g., `\".github/copilot-instructions.md\"`). Git paths and config keys are platform-invariant; they must use POSIX-style separators, not OS-dependent path construction.",
+  "consequences": [
+    "Windows builds will pass .gitattributes safety validation",
+    "Git pathspec operations work identically on all platforms",
+    "Config keys now platform-invariant, matching the allowlist they're validated against",
+    "WHOLLY_OWNED_GROUNDING Set membership comparison works across platforms"
+  ],
+  "alternatives_rejected": [
+    "Normalize backslashes during comparison (git treats the literal string; normalization doesn't fix the actual path mismatch)",
+    "Use path.join() everywhere and normalize in consumers (maintains the bug, adds comparison complexity)",
+    "Conditional platform-specific logic (unnecessary; POSIX is the standard for git/config)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Normalize backslashes during comparison (git treats the literal string; normalization doesn't fix the actual path mismatch)",
+      "scope": [
+        "src/integrations/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Use path.join() everywhere and normalize in consumers (maintains the bug, adds comparison complexity)",
+      "scope": [
+        "src/integrations/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Conditional platform-specific logic (unnecessary; POSIX is the standard for git/config)",
+      "scope": [
+        "src/integrations/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_863ac67d4a",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/integrations/providers.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "8588c687",
+  "valid_from": "2026-09-19T14:17:24+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:8588c687",
+      "synth:provider=claude-cli",
+      "branch:main",
+      "src/integrations/providers.ts"
+    ],
+    "last_verified": "2026-09-19T12:17:40.816Z"
+  },
+  "date": "2026-09-19T14:17:24+02:00"
+}
