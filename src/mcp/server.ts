@@ -546,28 +546,42 @@ function existsUnder(dir: string, f: string, worktrees: readonly string[]): bool
   return isFile(join(dir, f));
 }
 
+/** True when `f` names evidence the disambiguation in `guardEvidence` can trust
+ *  as real: an existing file on disk (absolute, or relative under `root`), or —
+ *  for a relative entry only — one git already knows was tracked at `root`
+ *  (covers a since-deleted/renamed file, which has nothing left on disk to
+ *  check). */
+function namesRealEvidence(root: string, f: string): boolean {
+  return isFile(isAbsolute(f) ? f : join(root, f)) || (!isAbsolute(f) && pathKnownToHistory(root, f));
+}
+
 /** Normalizes file evidence for the misroute guard specifically. A literal
  *  backslash byte is a legal POSIX filename character, not a path separator,
  *  so blindly running every entry through `toPosixTarget` before
  *  `misroutedWorktreeCandidates` sees it can rewrite a real file's name into a
  *  fake extra path segment. The string alone can't disambiguate "Windows
  *  separator" from "literal POSIX byte", so this asks the filesystem AND git
- *  history instead: when the RAW, un-normalized entry already names a real
- *  file at `root`, OR is a relative path git already knows was tracked (and
- *  possibly since deleted/renamed) there, that settles it — the byte was
+ *  history instead (`namesRealEvidence`): when the RAW, un-normalized entry
+ *  already names a real file, or is a relative path git knows was tracked at
+ *  `root` (possibly since deleted/renamed), that settles it — the byte was
  *  literal — and the raw string is kept as-is, bypassing `toPosixTarget`
  *  entirely. Otherwise it normalizes through `toPosixTarget` exactly as
  *  before, preserving the legitimate Windows-separator case (a Windows-style
  *  path can never collide with a real or once-tracked POSIX file, since `\`
  *  cannot appear in a Windows filename to begin with). Scoped to the three
  *  misroute-guard call sites only — the stored related_files/affected_files
- *  fields are still normalized separately and unaffected by this. */
-function namesRealEvidence(root: string, f: string): boolean {
-  return isFile(isAbsolute(f) ? f : join(root, f)) || (!isAbsolute(f) && pathKnownToHistory(root, f));
-}
-
+ *  fields are still normalized separately (tracked in #93).
+ *
+ *  Known accepted gap: a contrived collision — a file legitimately deleted
+ *  from `root`'s history AND a genuine Windows-style path meaning something
+ *  else present in a sibling worktree — resolves in favor of history and
+ *  fails OPEN (no misroute reported), the same fail-open tradeoff
+ *  `misroutedWorktreeCandidates` itself already documents elsewhere. */
 export function guardEvidence(root: string, files: readonly string[]): string[] {
-  return files.map((f) => (f && namesRealEvidence(root, f) ? f : toPosixTarget(f)));
+  return files.map((f) => {
+    const normalized = toPosixTarget(f);
+    return f && normalized !== f && namesRealEvidence(root, f) ? f : normalized;
+  });
 }
 
 /** Shared misroute-guard refusal for the three auto-committing write tools that
