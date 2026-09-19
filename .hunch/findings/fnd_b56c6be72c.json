@@ -5,15 +5,15 @@
   "evidence": [
     "grep -rn 'enforcement' src/ → only src/mcp/server.ts:987 (render) and src/store/hunchStore.ts:577 (index column) read it",
     "src/core/strictgate.ts:31-36 isStrictBlocker(c, stale): severity blocking && !stale && (confidence >= STRICT_MIN_CONFIDENCE || human_confirmed)",
-    ".git/hooks/pre-commit: `hunch check --staged || true` (installed 1.29.0 global binary)"
+    ".git/hooks/pre-commit: `hunch check --staged || true` (installed 1.29.0 global binary)",
+    "Documentation relocated without changing this finding: https://github.com/davesheffer/hunch-private/blob/bc8ec8d/projects/hunch/docs/autonomous-development.md"
   ],
   "method": null,
   "severity": "low",
   "triage": "open",
   "affected_files": [
     "src/core/strictgate.ts",
-    "src/integrations/hooks.ts",
-    "docs/autonomous-development.md"
+    "src/integrations/hooks.ts"
   ],
   "affected_symbols": [],
   "violates_constraint": null,
