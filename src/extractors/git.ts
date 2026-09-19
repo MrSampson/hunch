@@ -1719,7 +1719,11 @@ function waitForCommitLockHandoff(
   let attempt: CommitLockAttempt = first;
   while (Date.now() < deadline) {
     if (attempt.state === "acquired") return true;
-    if (attempt.state !== "held-live" || attempt.ownerPid === process.pid) return false;
+    // Once the first snapshot proved a live owner, an owner-less snapshot can be
+    // the normal release window: recursive cleanup removes owner-<pid> before
+    // removing the outer lock directory. Keep the bounded handoff wait through
+    // that transient state instead of reporting a false busy/no-op result.
+    if (attempt.state === "held-live" && attempt.ownerPid === process.pid) return false;
     Atomics.wait(sleeper, 0, 0, Math.min(25, deadline - Date.now()));
     attempt = acquireCommitLock(lock);
   }
@@ -1794,11 +1798,9 @@ export function isLinkedWorktree(cwd: string): boolean {
   const common = gitCommonDir(cwd);
   const own = gitSafe(["rev-parse", "--absolute-git-dir"], cwd);
   if (!common || !own) return false;
-  // realpath BOTH before comparing: `--absolute-git-dir` is symlink-resolved while
-  // gitCommonDir is not, so on macOS the main checkout would otherwise mismatch on
-  // /var vs /private/var and falsely read as "linked".
-  const norm = (p: string): string => { try { return realpathSync(p); } catch { return resolve(p); } };
-  return norm(own) !== norm(common);
+  // Git can spell the same directory differently: /var vs /private/var on
+  // macOS, or long vs 8.3/case variants on Windows. Compare physical identity.
+  return !sameFilesystemEntry(own, common);
 }
 
 /** Every worktree of this repo (the main checkout AND every linked one), as absolute
