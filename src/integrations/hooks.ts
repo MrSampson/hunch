@@ -16,7 +16,7 @@
 import { readFileSync, writeFileSync, existsSync, chmodSync, mkdirSync, realpathSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join, isAbsolute, dirname, basename, relative, resolve } from "node:path";
-import { hooksDir, gitCommonDir } from "../extractors/git.js";
+import { hooksDir, gitCommonDir, mainWorktreeRoot } from "../extractors/git.js";
 import { initiatorChildEnv } from "../synthesis/initiator.js";
 import { HUNCH_NPX_PACKAGE_SPEC, HUNCH_PACKAGE_NAME } from "../core/version.js";
 
@@ -354,9 +354,7 @@ function installManagedBlock(root: string, hookName: string, mark: string, end: 
 
 /** True when `root` is a checkout of Hunch's OWN source tree (this package's
  *  own name in its own package.json), not merely a project that depends on
- *  Hunch. Detected from root's package.json rather than any install-path or
- *  environment heuristic, so it answers correctly regardless of how the
- *  CALLING process itself happens to be running — see selfBuildInvocation. */
+ *  Hunch. */
 function isHunchRepoRoot(root: string): boolean {
   try {
     const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { name?: unknown };
@@ -366,29 +364,39 @@ function isHunchRepoRoot(root: string): boolean {
   }
 }
 
-/** Force a doc-regenerating hook installed INSIDE Hunch's own checkout to
- *  always call back into that SAME checkout's in-tree build
- *  (`npx tsx src/cli/index.ts`), never whatever build the installing process
- *  itself happened to be running (issue #74). A post-commit/post-merge hook
- *  script is baked in once, at install time, from the installing process's
- *  own resolveInvocation() — which reflects wherever THAT process's code
- *  lives (a stale or newer global install, npx, another checkout), not this
- *  repo's own generator. When the hook later fires and regenerates
- *  CLAUDE.md/AGENTS.md/etc. from a *different* build's claudemd.ts, the
- *  committed docs silently drift out of sync with what this checkout's own
- *  generator would produce (caught only by test/grounding-freshness.test.ts).
- *  Outside this repo — every other project depending on Hunch — the passed
- *  invocation is returned unchanged; that remains the correct, portable
- *  behavior (a hook script is per-machine and never committed either way). */
+/** For a doc-regenerating hook installed inside Hunch's own checkout, force the
+ *  invocation to that checkout's own in-tree build; every other project keeps
+ *  the passed invocation unchanged (dec_b8ac23952e).
+ *
+ *  Anchored to the MAIN worktree (`mainWorktreeRoot`), not `root` itself: the
+ *  hook FILE this produces is the one `hooksDir` resolves to, which is shared
+ *  across every linked worktree of the repo, but `root` is merely whichever
+ *  worktree happened to run the install — ephemeral under this project's own
+ *  agent-worktree workflow (create, use, `git worktree remove`). Baking in a
+ *  linked worktree's own path would silently break every OTHER worktree's
+ *  shared hook the moment that one is removed.
+ *
+ *  Existence-checked rather than assumed: a git repo whose package.json name
+ *  matches but ships no `src/` (a sparse checkout, or one built from the
+ *  published tarball — `dist/**` only) would otherwise get a hook block that
+ *  silently no-ops forever (it's wrapped `|| true`) — the exact invisible-
+ *  staleness failure this override exists to close, just moved one step. */
 function selfBuildInvocation(root: string, invocation: string): string {
-  if (!isHunchRepoRoot(root)) return invocation;
-  const entry = join(root, "src", "cli", "index.ts");
-  return `npx tsx ${JSON.stringify(entry)}`;
+  const main = mainWorktreeRoot(root);
+  if (!isHunchRepoRoot(main)) return invocation;
+  const entry = join(main, "src", "cli", "index.ts");
+  const tsx = join(main, "node_modules", "tsx", "dist", "cli.mjs");
+  if (!existsSync(entry) || !existsSync(tsx)) return invocation;
+  // process.execPath + tsx's own cli.mjs, not a bare `npx tsx`: a GUI git
+  // client or non-interactive shell commonly lacks nvm's npx/tsx on PATH —
+  // the same reason resolveInvocation's installed/dist branches avoid a bare
+  // `node` (src/cli/invocation.ts).
+  return `${JSON.stringify(process.execPath)} ${JSON.stringify(tsx)} ${JSON.stringify(entry)}`;
 }
 
 export function installPostCommitHook(root: string, invocation: string, opts: { private?: boolean; commit?: boolean; localOnly?: boolean } = {}): HookInstall {
-  const inv = selfBuildInvocation(root, invocation);
-  return installManagedBlock(root, "post-commit", MARK, ENDMARK, (i) => block(i, opts), inv);
+  const selfInv = selfBuildInvocation(root, invocation);
+  return installManagedBlock(root, "post-commit", MARK, ENDMARK, (inv) => block(inv, opts), selfInv);
 }
 
 const PRE_MARK = "# >>> hunch pre-commit (constraint guard) >>>";
