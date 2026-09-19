@@ -16,9 +16,9 @@
 import { readFileSync, writeFileSync, existsSync, chmodSync, mkdirSync, realpathSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join, isAbsolute, dirname, basename, relative, resolve } from "node:path";
-import { hooksDir, gitCommonDir } from "../extractors/git.js";
+import { hooksDir, gitCommonDir, mainWorktreeRoot } from "../extractors/git.js";
 import { initiatorChildEnv } from "../synthesis/initiator.js";
-import { HUNCH_NPX_PACKAGE_SPEC } from "../core/version.js";
+import { HUNCH_NPX_PACKAGE_SPEC, HUNCH_PACKAGE_NAME } from "../core/version.js";
 
 const MARK = "# >>> hunch post-commit >>>";
 const ENDMARK = "# <<< hunch post-commit <<<";
@@ -352,8 +352,51 @@ function installManagedBlock(root: string, hookName: string, mark: string, end: 
   return { path: hookPath, action: "appended" };
 }
 
+/** True when `root` is a checkout of Hunch's OWN source tree (this package's
+ *  own name in its own package.json), not merely a project that depends on
+ *  Hunch. */
+function isHunchRepoRoot(root: string): boolean {
+  try {
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { name?: unknown };
+    return pkg.name === HUNCH_PACKAGE_NAME;
+  } catch {
+    return false;
+  }
+}
+
+/** For a doc-regenerating hook installed inside Hunch's own checkout, force the
+ *  invocation to that checkout's own in-tree build; every other project keeps
+ *  the passed invocation unchanged (dec_b8ac23952e).
+ *
+ *  Anchored to the MAIN worktree (`mainWorktreeRoot`), not `root` itself: the
+ *  hook FILE this produces is the one `hooksDir` resolves to, which is shared
+ *  across every linked worktree of the repo, but `root` is merely whichever
+ *  worktree happened to run the install — ephemeral under this project's own
+ *  agent-worktree workflow (create, use, `git worktree remove`). Baking in a
+ *  linked worktree's own path would silently break every OTHER worktree's
+ *  shared hook the moment that one is removed.
+ *
+ *  Existence-checked rather than assumed: a git repo whose package.json name
+ *  matches but ships no `src/` (a sparse checkout, or one built from the
+ *  published tarball — `dist/**` only) would otherwise get a hook block that
+ *  silently no-ops forever (it's wrapped `|| true`) — the exact invisible-
+ *  staleness failure this override exists to close, just moved one step. */
+function selfBuildInvocation(root: string, invocation: string): string {
+  const main = mainWorktreeRoot(root);
+  if (!isHunchRepoRoot(main)) return invocation;
+  const entry = join(main, "src", "cli", "index.ts");
+  const tsx = join(main, "node_modules", "tsx", "dist", "cli.mjs");
+  if (!existsSync(entry) || !existsSync(tsx)) return invocation;
+  // process.execPath + tsx's own cli.mjs, not a bare `npx tsx`: a GUI git
+  // client or non-interactive shell commonly lacks nvm's npx/tsx on PATH —
+  // the same reason resolveInvocation's installed/dist branches avoid a bare
+  // `node` (src/cli/invocation.ts).
+  return `${JSON.stringify(process.execPath)} ${JSON.stringify(tsx)} ${JSON.stringify(entry)}`;
+}
+
 export function installPostCommitHook(root: string, invocation: string, opts: { private?: boolean; commit?: boolean; localOnly?: boolean } = {}): HookInstall {
-  return installManagedBlock(root, "post-commit", MARK, ENDMARK, (inv) => block(inv, opts), invocation);
+  const selfInv = selfBuildInvocation(root, invocation);
+  return installManagedBlock(root, "post-commit", MARK, ENDMARK, (inv) => block(inv, opts), selfInv);
 }
 
 const PRE_MARK = "# >>> hunch pre-commit (constraint guard) >>>";
@@ -435,7 +478,9 @@ const writes = (h: HookInstall): boolean => h.action !== "managed-elsewhere" && 
  *  a repo carrying only one half (an older install, or a hand-edited hook)
  *  gets the other appended rather than clobbered. */
 export function installPostMergeHook(root: string, invocation: string): HookInstall {
-  const grounding = installManagedBlock(root, "post-merge", GROUNDING_MERGE_MARK, GROUNDING_MERGE_END, groundingMergeBlock, invocation);
+  // Only the grounding half regenerates committed docs (issue #74); repair-provenance
+  // makes no doc writes, so it keeps the passed invocation unchanged.
+  const grounding = installManagedBlock(root, "post-merge", GROUNDING_MERGE_MARK, GROUNDING_MERGE_END, groundingMergeBlock, selfBuildInvocation(root, invocation));
   const repair = installManagedBlock(root, "post-merge", REPAIR_MERGE_MARK, REPAIR_MERGE_END, repairProvenanceMergeBlock, invocation);
   if (!writes(grounding) && !writes(repair)) {
     return { ...grounding, snippet: `${grounding.snippet}\n${stripComment(repair.snippet ?? "", grounding.manager)}` };

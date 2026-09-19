@@ -1,0 +1,123 @@
+{
+  "id": "dec_b8ac23952e",
+  "title": "Override hook invocation in Hunch's own checkout to use in-tree build",
+  "topic": null,
+  "status": "accepted",
+  "context": "When Hunch installs its own hooks during development, the invocation string is baked in at install time from the installing process's build (which may be a different version or location). Later, when hooks fire and regenerate committed docs (CLAUDE.md/AGENTS.md), they call the installer's build, not the repo's own generator, causing silent drift that only test/grounding-freshness.test.ts catches. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.).",
+  "decision": "Detect when hooks are installed inside Hunch's own source tree (by checking if package.json name matches HUNCH_PACKAGE_NAME) and force doc-regenerating invocations (post-commit sync, post-merge grounding-refresh) to always call back into that checkout's in-tree `npx tsx src/cli/index.ts`, overriding whatever invocation was passed at install time. Other projects depending on Hunch use the passed invocation unchanged.",
+  "consequences": [
+    "Hunch's committed docs stay fresh across different global/npx installs within its own repo",
+    "The grounding-freshness test now passes reliably in dogfooding scenarios",
+    "Other projects depending on Hunch are unaffected — no behavior change for them",
+    "Only doc-regenerating operations are affected; repair-provenance keeps the passed invocation",
+    "Hook scripts remain per-machine and uncommitted (existing philosophy preserved)"
+  ],
+  "alternatives_rejected": [
+    "Accept silent drift in committed docs and disable the freshness test",
+    "Move detection and override logic to hook-execution time (requires changing hook scripts themselves)",
+    "Make invoking process responsible for handling version conflicts (can't solve install-time problem)",
+    "Disable hook doc regeneration entirely in Hunch's own checkout (loses the benefit of freshness verification)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Accept silent drift in committed docs and disable the freshness test",
+      "scope": [
+        "src/integrations/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Move detection and override logic to hook-execution time (requires changing hook scripts themselves)",
+      "scope": [
+        "src/integrations/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Make invoking process responsible for handling version conflicts (can't solve install-time problem)",
+      "scope": [
+        "src/integrations/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Disable hook doc regeneration entirely in Hunch's own checkout (loses the benefit of freshness verification)",
+      "scope": [
+        "src/integrations/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_863ac67d4a",
+    "cmp_a94a8fe5cc",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/integrations/hooks.ts",
+    "test/hooks.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "a5bbdf9e",
+  "valid_from": "2026-09-19T17:00:34+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:a5bbdf9e",
+      "synth:provider=claude-cli",
+      "branch:74-post-commit-hook-in-tree-build",
+      "src/integrations/hooks.ts",
+      "test/hooks.test.ts"
+    ],
+    "last_verified": "2026-09-19T15:00:55.300Z"
+  },
+  "date": "2026-09-19T17:00:34+02:00"
+}
