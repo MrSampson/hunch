@@ -1,0 +1,97 @@
+{
+  "id": "dec_86ee4d362e",
+  "title": "Tolerate Windows rename-contention errors as safe in bounded-attributes check",
+  "topic": null,
+  "status": "accepted",
+  "context": "boundedAttributesFileIsSafe() rejected .gitattributes files with EPERM/EBUSY/EACCES errors, treating them as unsafe content. But these codes arise from concurrent writeFileAtomic (temp-file+rename) operations—the exact pattern used by installMergeDriver—where Windows blocks reads on files being renamed. Same transient contention class already handled by tree-walk fixes. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.).",
+  "decision": "Expand the catch block to accept ENOENT, EPERM, EBUSY, and EACCES as 'safe' outcomes. Both file absence and transient access errors indicate no unsafe content; both allow the operation to proceed.",
+  "consequences": [
+    "Eliminates false \"unsafe attributes file\" failures during shared-overlay setup on Windows",
+    "Aligns error semantics: merge-driver write contention and tree-walk read contention now handled uniformly",
+    "Fixes CI flakiness from concurrent file operations without adding retry logic"
+  ],
+  "alternatives_rejected": [
+    "Retry on EPERM/EBUSY/EACCES instead of tolerating: adds complexity for a transient race window",
+    "Move/gate merge-driver installation to avoid concurrency: more invasive refactor",
+    "Keep ENOENT-only catch, fix elsewhere: misses that the root cause is in this function's own error classification"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Retry on EPERM/EBUSY/EACCES instead of tolerating: adds complexity for a transient race window",
+      "scope": [
+        "src/extractors/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Move/gate merge-driver installation to avoid concurrency: more invasive refactor",
+      "scope": [
+        "src/extractors/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Keep ENOENT-only catch, fix elsewhere: misses that the root cause is in this function's own error classification",
+      "scope": [
+        "src/extractors/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_e0ccfe26fe",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/extractors/git.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "97977a6b",
+  "valid_from": "2026-09-19T13:55:33+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:97977a6b",
+      "synth:provider=claude-cli",
+      "branch:main",
+      "src/extractors/git.ts"
+    ],
+    "last_verified": "2026-09-19T11:55:49.413Z"
+  },
+  "date": "2026-09-19T13:55:33+02:00"
+}
