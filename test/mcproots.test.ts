@@ -12,7 +12,8 @@ import { HunchStore } from "../src/store/hunchStore.js";
 import { constraintId, findingId, manualDecisionId } from "../src/core/ids.js";
 import { resolveActiveRoot } from "../src/mcp/roots.js";
 import { pathKnownToHistory } from "../src/extractors/git.js";
-import { buildServerWithRootControl, wireClientRoots, misroutedWorktreeCandidates } from "../src/mcp/server.js";
+import { buildServerWithRootControl, wireClientRoots, misroutedWorktreeCandidates, guardEvidence } from "../src/mcp/server.js";
+import { toPosixTarget } from "../src/core/paths.js";
 import { startHookReport } from "../src/core/taskReportHook.js";
 
 function git(root: string, ...args: string[]): string {
@@ -782,6 +783,55 @@ test("misroutedWorktreeCandidates: direct unit coverage (issue #54 review, I2)",
     } finally {
       fixture.cleanup();
     }
+  }
+});
+
+test("guardEvidence: a literal POSIX backslash byte in a real filename must not be misread as a path separator (issue #80)", () => {
+  if (process.platform === "win32") return; // a literal backslash byte in a filename cannot exist on Windows
+  const fixture = repoWithWorktree();
+  const evidence = "docs/notes\\notes.md"; // one literal backslash byte, not a separator
+  mkdirSync(join(fixture.root, "docs"), { recursive: true });
+  writeFileSync(join(fixture.root, "docs", "notes\\notes.md"), "root note\n");
+  mkdirSync(join(fixture.worktree, "docs", "notes"), { recursive: true });
+  writeFileSync(join(fixture.worktree, "docs", "notes", "notes.md"), "unrelated sibling note\n");
+  try {
+    // Sanity: this reproduces the bug as described in the issue when the raw
+    // evidence is blindly run through toPosixTarget before the guard sees it.
+    assert.equal(toPosixTarget(evidence), "docs/notes/notes.md");
+    assert.deepEqual(
+      misroutedWorktreeCandidates(fixture.root, [toPosixTarget(evidence)]),
+      [fixture.worktree],
+      "sanity: naively posix-normalizing the evidence reproduces the false-positive misroute",
+    );
+    // The fix: guardEvidence must keep the raw string when it already exists as
+    // a real file at root, so the guard never sees the mangled form.
+    assert.deepEqual(guardEvidence(fixture.root, [evidence]), [evidence]);
+    assert.deepEqual(
+      misroutedWorktreeCandidates(fixture.root, guardEvidence(fixture.root, [evidence])),
+      [],
+      "a correctly-homed write whose filename contains a literal backslash byte must not be refused",
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("guardEvidence: a genuine Windows-style separator still normalizes when no literal-backslash file collides (issue #80)", () => {
+  const fixture = repoWithWorktree();
+  mkdirSync(join(fixture.worktree, "docs"), { recursive: true });
+  writeFileSync(join(fixture.worktree, "docs", "other.ts"), "export const x = 1;\n");
+  try {
+    // No file named "docs\other.ts" exists anywhere, so the legitimate
+    // Windows-path-normalization behavior (toPosixTarget's documented job)
+    // must still apply and find the sibling worktree.
+    assert.deepEqual(guardEvidence(fixture.root, ["docs\\other.ts"]), ["docs/other.ts"]);
+    assert.deepEqual(
+      misroutedWorktreeCandidates(fixture.root, guardEvidence(fixture.root, ["docs\\other.ts"])),
+      [fixture.worktree],
+      "a Windows-style separator with no on-disk collision must still resolve to the sibling worktree",
+    );
+  } finally {
+    fixture.cleanup();
   }
 });
 

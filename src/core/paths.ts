@@ -9,7 +9,16 @@ export const HUNCH_DIR = ".hunch";
  *  every path with forward slashes (git emits "/" on all OSes), so any user- or
  *  agent-supplied target must be normalized before comparison — otherwise a
  *  Windows caller passing `src\auth\session.ts` never matches the stored
- *  `src/auth/session.ts`. Safe on symbol names too: they contain no backslashes. */
+ *  `src/auth/session.ts`. Safe on symbol names too: they contain no backslashes.
+ *
+ *  This is inherently ambiguous for a string like `docs/notes\notes.md`: it
+ *  could be a Windows-style path with a literal separator, or a POSIX path
+ *  whose filename legitimately contains a backslash BYTE (illegal on Windows,
+ *  legal on POSIX/git) — the string alone can't say which, and this function
+ *  always assumes the former. A caller that can check the filesystem and needs
+ *  the correct answer for a REAL file (e.g. the misroute guard in
+ *  src/mcp/server.ts, issue #80) should decide from disk instead of trusting
+ *  this blindly; see `guardEvidence` there for that pattern. */
 export function toPosixTarget(target: string): string {
   return target.replace(/\\/g, "/").replace(/^\.\//, "");
 }

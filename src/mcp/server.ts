@@ -546,6 +546,27 @@ function existsUnder(dir: string, f: string, worktrees: readonly string[]): bool
   return isFile(join(dir, f));
 }
 
+/** Normalizes file evidence for the misroute guard specifically (issue #80). A
+ *  literal backslash byte is a legal POSIX filename character, not a path
+ *  separator, so blindly running every entry through `toPosixTarget` before
+ *  `misroutedWorktreeCandidates` sees it can rewrite a real file's name into a
+ *  fake extra path segment — turning a correctly-homed write into a false
+ *  misroute refusal. The string alone can't disambiguate "Windows separator"
+ *  from "literal POSIX byte" (see `toPosixTarget`'s own doc comment for the
+ *  Windows-path case it must keep handling), so this asks the filesystem
+ *  instead: when the RAW, un-normalized entry already names a real file at
+ *  `root`, that settles it — the byte was literal — and the raw string is
+ *  kept as-is, bypassing `toPosixTarget` entirely. Otherwise it normalizes
+ *  through `toPosixTarget` exactly as before, preserving the legitimate
+ *  Windows-separator case (a Windows-style path can never collide with a real
+ *  POSIX file, since `\` cannot appear in a Windows filename to begin with).
+ *  Scoped to the three misroute-guard call sites only — the stored
+ *  related_files/affected_files fields are still normalized separately and
+ *  unaffected by this. */
+export function guardEvidence(root: string, files: readonly string[]): string[] {
+  return files.map((f) => (f && isFile(isAbsolute(f) ? f : join(root, f)) ? f : toPosixTarget(f)));
+}
+
 /** Shared misroute-guard refusal for the three auto-committing write tools that
  *  name files and are guarded today (issue #54, extended to
  *  hunch_record_correction/hunch_record_finding by #62 — nuryel_write is a fourth
@@ -2128,7 +2149,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     },
     async ({ decision, capture_token, task_id }): Promise<ToolResult> => {
       try {
-        const misroute = misrouteGuard(root, `"${decision.title.slice(0, 60)}"`, (decision.related_files ?? []).map(toPosixTarget));
+        const misroute = misrouteGuard(root, `"${decision.title.slice(0, 60)}"`, guardEvidence(root, decision.related_files ?? []));
         if (misroute) return misroute;
         // Commit-keyed on the CANONICAL full sha (resolved via git rev-parse), so a
         // human passing the short sha they see in `commit` produces the SAME id as
@@ -2384,16 +2405,17 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         // Same misroute guard as hunch_record_decision (issue #54, extended here by #62):
         // a scope_hint_file that exists in a sibling linked worktree but not here is very
         // likely a subagent that forgot cwd, about to silently scope-and-commit a
-        // constraint against the wrong checkout. Passed RAW (posix-normalized only) —
-        // misroutedWorktreeCandidates understands absolute paths itself (see its doc
-        // comment). The constraint's own scope glob below is a DIFFERENT job, still
-        // relativized against root by buildCorrectionConstraint internally — a sibling
-        // worktree's absolute path could never become a usable scope glob against root
-        // either way, only this guard's job of naming WHICH worktree it belongs to.
+        // constraint against the wrong checkout. Passed RAW (guardEvidence-normalized
+        // only, issue #80) — misroutedWorktreeCandidates understands absolute paths
+        // itself (see its doc comment). The constraint's own scope glob below is a
+        // DIFFERENT job, still relativized against root by buildCorrectionConstraint
+        // internally — a sibling worktree's absolute path could never become a usable
+        // scope glob against root either way, only this guard's job of naming WHICH
+        // worktree it belongs to.
         const correctionMisroute = misrouteGuard(
           root,
           `correction "${input.rule.slice(0, 60)}"`,
-          input.scope_hint_file ? [toPosixTarget(input.scope_hint_file)] : [],
+          input.scope_hint_file ? guardEvidence(root, [input.scope_hint_file]) : [],
         );
         if (correctionMisroute) return correctionMisroute;
         // root: relativizes an ABSOLUTE scope_hint_file. Agents naturally send absolute
@@ -2496,7 +2518,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         if (!finding.title.trim()) return invalid("title is required.");
         if (!finding.observation.trim()) return invalid("observation is required — state what you saw.");
         // Same misroute guard as hunch_record_decision (issue #54, extended here by #62).
-        const findingMisroute = misrouteGuard(root, `finding "${finding.title.slice(0, 60)}"`, (finding.affected_files ?? []).map(toPosixTarget));
+        const findingMisroute = misrouteGuard(root, `finding "${finding.title.slice(0, 60)}"`, guardEvidence(root, finding.affected_files ?? []));
         if (findingMisroute) return findingMisroute;
         const id = findingId(finding.title);
         const home = store.captureHome(!!finding.private);
