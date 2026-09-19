@@ -1,10 +1,10 @@
 {
-  "id": "cmp_59ede50a3f",
+  "id": "cmp_93df14617c",
   "kind": "module",
-  "name": ".claude",
+  "name": "Clients",
   "responsibility": "",
   "paths": [
-    ".claude/**"
+    "clients/**"
   ],
   "status": "active",
   "owners": [],
@@ -13,9 +13,9 @@
     "source": "inferred",
     "confidence": 0.5,
     "evidence": [
-      ".claude"
+      "clients"
     ]
   },
-  "created_at": "2026-07-08T11:00:06.411Z",
-  "updated_at": "2026-07-08T11:00:06.411Z"
+  "created_at": "2026-09-19T10:31:04.623Z",
+  "updated_at": "2026-09-19T10:31:04.623Z"
 }

@@ -1,0 +1,97 @@
+{
+  "id": "dec_8849dd784d",
+  "title": "Tolerate ENOENT race in safety check; enforce only real violations",
+  "topic": null,
+  "status": "accepted",
+  "context": "overlayAttributeSourcesAreSafe walks the tree using readdirSync+lstatSync (TOCTOU). Concurrent atomic writes (temp-file+rename) can vanish entries between readdir and lstat. Previously, all lstat failures were treated as safety violations and silently dropped the commit. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.).",
+  "decision": "Wrap lstatSync in try/catch. Treat ENOENT as benign concurrent churn (continue); re-throw actual I/O or permission errors (refuse commit). Preserves the real safety checks the function exists to enforce (symlinks, bad files, oversized attributes).",
+  "consequences": [
+    "Eliminates false positives in high-concurrency scenarios (concurrent clones)",
+    "Stops silently dropping valid commits due to transient races",
+    "Actual safety violations (bad files, symlinks, permissions) still caught"
+  ],
+  "alternatives_rejected": [
+    "Ignore all lstat errors (weakens safety for real corrupt attributes)",
+    "Retry logic with backoff (still racy, adds latency and complexity)",
+    "Exclusive locking on .hunch (serializes concurrent clones)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Ignore all lstat errors (weakens safety for real corrupt attributes)",
+      "scope": [
+        "src/extractors/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Retry logic with backoff (still racy, adds latency and complexity)",
+      "scope": [
+        "src/extractors/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Exclusive locking on .hunch (serializes concurrent clones)",
+      "scope": [
+        "src/extractors/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_e0ccfe26fe",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/extractors/git.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "57c91481",
+  "valid_from": "2026-09-19T12:30:45+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:57c91481",
+      "synth:provider=claude-cli",
+      "branch:main",
+      "src/extractors/git.ts"
+    ],
+    "last_verified": "2026-09-19T10:31:02.009Z"
+  },
+  "date": "2026-09-19T12:30:45+02:00"
+}
