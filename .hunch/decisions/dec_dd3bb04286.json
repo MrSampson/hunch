@@ -2,7 +2,7 @@
   "id": "dec_dd3bb04286",
   "title": "guardEvidence recognizes file evidence from both filesystem and git history",
   "topic": "guard-evidence-path-disambiguation",
-  "status": "accepted",
+  "status": "superseded",
   "context": "guardEvidence distinguishes literal backslash bytes (legal POSIX filename chars) from Windows path separators to prevent false misroute refusals. The prior check (filesystem presence only) failed for deleted files: a file gone from disk but known to git would pass through un-normalized, then be misread as a separator by downstream code. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.); con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
   "decision": "Added namesRealEvidence(root, f) to check both filesystem presence (isFile) and git history (pathKnownToHistory). guardEvidence now treats a relative entry as real evidence if either check passes, grounding truth in both current state and historical git knowledge.",
   "consequences": [
@@ -83,11 +83,11 @@
     "test/mcproots.test.ts"
   ],
   "supersedes": "dec_384e9793f6",
-  "superseded_by": null,
+  "superseded_by": "dec_e6b100bc9b",
   "caused_by_bug": null,
   "commit": "6470c485",
   "valid_from": "2026-09-19T17:32:47+02:00",
-  "valid_to": null,
+  "valid_to": "2026-09-19T17:52:44+02:00",
   "retired": {
     "symbols": [],
     "deps": []

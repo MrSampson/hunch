@@ -1,7 +1,7 @@
 {
   "id": "dec_e6b100bc9b",
   "title": "Skip disk/history validation when path normalization is a no-op",
-  "topic": null,
+  "topic": "guard-evidence-path-disambiguation",
   "status": "accepted",
   "context": "The guard needs to disambiguate whether a backslash in a path entry is a literal POSIX filename character or a Windows path separator, using a disk/history check. But when a path has no backslash, toPosixTarget() doesn't change it, making the expensive check redundant. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.); con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
   "decision": "Only call namesRealEvidence (disk/history lookup) when toPosixTarget(f) actually changes the string. For entries with no backslashes, skip the validation entirely since normalization is already a no-op.",
@@ -55,7 +55,7 @@
   "related_files": [
     "src/mcp/server.ts"
   ],
-  "supersedes": null,
+  "supersedes": "dec_dd3bb04286",
   "superseded_by": null,
   "caused_by_bug": null,
   "commit": "87810475",
