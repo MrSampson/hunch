@@ -1,0 +1,85 @@
+{
+  "id": "dec_85adc372dd",
+  "title": "Tolerate Windows rename errors as benign overlay contention",
+  "topic": null,
+  "status": "accepted",
+  "context": "Concurrent atomic temp-file+rename operations can cause files to vanish or fail stat checks while being accessed. On Unix this manifests as ENOENT; on Windows, renameSync can't replace files held open (even for read), causing EPERM/EBUSY/EACCES instead. CI was failing because these Windows errors were treated as real failures rather than transient contention. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.).",
+  "decision": "Expand overlay safety checks (safeOverlayTree and overlayAttributeSourcesAreSafe) to tolerate ENOENT, EPERM, EBUSY, and EACCES as benign contention signals—matching the error classification already used by isRenameContention in io.ts. These errors from trusted concurrent siblings are not unsafe tree indicators.",
+  "consequences": [
+    "Overlay safety checks now handle both Unix and Windows concurrent access patterns equivalently",
+    "CI Windows rename contention no longer causes overlay validation failures",
+    "Error classification becomes platform-aware without platform-specific branching"
+  ],
+  "alternatives_rejected": [
+    "Treat EPERM/EBUSY/EACCES as real safety failures (causes CI to reject valid concurrent writes)",
+    "Add platform-specific branches in overlay checks (violates DRY; isRenameContention already exists for this)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Treat EPERM/EBUSY/EACCES as real safety failures (causes CI to reject valid concurrent writes)",
+      "scope": [
+        "src/core/**",
+        "src/extractors/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Add platform-specific branches in overlay checks (violates DRY; isRenameContention already exists for this)",
+      "scope": [
+        "src/core/**",
+        "src/extractors/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_b256a6aed0",
+    "cmp_e0ccfe26fe",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/core/overlaySafety.ts",
+    "src/extractors/git.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "5a39d571",
+  "valid_from": "2026-09-19T13:12:21+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:5a39d571",
+      "synth:provider=claude-cli",
+      "branch:main",
+      "src/core/overlaySafety.ts",
+      "src/extractors/git.ts"
+    ],
+    "last_verified": "2026-09-19T11:12:36.281Z"
+  },
+  "date": "2026-09-19T13:12:21+02:00"
+}
