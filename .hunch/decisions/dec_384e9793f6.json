@@ -1,12 +1,12 @@
 {
   "id": "dec_384e9793f6",
   "title": "Resolve path ambiguity via filesystem evidence, not string interpretation",
-  "topic": null,
-  "status": "accepted",
+  "topic": "guard-evidence-path-disambiguation",
+  "status": "superseded",
   "context": "A POSIX backslash byte in a real filename is indistinguishable from a Windows path separator when looking at the string alone. Blindly normalizing all evidence through toPosixTarget() before the misroute guard saw it caused correctly-homed writes with literal backslash bytes to be falsely refused. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.); con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
   "decision": "Created guardEvidence() to check the filesystem at decision points: if the raw, un-normalized entry names a real file at root, that settles it (backslash was literal)—keep the raw string and skip toPosixTarget(). Otherwise normalize as before. Scoped only to the three misroute-guard call sites; stored fields continue using centralized normalization.",
   "consequences": [
-    "Fixes false-positive misroute refusals for files with literal backslash bytes that still exist on disk at the correct root -- the deleted/renamed shape (nothing left on disk to check) needed a follow-up pathKnownToHistory check, added in a later commit on this same branch",
+    "Fixes false-positive misroute refusals for files with literal backslash bytes that still exist on disk at the correct root -- the deleted/renamed shape (nothing left on disk to check) needed a follow-up pathKnownToHistory check; see dec_dd3bb04286",
     "Preserves Windows path normalization for the legitimate cross-platform case (files that don't actually exist with backslashes)",
     "Introduces filesystem checks at guard boundaries, trading latency for precision",
     "Makes the misroute guard inherently platform-aware via filesystem reality rather than string patterns"
@@ -84,11 +84,11 @@
     "test/mcproots.test.ts"
   ],
   "supersedes": null,
-  "superseded_by": null,
+  "superseded_by": "dec_dd3bb04286",
   "caused_by_bug": null,
   "commit": "29356405",
   "valid_from": "2026-09-19T16:40:08+02:00",
-  "valid_to": null,
+  "valid_to": "2026-09-19T17:32:47+02:00",
   "retired": {
     "symbols": [],
     "deps": []
