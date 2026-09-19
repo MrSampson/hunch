@@ -1,0 +1,104 @@
+{
+  "id": "dec_04724e12ef",
+  "title": "Treat constraint scope as file evidence requiring misroute guard",
+  "topic": null,
+  "status": "accepted",
+  "context": "The misroute guard prevented worktree-only data from being written to the wrong worktree for decisions, findings, and bugs facets. The constraints facet was left unguarded despite carrying scope (a glob list of file paths) that serves the same semantic role as the scope_hint_file in other tools, allowing a worktree-scoped constraint to be misrouted to the wrong partition. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.); con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
+  "decision": "Extended fileEvidenceFor to recognize constraint.scope as file evidence and added it to the misroute guard coverage. Established the principle that any nuryel_write facet carrying file-path information (whether as related_files, affected_files, or scope) must be guarded by misrouteGuard, using a uniform subject line format.",
+  "consequences": [
+    "Constraints are now protected from misroute regardless of which worktree is active",
+    "The guard pattern becomes field-agnostic: guard any facet carrying file paths, not just those with predictable field names",
+    "Test coverage improves with a table-driven approach covering all four protected facets uniformly",
+    "Future facets with file evidence will follow the same pattern rather than drifting into an unguarded gap"
+  ],
+  "alternatives_rejected": [
+    "Leave constraints unguarded (reproduces issue #54)",
+    "Create a separate guard mechanism for constraints (existing misrouteGuard is sufficient if scope is recognized as file evidence)",
+    "Guard only the three originally-covered facets (misses an exposure that follows the same principle as the others)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Leave constraints unguarded (reproduces issue #54)",
+      "scope": [
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Create a separate guard mechanism for constraints (existing misrouteGuard is sufficient if scope is recognized as file evidence)",
+      "scope": [
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Guard only the three originally-covered facets (misses an exposure that follows the same principle as the others)",
+      "scope": [
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_a94a8fe5cc",
+    "cmp_dfa5b5acde",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/mcp/server.ts",
+    "test/mcproots.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "837c1646",
+  "valid_from": "2026-09-19T17:21:37+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft+summary",
+    "confidence": 0.5,
+    "evidence": [
+      "commit:837c1646",
+      "synth:provider=claude-cli",
+      "branch:77-guard-nuryel-write",
+      "src/mcp/server.ts",
+      "test/mcproots.test.ts"
+    ],
+    "last_verified": "2026-09-19T15:21:54.167Z"
+  },
+  "date": "2026-09-19T17:21:37+02:00"
+}
