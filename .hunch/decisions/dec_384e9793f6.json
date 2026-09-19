@@ -1,0 +1,110 @@
+{
+  "id": "dec_384e9793f6",
+  "title": "Resolve path ambiguity via filesystem evidence, not string interpretation",
+  "topic": null,
+  "status": "accepted",
+  "context": "A POSIX backslash byte in a real filename is indistinguishable from a Windows path separator when looking at the string alone. Blindly normalizing all evidence through toPosixTarget() before the misroute guard saw it caused correctly-homed writes with literal backslash bytes to be falsely refused. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.); con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
+  "decision": "Created guardEvidence() to check the filesystem at decision points: if the raw, un-normalized entry names a real file at root, that settles it (backslash was literal)—keep the raw string and skip toPosixTarget(). Otherwise normalize as before. Scoped only to the three misroute-guard call sites; stored fields continue using centralized normalization.",
+  "consequences": [
+    "Fixes false-positive misroute refusals for files with literal backslash bytes that still exist on disk at the correct root -- the deleted/renamed shape (nothing left on disk to check) needed a follow-up pathKnownToHistory check, added in a later commit on this same branch",
+    "Preserves Windows path normalization for the legitimate cross-platform case (files that don't actually exist with backslashes)",
+    "Introduces filesystem checks at guard boundaries, trading latency for precision",
+    "Makes the misroute guard inherently platform-aware via filesystem reality rather than string patterns"
+  ],
+  "alternatives_rejected": [
+    "Gating normalization on process.platform: would break Windows-path test coverage and the ~55 other toPosixTarget call sites that have real documented need for cross-platform normalization",
+    "Never normalizing paths: would break legitimate Windows-to-POSIX path resolution for git comparison",
+    "Always keeping raw strings: would fail to normalize actual Windows paths that don't collide with real POSIX files"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Gating normalization on process.platform: would break Windows-path test coverage and the ~55 other toPosixTarget call sites that have real documented need for cross-platform normalization",
+      "scope": [
+        "src/core/**",
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Never normalizing paths: would break legitimate Windows-to-POSIX path resolution for git comparison",
+      "scope": [
+        "src/core/**",
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Always keeping raw strings: would fail to normalize actual Windows paths that don't collide with real POSIX files",
+      "scope": [
+        "src/core/**",
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_a94a8fe5cc",
+    "cmp_b256a6aed0",
+    "cmp_dfa5b5acde",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/core/paths.ts",
+    "src/mcp/server.ts",
+    "test/mcproots.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "29356405",
+  "valid_from": "2026-09-19T16:40:08+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:29356405",
+      "synth:provider=claude-cli",
+      "branch:80-guard-backslash-byte",
+      "src/core/paths.ts",
+      "src/mcp/server.ts",
+      "test/mcproots.test.ts"
+    ],
+    "last_verified": "2026-09-19T14:40:54.197Z"
+  },
+  "date": "2026-09-19T16:40:08+02:00"
+}
