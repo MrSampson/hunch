@@ -1,0 +1,114 @@
+{
+  "id": "dec_d6c2867a61",
+  "title": "Tolerate ENOENT in overlay safety check's concurrent readdir+stat walk",
+  "topic": null,
+  "status": "accepted",
+  "context": "safeOverlayTree and overlayAttributeSourcesAreSafe both scan directories and stat files, but have a TOCTOU race: a concurrent sibling clone's atomic temp-file+rename can delete an entry between readdir listing it and lstat/realpath checking it. A prior fix addressed the second check; this one fixes the same vulnerability in the first check. CI failures reproduced the exact refusal on windows-latest. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.).",
+  "decision": "Wrap lstat+realpath in try-catch, skip ENOENT errors (benign concurrent deletion) but throw all other errors (real permissions/IO problems). Distinguish between concurrent-churn and actual overlay-safety failures.",
+  "consequences": [
+    "Overlay safety check is resilient to benign concurrent atomic writes in peer clones.",
+    "No false-positive refusals from in-flight temp-file operations.",
+    "Real permission and I/O errors still fail loudly (not masked by ENOENT tolerance)."
+  ],
+  "alternatives_rejected": [
+    "Catch all readdir-to-stat errors silently (hides real problems).",
+    "Retry lstat/realpath (still vulnerable to the same race on retry).",
+    "Add locking around the walk (incompatible with atomic temp-file+rename pattern already in use elsewhere).",
+    "Leave the first walk unfixed (asymmetric vulnerability, CI failures continue)."
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Catch all readdir-to-stat errors silently (hides real problems).",
+      "scope": [
+        "src/core/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Retry lstat/realpath (still vulnerable to the same race on retry).",
+      "scope": [
+        "src/core/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Add locking around the walk (incompatible with atomic temp-file+rename pattern already in use elsewhere).",
+      "scope": [
+        "src/core/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Leave the first walk unfixed (asymmetric vulnerability, CI failures continue).",
+      "scope": [
+        "src/core/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_b256a6aed0",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/core/overlaySafety.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "f45090be",
+  "valid_from": "2026-09-19T12:51:56+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:f45090be",
+      "synth:provider=claude-cli",
+      "branch:main",
+      "src/core/overlaySafety.ts"
+    ],
+    "last_verified": "2026-09-19T10:52:12.269Z"
+  },
+  "date": "2026-09-19T12:51:56+02:00"
+}
