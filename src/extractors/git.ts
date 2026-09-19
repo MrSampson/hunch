@@ -1030,11 +1030,22 @@ function overlayAttributeSourcesAreSafe(hunchDir: string, env: NodeJS.ProcessEnv
   try {
     const canonicalHunch = realpathSync(hunchDir);
     const overlayRoot = dirname(canonicalHunch);
-    if (canonicalHunch !== join(overlayRoot, ".hunch") || !safeOverlayTree(overlayRoot)) return false;
+    if (canonicalHunch !== join(overlayRoot, ".hunch")) {
+      console.error(`hunch: [diag] overlayAttributeSourcesAreSafe: canonicalHunch mismatch (${canonicalHunch} vs ${join(overlayRoot, ".hunch")})`);
+      return false;
+    }
+    if (!safeOverlayTree(overlayRoot)) {
+      console.error(`hunch: [diag] overlayAttributeSourcesAreSafe: safeOverlayTree(${overlayRoot}) refused`);
+      return false;
+    }
     const gitDir = overlayGitMetadataDir(hunchDir, env);
-    if (!gitDir) return false;
+    if (!gitDir) {
+      console.error(`hunch: [diag] overlayAttributeSourcesAreSafe: overlayGitMetadataDir(${hunchDir}) returned null`);
+      return false;
+    }
     if (!boundedAttributesFileIsSafe(join(overlayRoot, ".gitattributes"), join(overlayRoot, ".gitattributes"))
       || !boundedAttributesFileIsSafe(join(gitDir, "info", "attributes"), join(gitDir, "info", "attributes"))) {
+      console.error(`hunch: [diag] overlayAttributeSourcesAreSafe: a bounded attributes file was unsafe`);
       return false;
     }
     const walk = (dir: string): boolean => {
@@ -1056,20 +1067,26 @@ function overlayAttributeSourcesAreSafe(hunchDir: string, env: NodeJS.ProcessEnv
           if (code === "ENOENT" || code === "EPERM" || code === "EBUSY" || code === "EACCES") continue;
           throw error;
         }
-        if (stat.isSymbolicLink()) return false;
+        if (stat.isSymbolicLink()) {
+          console.error(`hunch: [diag] overlayAttributeSourcesAreSafe: symlink at ${path}`);
+          return false;
+        }
         if (stat.isDirectory()) {
           if (!walk(path)) return false;
         } else if (!stat.isFile()) {
+          console.error(`hunch: [diag] overlayAttributeSourcesAreSafe: non-regular file at ${path}`);
           return false;
         } else if (entry.name === ".gitattributes"
           && !boundedAttributesFileIsSafe(path, path)) {
+          console.error(`hunch: [diag] overlayAttributeSourcesAreSafe: unsafe .gitattributes at ${path}`);
           return false;
         }
       }
       return true;
     };
     return walk(canonicalHunch);
-  } catch {
+  } catch (error) {
+    console.error(`hunch: [diag] overlayAttributeSourcesAreSafe: threw ${(error as Error)?.stack ?? error}`);
     return false;
   }
 }

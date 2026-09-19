@@ -15,13 +15,22 @@ export function safeOverlayTree(root: string): boolean {
   try {
     const lexicalRoot = resolve(root);
     const rootStat = lstatSync(lexicalRoot);
-    if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) return false;
+    if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+      console.error(`hunch: [diag] safeOverlayTree: root ${lexicalRoot} is symlink=${rootStat.isSymbolicLink()} dir=${rootStat.isDirectory()}`);
+      return false;
+    }
     const canonicalRoot = realpathSync(lexicalRoot);
 
     const walk = (dir: string, topLevel = false): boolean => {
       const dirStat = lstatSync(dir);
-      if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) return false;
-      if (!pathIsWithin(realpathSync(dir), canonicalRoot)) return false;
+      if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
+        console.error(`hunch: [diag] safeOverlayTree: dir ${dir} is symlink=${dirStat.isSymbolicLink()} dir=${dirStat.isDirectory()}`);
+        return false;
+      }
+      if (!pathIsWithin(realpathSync(dir), canonicalRoot)) {
+        console.error(`hunch: [diag] safeOverlayTree: dir ${dir} escapes root ${canonicalRoot}`);
+        return false;
+      }
 
       for (const name of readdirSync(dir)) {
         const entry = join(dir, name);
@@ -41,18 +50,34 @@ export function safeOverlayTree(root: string): boolean {
           if (code === "ENOENT" || code === "EPERM" || code === "EBUSY" || code === "EACCES") continue;
           throw error;
         }
-        if (stat.isSymbolicLink()) return false;
-        if (!pathIsWithin(real, canonicalRoot)) return false;
+        if (stat.isSymbolicLink()) {
+          console.error(`hunch: [diag] safeOverlayTree: symlink at ${entry}`);
+          return false;
+        }
+        if (!pathIsWithin(real, canonicalRoot)) {
+          console.error(`hunch: [diag] safeOverlayTree: ${entry} escapes root ${canonicalRoot} (real=${real})`);
+          return false;
+        }
         if (topLevel && (name === ".gitignore" || name === ".gitattributes")
-          && (!stat.isFile() || stat.nlink !== 1)) return false;
-        if (topLevel && name === ".hunch" && !stat.isDirectory()) return false;
+          && (!stat.isFile() || stat.nlink !== 1)) {
+          console.error(`hunch: [diag] safeOverlayTree: ${entry} isFile=${stat.isFile()} nlink=${stat.nlink}`);
+          return false;
+        }
+        if (topLevel && name === ".hunch" && !stat.isDirectory()) {
+          console.error(`hunch: [diag] safeOverlayTree: .hunch at ${entry} is not a directory`);
+          return false;
+        }
         if (topLevel && name === ".git") {
-          if (!stat.isDirectory()) return false;
+          if (!stat.isDirectory()) {
+            console.error(`hunch: [diag] safeOverlayTree: .git at ${entry} is not a directory`);
+            return false;
+          }
           continue;
         }
         if (stat.isDirectory()) {
           if (!walk(entry)) return false;
         } else if (!stat.isFile()) {
+          console.error(`hunch: [diag] safeOverlayTree: non-regular file at ${entry}`);
           return false;
         }
       }
@@ -64,15 +89,22 @@ export function safeOverlayTree(root: string): boolean {
     if (existsSync(hunchDir)) {
       for (const kind of ENTITY_KINDS) {
         const kindDir = join(hunchDir, kind);
-        if (existsSync(kindDir) && !lstatSync(kindDir).isDirectory()) return false;
+        if (existsSync(kindDir) && !lstatSync(kindDir).isDirectory()) {
+          console.error(`hunch: [diag] safeOverlayTree: kind dir ${kindDir} is not a directory`);
+          return false;
+        }
       }
       for (const name of ["manifest.json", "config.json"]) {
         const file = join(hunchDir, name);
-        if (existsSync(file) && !lstatSync(file).isFile()) return false;
+        if (existsSync(file) && !lstatSync(file).isFile()) {
+          console.error(`hunch: [diag] safeOverlayTree: ${file} is not a file`);
+          return false;
+        }
       }
     }
     return true;
-  } catch {
+  } catch (error) {
+    console.error(`hunch: [diag] safeOverlayTree: threw ${(error as Error)?.stack ?? error}`);
     return false;
   }
 }
