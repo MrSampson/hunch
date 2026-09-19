@@ -231,7 +231,7 @@ Nothing to manage. Capture happens on every commit, memory lands trusted-advisor
 immediately, and renames heal their own bindings:
 
 ```bash
-hunch log                    # every memory move: capture · adopt · supersede · prune · repair
+hunch log                    # every memory move: capture · adopt · supersede · retire · prune · repair
 hunch log --diff <sha>       # what one move changed
 hunch revert-move <sha>      # undo one move (local git revert, never pushed)
 hunch escalations            # questions only YOU can answer — includes one imported ADR at a time

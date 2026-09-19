@@ -1927,15 +1927,11 @@ export class HunchStore {
   /** Invalidate, don't delete: close a constraint's valid-time window (status → "retired",
    *  `valid_to` set to now) so a stale invariant stops surfacing in "Top invariants" and
    *  `hunch check` while its full history stays queryable. Mirrors `supersede`'s
-   *  invalidate-not-erase shape for decisions. Returns the updated constraint, or null if
-   *  no constraint with that id exists in the public store. Refusing an already-retired
-   *  constraint (idempotent-refuse, not a silent no-op) is the CLI's job, since it needs
-   *  the pre-write status to report *when* it was retired. `known` lets a caller that
-   *  already fetched the record (as the CLI does, to distinguish not-found from
-   *  already-retired before writing) pass it in and skip a second identical lookup. */
-  retireConstraint(id: string, known?: Constraint): Constraint | null {
-    const existing = known ?? this.json.get("constraints", id);
-    if (!existing) return null;
+   *  invalidate-not-erase shape for decisions. The caller (the CLI) must already have
+   *  fetched `existing` to distinguish not-found from already-retired before deciding to
+   *  write at all -- that lookup, and refusing an already-retired constraint, are the
+   *  caller's job, not this method's; this only performs the write. */
+  retireConstraint(existing: Constraint): Constraint {
     const retired: Constraint = { ...existing, status: "retired", valid_to: new Date().toISOString() };
     this.json.put("constraints", retired);
     return retired;

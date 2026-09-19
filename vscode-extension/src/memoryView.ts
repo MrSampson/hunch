@@ -47,8 +47,11 @@ export class MoveNode extends vscode.TreeItem {
   constructor(public readonly move: MemoryMove, public readonly root: string) {
     super(move.subject.replace(/^hunch:\s*/, ""), vscode.TreeItemCollapsibleState.None);
     const ids = [...move.decisionIds, ...move.otherIds];
-    this.description = `${move.date.slice(0, 10)} · ${KIND_LABEL[move.kind]}${ids.length ? " · " + ids.slice(0, 2).join(",") : ""}`;
-    this.iconPath = new vscode.ThemeIcon(KIND_ICON[move.kind]);
+    // Fall back gracefully for a kind this build doesn't know yet -- an older extension
+    // reading a newer CLI's --json output (e.g. after `hunch log` learns a new
+    // MemoryMoveKind) must not render "undefined" or crash constructing the icon.
+    this.description = `${move.date.slice(0, 10)} · ${KIND_LABEL[move.kind] ?? move.kind}${ids.length ? " · " + ids.slice(0, 2).join(",") : ""}`;
+    this.iconPath = new vscode.ThemeIcon(KIND_ICON[move.kind] ?? "circle-outline");
     this.contextValue = "hunchMove";
     this.tooltip = new vscode.MarkdownString(
       [

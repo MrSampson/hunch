@@ -3673,8 +3673,7 @@ program
       store.close();
       return fail(`constraint "${id}" is already retired (since ${existing.valid_to?.slice(0, 10) ?? "unknown"})`);
     }
-    const retired = store.retireConstraint(id, existing);
-    if (!retired) { store.close(); return fail(`constraint "${id}" not found`); }
+    const retired = store.retireConstraint(existing);
     store.reindex();
     // Grounding docs are only rewritten as part of an auto-commit; with auto-commit
     // off, refresh them directly so a retired constraint doesn't linger in CLAUDE.md's

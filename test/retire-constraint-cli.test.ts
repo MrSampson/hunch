@@ -5,10 +5,12 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { constraintId } from "../src/core/ids.js";
-import { hunchPaths } from "../src/core/paths.js";
+import { hunchPaths, hunchPathsForDir } from "../src/core/paths.js";
 import { HunchStore } from "../src/store/hunchStore.js";
+import { JsonStore } from "../src/store/jsonStore.js";
 import { updateClaudeMd } from "../src/integrations/claudemd.js";
 import { parseMemoryLog } from "../src/core/memorylog.js";
+import { mkConstraint } from "./helpers.js";
 
 const tsx = join(process.cwd(), "node_modules/tsx/dist/cli.mjs");
 const cli = join(process.cwd(), "src/cli/index.ts");
@@ -181,6 +183,37 @@ test("retire-constraint refuses a nonexistent id", () => {
     assert.match(`${result.stdout}${result.stderr}`, /not found/i);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("retire-constraint tells a confused user their constraint is private-overlay-only, not simply missing", () => {
+  const root = setupRoot();
+  const overlayRoot = mkdtempSync(join(tmpdir(), "hunch-retire-constraint-overlay-"));
+  const privateHunch = join(overlayRoot, ".hunch");
+  try {
+    execFileSync("git", ["init", "-q", overlayRoot]);
+    const privateJson = new JsonStore(hunchPathsForDir(privateHunch));
+    privateJson.ensureDirs();
+    const id = "con_private0001";
+    privateJson.put("constraints", mkConstraint({ id, statement: "PRIVATE_ONLY_INVARIANT_MUST_NOT_RETIRE_PUBLICLY" }));
+
+    const result = spawnSync(process.execPath, [tsx, cli, "retire-constraint", id], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 30000,
+      env: { ...process.env, HUNCH_PRIVATE_DIR: privateHunch, HUNCH_SYNTH_PROVIDER: "deterministic", NO_COLOR: "1" },
+    });
+    assert.notEqual(result.status, 0);
+    const output = `${result.stdout}${result.stderr}`;
+    assert.match(output, /exists only in the private overlay/i, "must distinguish this from a plain not-found");
+    assert.match(output, /retire-constraint only handles public constraints/i);
+
+    // The private record itself must be untouched -- this command never writes to the overlay.
+    const untouched = privateJson.get("constraints", id);
+    assert.equal(untouched?.status, "active");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(overlayRoot, { recursive: true, force: true });
   }
 });
 
