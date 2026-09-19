@@ -3,18 +3,20 @@
   "title": "Extract facet-to-field mapping as reusable guard extension point",
   "topic": null,
   "status": "accepted",
-  "context": "nuryel_write is a fourth auto-committing tool with identical worktree-misroute exposure as the three already-guarded tools, but was left uncovered. Adding a guard per tool risks duplication and divergence; the guard logic itself is already shared. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.); con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
-  "decision": "Extract the facet-to-file-evidence-field mapping into a `fileEvidenceFor` helper function, allowing the existing `misrouteGuard` to work for any tool that names files, rather than embedding field-name knowledge in each tool's handler.",
+  "context": "nuryel_write is a fourth auto-committing tool with identical worktree-misroute exposure as the three already-guarded tools (hunch_record_decision/_correction/_finding), but was left uncovered. Round 1 (commit c3251612) guarded decisions/findings/bugs but, per mr-complexity-reviewer's round-1 finding, missed constraints: a constraint's `scope` field (its glob list) is file-evidence in exactly the same role hunch_record_correction's scope_hint_file plays, and the reviewer reproduced a live misroute through nuryel_write with facet:\"constraints\". Round 2 (commit 837c1646) closed that gap and, per the reviewer's follow-up, converted the field lookup from an open-ended ternary chain into a total Record<StateFacet, string | null> map so a future facet added to STATE_FACETS without a guard-coverage decision is a compile error, not a silent gap. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job...); con_e04226bd05 (The MCP server must stay client-agnostic).",
+  "decision": "Extract the facet-to-file-evidence-field mapping into an exported `FILE_EVIDENCE_FIELD: Record<StateFacet, string | null>` total map plus a `fileEvidenceFor` helper, so the existing `misrouteGuard` covers any facet that names files (decisions: related_files, findings/bugs: affected_files, constraints: scope) without embedding field-name knowledge in each tool's handler, and so adding a facet to STATE_FACETS without extending the map fails to typecheck.",
   "consequences": [
-    "nuryel_write's decisions/findings/bugs facets are now protected from committing to the wrong worktree when cwd is omitted",
-    "The facet-to-field-name mapping is centralized and explicit, making coverage boundaries visible and preventing silent gaps",
+    "nuryel_write's decisions/findings/bugs/constraints facets are all protected from committing to the wrong worktree when cwd is omitted",
+    "The facet-to-field-name mapping is a TOTAL map, not an open-ended ternary chain — a facet added to STATE_FACETS without a guard decision is a compile error, closing the exact mechanism that left constraints unguarded in round 1",
+    "fileEvidenceFor is exported so tests can assert the mapping directly (exhaustively, over every STATE_FACETS entry) instead of only probing it through live misroute behavior",
     "Future auto-committing tools can reuse the same guard pattern without duplication",
-    "bugs facet is protected even though the three older tools never wrote it (consistent coverage)"
+    "bugs facet is protected even though the three older hunch_record_* tools never wrote it (consistent coverage)"
   ],
   "alternatives_rejected": [
     "Duplicate misrouteGuard logic in nuryel_write's handler (code duplication, divergence risk)",
     "Create a separate guard function specific to nuryel_write (unnecessary proliferation)",
-    "Leave nuryel_write unguarded but document it separately (silently defers the hazard)"
+    "Leave nuryel_write unguarded but document it separately (silently defers the hazard)",
+    "Keep the facet-to-field mapping as an open-ended ternary chain (round-1 shape) — a new facet added to STATE_FACETS still typechecks clean with zero guard coverage, which is exactly how constraints went unguarded"
   ],
   "rejected_tripwires": [
     {
@@ -88,17 +90,14 @@
     "symbols": [],
     "deps": []
   },
+  "premises": [],
   "provenance": {
-    "source": "llm_draft+summary",
-    "confidence": 0.5,
+    "source": "llm_draft+agent_recorded",
+    "confidence": 0.75,
     "evidence": [
-      "commit:c3251612",
-      "synth:provider=claude-cli",
-      "branch:77-guard-nuryel-write",
       "src/mcp/server.ts",
       "test/mcproots.test.ts"
-    ],
-    "last_verified": "2026-09-19T14:56:37.823Z"
+    ]
   },
-  "date": "2026-09-19T16:56:02+02:00"
+  "date": "2026-09-19T16:05:16.845Z"
 }
