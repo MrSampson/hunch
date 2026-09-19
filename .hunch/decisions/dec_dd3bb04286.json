@@ -1,0 +1,109 @@
+{
+  "id": "dec_dd3bb04286",
+  "title": "guardEvidence recognizes file evidence from both filesystem and git history",
+  "topic": null,
+  "status": "accepted",
+  "context": "guardEvidence distinguishes literal backslash bytes (legal POSIX filename chars) from Windows path separators to prevent false misroute refusals. The prior check (filesystem presence only) failed for deleted files: a file gone from disk but known to git would pass through un-normalized, then be misread as a separator by downstream code. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.); con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
+  "decision": "Added namesRealEvidence(root, f) to check both filesystem presence (isFile) and git history (pathKnownToHistory). guardEvidence now treats a relative entry as real evidence if either check passes, grounding truth in both current state and historical git knowledge.",
+  "consequences": [
+    "Deleted files with literal backslash bytes are correctly preserved (not normalized), fixing false refusals on valid deletes",
+    "Absolute paths to backslash-byte files in sibling worktrees are now correctly flagged as misroutes (previously silently produced no candidates — a false negative)",
+    "guardEvidence gains durability across file lifetime: the same evidence entry is handled correctly whether the file currently exists on disk or is only known to git history"
+  ],
+  "alternatives_rejected": [
+    "Filesystem-only check (prior approach) — fails for deleted files and misses absolute-path sibling-worktree cases",
+    "Always normalize through toPosixTarget — destroys the ability to distinguish and preserve literal backslash bytes",
+    "Consult only git history — would miss current files that don't yet have history or ignore disk-only artifacts"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Filesystem-only check (prior approach) — fails for deleted files and misses absolute-path sibling-worktree cases",
+      "scope": [
+        "src/core/**",
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Always normalize through toPosixTarget — destroys the ability to distinguish and preserve literal backslash bytes",
+      "scope": [
+        "src/core/**",
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Consult only git history — would miss current files that don't yet have history or ignore disk-only artifacts",
+      "scope": [
+        "src/core/**",
+        "src/mcp/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_a94a8fe5cc",
+    "cmp_b256a6aed0",
+    "cmp_dfa5b5acde",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/core/paths.ts",
+    "src/mcp/server.ts",
+    "test/mcproots.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "6470c485",
+  "valid_from": "2026-09-19T17:32:47+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:6470c485",
+      "synth:provider=claude-cli",
+      "branch:80-guard-backslash-byte",
+      "src/core/paths.ts",
+      "src/mcp/server.ts",
+      "test/mcproots.test.ts"
+    ],
+    "last_verified": "2026-09-19T15:33:09.440Z"
+  },
+  "date": "2026-09-19T17:32:47+02:00"
+}
