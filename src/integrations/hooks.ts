@@ -18,7 +18,7 @@ import { spawnSync } from "node:child_process";
 import { join, isAbsolute, dirname, basename, relative, resolve } from "node:path";
 import { hooksDir, gitCommonDir } from "../extractors/git.js";
 import { initiatorChildEnv } from "../synthesis/initiator.js";
-import { HUNCH_NPX_PACKAGE_SPEC } from "../core/version.js";
+import { HUNCH_NPX_PACKAGE_SPEC, HUNCH_PACKAGE_NAME } from "../core/version.js";
 
 const MARK = "# >>> hunch post-commit >>>";
 const ENDMARK = "# <<< hunch post-commit <<<";
@@ -352,8 +352,43 @@ function installManagedBlock(root: string, hookName: string, mark: string, end: 
   return { path: hookPath, action: "appended" };
 }
 
+/** True when `root` is a checkout of Hunch's OWN source tree (this package's
+ *  own name in its own package.json), not merely a project that depends on
+ *  Hunch. Detected from root's package.json rather than any install-path or
+ *  environment heuristic, so it answers correctly regardless of how the
+ *  CALLING process itself happens to be running — see selfBuildInvocation. */
+function isHunchRepoRoot(root: string): boolean {
+  try {
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { name?: unknown };
+    return pkg.name === HUNCH_PACKAGE_NAME;
+  } catch {
+    return false;
+  }
+}
+
+/** Force a doc-regenerating hook installed INSIDE Hunch's own checkout to
+ *  always call back into that SAME checkout's in-tree build
+ *  (`npx tsx src/cli/index.ts`), never whatever build the installing process
+ *  itself happened to be running (issue #74). A post-commit/post-merge hook
+ *  script is baked in once, at install time, from the installing process's
+ *  own resolveInvocation() — which reflects wherever THAT process's code
+ *  lives (a stale or newer global install, npx, another checkout), not this
+ *  repo's own generator. When the hook later fires and regenerates
+ *  CLAUDE.md/AGENTS.md/etc. from a *different* build's claudemd.ts, the
+ *  committed docs silently drift out of sync with what this checkout's own
+ *  generator would produce (caught only by test/grounding-freshness.test.ts).
+ *  Outside this repo — every other project depending on Hunch — the passed
+ *  invocation is returned unchanged; that remains the correct, portable
+ *  behavior (a hook script is per-machine and never committed either way). */
+function selfBuildInvocation(root: string, invocation: string): string {
+  if (!isHunchRepoRoot(root)) return invocation;
+  const entry = join(root, "src", "cli", "index.ts");
+  return `npx tsx ${JSON.stringify(entry)}`;
+}
+
 export function installPostCommitHook(root: string, invocation: string, opts: { private?: boolean; commit?: boolean; localOnly?: boolean } = {}): HookInstall {
-  return installManagedBlock(root, "post-commit", MARK, ENDMARK, (inv) => block(inv, opts), invocation);
+  const inv = selfBuildInvocation(root, invocation);
+  return installManagedBlock(root, "post-commit", MARK, ENDMARK, (i) => block(i, opts), inv);
 }
 
 const PRE_MARK = "# >>> hunch pre-commit (constraint guard) >>>";
@@ -435,7 +470,9 @@ const writes = (h: HookInstall): boolean => h.action !== "managed-elsewhere" && 
  *  a repo carrying only one half (an older install, or a hand-edited hook)
  *  gets the other appended rather than clobbered. */
 export function installPostMergeHook(root: string, invocation: string): HookInstall {
-  const grounding = installManagedBlock(root, "post-merge", GROUNDING_MERGE_MARK, GROUNDING_MERGE_END, groundingMergeBlock, invocation);
+  // Only the grounding half regenerates committed docs (issue #74); repair-provenance
+  // makes no doc writes, so it keeps the passed invocation unchanged.
+  const grounding = installManagedBlock(root, "post-merge", GROUNDING_MERGE_MARK, GROUNDING_MERGE_END, groundingMergeBlock, selfBuildInvocation(root, invocation));
   const repair = installManagedBlock(root, "post-merge", REPAIR_MERGE_MARK, REPAIR_MERGE_END, repairProvenanceMergeBlock, invocation);
   if (!writes(grounding) && !writes(repair)) {
     return { ...grounding, snippet: `${grounding.snippet}\n${stripComment(repair.snippet ?? "", grounding.manager)}` };

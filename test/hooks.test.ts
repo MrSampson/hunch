@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { installPostCommitHook, installPreCommitHook, installPostMergeHook, hookStatus } from "../src/integrations/hooks.js";
+import { HUNCH_PACKAGE_NAME } from "../src/core/version.js";
 
 const PROJECT_ROOT = process.cwd();
 const TSX = join(PROJECT_ROOT, "node_modules/tsx/dist/cli.mjs");
@@ -51,6 +52,29 @@ test("post-commit hook: --commit without --private (regular auto-commit)", () =>
     const h = hookText(r);
     assert.match(h, /sync --from-hook --quiet --commit >/);
     assert.doesNotMatch(h, /--private/);
+  } finally { rmSync(r, { recursive: true, force: true }); }
+});
+
+test("post-commit hook: inside Hunch's own checkout, always calls back into the in-tree tsx build, regardless of the invocation the installing process was actually running (issue #74)", () => {
+  const r = repo();
+  try {
+    writeFileSync(join(r, "package.json"), JSON.stringify({ name: HUNCH_PACKAGE_NAME }));
+    // A global/npx install (or any other build) performed the install; the
+    // installed hook must still call back into THIS checkout's own src/cli/index.ts
+    // for doc regeneration, never the installing process's own build.
+    installPostCommitHook(r, "npx -y --package=hunch-exact@npm:@davesheffer/hunch@9.9.9 hunch");
+    const h = hookText(r);
+    assert.doesNotMatch(h, /hunch-exact/, "must not embed the installing process's own (possibly stale/newer) build");
+    assert.match(h, /npx tsx ".*src\/cli\/index\.ts" sync --from-hook --quiet/);
+  } finally { rmSync(r, { recursive: true, force: true }); }
+});
+
+test("post-commit hook: outside Hunch's own checkout, the passed invocation is used unchanged (a repo merely depending on Hunch)", () => {
+  const r = repo();
+  try {
+    writeFileSync(join(r, "package.json"), JSON.stringify({ name: "some-other-project" }));
+    installPostCommitHook(r, "hunch");
+    assert.match(hookText(r), /hunch sync --from-hook --quiet/);
   } finally { rmSync(r, { recursive: true, force: true }); }
 });
 
@@ -314,5 +338,26 @@ test("post-merge hook: refreshes grounding only when the merge touched .hunch/, 
     writeFileSync(join(r, ".git", "hooks", "post-merge"), "#!/bin/sh\necho user-hook\n");
     assert.equal(installPostMergeHook(r, "hunch").action, "appended");
     assert.match(readFileSync(join(r, ".git", "hooks", "post-merge"), "utf8"), /^#!\/bin\/sh\necho user-hook\n# >>> hunch post-merge >>>/);
+  } finally { rmSync(r, { recursive: true, force: true }); }
+});
+
+test("post-merge hook: inside Hunch's own checkout, the grounding-refresh half calls back into the in-tree tsx build (issue #74)", () => {
+  const r = repo();
+  try {
+    writeFileSync(join(r, "package.json"), JSON.stringify({ name: HUNCH_PACKAGE_NAME }));
+    installPostMergeHook(r, "npx -y --package=hunch-exact@npm:@davesheffer/hunch@9.9.9 hunch");
+    const h = mergeHookText(r);
+    assert.match(h, /npx tsx ".*src\/cli\/index\.ts" grounding --refresh/);
+    assert.doesNotMatch(h, /hunch-exact.*grounding --refresh/, "grounding refresh must not use the installing process's own build");
+  } finally { rmSync(r, { recursive: true, force: true }); }
+});
+
+test("post-merge hook: inside Hunch's own checkout, the repair-provenance half is UNCHANGED — only the doc-regenerating grounding half is affected (issue #74 scope)", () => {
+  const r = repo();
+  try {
+    writeFileSync(join(r, "package.json"), JSON.stringify({ name: HUNCH_PACKAGE_NAME }));
+    installPostMergeHook(r, "hunch");
+    const h = mergeHookText(r);
+    assert.match(h, /hunch repair-provenance --from-hook --quiet/, "repair-provenance keeps the passed invocation — it does no doc regeneration");
   } finally { rmSync(r, { recursive: true, force: true }); }
 });
