@@ -25,9 +25,20 @@ export function safeOverlayTree(root: string): boolean {
 
       for (const name of readdirSync(dir)) {
         const entry = join(dir, name);
-        const stat = lstatSync(entry);
+        let stat, real;
+        try {
+          stat = lstatSync(entry);
+          real = realpathSync(entry);
+        } catch (error) {
+          // A concurrent writer's own atomic temp-file+rename (con_902759b3dc) can make
+          // an entry this readdir just listed vanish before lstat/realpath sees it --
+          // e.g. a sibling clone's in-flight JSON write. That's benign churn, not an
+          // unsafe tree; only a real stat failure (permissions, I/O error) refuses.
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+          throw error;
+        }
         if (stat.isSymbolicLink()) return false;
-        if (!pathIsWithin(realpathSync(entry), canonicalRoot)) return false;
+        if (!pathIsWithin(real, canonicalRoot)) return false;
         if (topLevel && (name === ".gitignore" || name === ".gitattributes")
           && (!stat.isFile() || stat.nlink !== 1)) return false;
         if (topLevel && name === ".hunch" && !stat.isDirectory()) return false;
