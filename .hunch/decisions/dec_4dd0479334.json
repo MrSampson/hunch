@@ -1,0 +1,122 @@
+{
+  "id": "dec_4dd0479334",
+  "title": "Diagnose before the next fix attempt for non-reproducible CI failures",
+  "topic": null,
+  "status": "accepted",
+  "context": "Windows CI platform-matrix test repeatedly failed in overlayAttributeSourcesAreSafe/safeOverlayTree with identical generic messages. Two prior targeted fixes (handling ENOENT, then EPERM/EBUSY/EACCES) didn't resolve it. Cannot reproduce locally, and guessing the next fix without visibility is inefficient. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.).",
+  "decision": "Add specific console.error at every early-return condition and exception catch in both functions, logging what actually caused the refusal. Purely diagnostic instrumentation — no behavior changes — to identify the specific failing check on the next CI run before attempting another blind fix.",
+  "consequences": [
+    "Next Windows CI failure will emit specific diagnostic logs naming the exact check that refused",
+    "Fix attempt can target the actual root cause instead of hypothesis-driven guessing",
+    "CI artifact logs will contain granular diagnostic trail for this iteration and future debugging",
+    "Console.error output will be verbose during failure cases"
+  ],
+  "alternatives_rejected": [
+    "Continue iterating with hypothesis-driven fixes based on generic error messages",
+    "Set up Windows VM locally to attempt reproduction",
+    "Add only a single catch-all diagnostic log message instead of per-check instrumentation",
+    "Wait for additional CI failures to accumulate before investigating"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Continue iterating with hypothesis-driven fixes based on generic error messages",
+      "scope": [
+        "src/core/**",
+        "src/extractors/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Set up Windows VM locally to attempt reproduction",
+      "scope": [
+        "src/core/**",
+        "src/extractors/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Add only a single catch-all diagnostic log message instead of per-check instrumentation",
+      "scope": [
+        "src/core/**",
+        "src/extractors/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Wait for additional CI failures to accumulate before investigating",
+      "scope": [
+        "src/core/**",
+        "src/extractors/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_b256a6aed0",
+    "cmp_e0ccfe26fe",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/core/overlaySafety.ts",
+    "src/extractors/git.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "1ae51b2c",
+  "valid_from": "2026-09-19T13:32:33+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:1ae51b2c",
+      "synth:provider=claude-cli",
+      "branch:main",
+      "src/core/overlaySafety.ts",
+      "src/extractors/git.ts"
+    ],
+    "last_verified": "2026-09-19T11:33:00.535Z"
+  },
+  "date": "2026-09-19T13:32:33+02:00"
+}
