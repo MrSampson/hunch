@@ -990,7 +990,14 @@ function boundedAttributesFileIsSafe(file: string, expectedCanonicalPath: string
     if (!sameFilesystemEntry(file, expectedCanonicalPath)) return false;
     return hunchAttributesAreSafe(readFileSync(file, "utf8"));
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ENOENT";
+    // ENOENT: no file, nothing to worry about. EPERM/EBUSY/EACCES: a concurrent
+    // writeFileAtomic (this exact file is one of installMergeDriver's targets) can
+    // leave it transiently unreadable mid temp-file+rename on Windows, where
+    // renameSync can't replace a file another process holds open even for read
+    // (io.ts's isRenameContention, the same class as the tree-walk fixes above).
+    // Neither is evidence of an unsafe source.
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "EPERM" || code === "EBUSY" || code === "EACCES";
   }
 }
 
