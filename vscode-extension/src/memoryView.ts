@@ -19,7 +19,7 @@ export interface MemoryMove {
   shortSha: string;
   date: string;
   subject: string;
-  kind: "capture" | "adopt" | "supersede" | "prune" | "repair" | "edit";
+  kind: "capture" | "adopt" | "supersede" | "retire" | "prune" | "repair" | "edit";
   decisionIds: string[];
   otherIds: string[];
   added: number;
@@ -34,12 +34,13 @@ const KIND_ICON: Record<MemoryMove["kind"], string> = {
   capture: "diff-added",
   adopt: "check",
   supersede: "sync",
+  retire: "circle-slash",
   prune: "diff-removed",
   repair: "tools",
   edit: "edit",
 };
 const KIND_LABEL: Record<MemoryMove["kind"], string> = {
-  capture: "captured", adopt: "adopted", supersede: "superseded", prune: "pruned", repair: "repaired", edit: "edited",
+  capture: "captured", adopt: "adopted", supersede: "superseded", retire: "retired", prune: "pruned", repair: "repaired", edit: "edited",
 };
 
 export class MoveNode extends vscode.TreeItem {

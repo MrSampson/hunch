@@ -3658,7 +3658,7 @@ program
   .command("retire-constraint")
   .description('Retire a constraint (invalidate, don\'t delete): closes its valid-time window so it stops surfacing in "Top invariants" and `hunch check`, while its history stays queryable. Hand-editing the JSON is no longer the only way.')
   .argument("<id>", "constraint id (con_*)")
-  .option("--reason <text>", "why it's being retired (recorded in the commit message)")
+  .option("--reason <text>", "why it's being retired (recorded in the commit body, when a commit is made)")
   .action((id: string, opts: { reason?: string }) => {
     const { store, root } = storeFor();
     const existing = store.json.get("constraints", id);
@@ -3673,11 +3673,22 @@ program
       store.close();
       return fail(`constraint "${id}" is already retired (since ${existing.valid_to?.slice(0, 10) ?? "unknown"})`);
     }
-    const retired = store.retireConstraint(id);
+    const retired = store.retireConstraint(id, existing);
     if (!retired) { store.close(); return fail(`constraint "${id}" not found`); }
     store.reindex();
-    const message = opts.reason ? `hunch: retire constraint ${id} (${opts.reason})` : `hunch: retire constraint ${id}`;
+    // Grounding docs are only rewritten as part of an auto-commit; with auto-commit
+    // off, refresh them directly so a retired constraint doesn't linger in CLAUDE.md's
+    // "Top invariants" (the #21 symptom this repo already fixed once for constraints).
+    if (!store.autoCommit) refreshExistingGrounding(root, store);
+    // Keep the commit SUBJECT deterministic -- hunch log's classify() regexes the
+    // subject for keywords like "supersede"/"repair"/"adopt", and free-text --reason
+    // can accidentally contain one, mis-classifying the timeline entry. The reason goes
+    // in the commit BODY instead (git's %s only reads the first line).
+    const message = opts.reason ? `hunch: retire constraint ${id}\n\n${opts.reason}` : `hunch: retire constraint ${id}`;
     pumpMemoryHome(store, root, "public", message);
+    if (opts.reason && !store.autoCommit) {
+      console.log(`  ⚠ --reason was not recorded anywhere: auto-commit is off, so no commit was created to hold it.`);
+    }
     console.log(`✓ ${id} retired — window closed at ${retired.valid_to?.slice(0, 10)}.${opts.reason ? ` Reason: ${opts.reason}` : ""}`);
     store.close();
   });
@@ -5555,7 +5566,7 @@ program
     const moves = parseMemoryLog(gitMemoryLog(root, limit));
     if (opts.json) { console.log(JSON.stringify(moves)); return; }
     if (!moves.length) { console.log("No memory moves yet — nothing has changed .hunch/."); return; }
-    const icon: Record<MemoryMove["kind"], string> = { capture: "✚", adopt: "✓", supersede: "↻", prune: "✗", repair: "🔧", edit: "•" };
+    const icon: Record<MemoryMove["kind"], string> = { capture: "✚", adopt: "✓", supersede: "↻", retire: "⊘", prune: "✗", repair: "🔧", edit: "•" };
     for (const m of moves) {
       const ids = [...m.decisionIds, ...m.otherIds].slice(0, 4).join(",");
       console.log(`${m.date.slice(0, 10)}  ${icon[m.kind]} ${m.kind.padEnd(9)} ${m.shortSha}  ${m.subject.slice(0, 60)}${ids ? "  " + dim(ids) : ""}`);
