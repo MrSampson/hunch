@@ -203,10 +203,10 @@ const destinationNote = (destRoot: string): string => {
  *  alone to the other write tools that accept the SAME structured file-list
  *  evidence and cwd hint: hunch_record_correction's scope_hint_file and
  *  hunch_record_finding's affected_files share it via misrouteGuard below, and
- *  so does nuryel_write's decisions/findings/bugs facets, via fileEvidenceFor
- *  (issue #77) — every auto-committing write tool that names files is covered,
- *  not silently left uncovered by an overclaimed "every"/"all". Every matching
- *  sibling is named as a candidate `cwd` and the write is refused rather than risked;
+ *  so does nuryel_write's decisions/findings/bugs/constraints facets, via
+ *  fileEvidenceFor — every auto-committing write tool that names files is
+ *  covered, not silently left uncovered by an overclaimed "every"/"all". Every
+ *  matching sibling is named as a candidate `cwd` and the write is refused rather than risked;
  *  it returns every match rather than the first, since confidently naming just one
  *  would let a caller that blindly retries as instructed land in the WRONG worktree —
  *  the same failure mode one level removed.
@@ -546,9 +546,10 @@ function existsUnder(dir: string, f: string, worktrees: readonly string[]): bool
 }
 
 /** Shared misroute-guard refusal for the auto-committing write tools that name
- *  files (issue #54, extended to hunch_record_correction/hunch_record_finding by
- *  #62, and to nuryel_write's decisions/findings/bugs facets by #77) — one
- *  message so every call site stays in lockstep instead of drifting.
+ *  files (hunch_record_decision, hunch_record_correction, hunch_record_finding,
+ *  and nuryel_write's decisions/findings/bugs/constraints facets via
+ *  fileEvidenceFor) — one message so every call site stays in lockstep instead
+ *  of drifting.
  *  Returns the refusal ToolResult when misroutedWorktreeCandidates finds a better
  *  home, else null (proceed as normal). `subject` names what's being recorded,
  *  e.g. `"Foo"` or `finding "Foo"`, for the refusal text. Callers pass file evidence
@@ -574,22 +575,33 @@ function misrouteGuard(root: string, subject: string, relatedFiles: readonly str
   );
 }
 
-/** The file-evidence field, if any, nuryel_write's facets carry — the same
- *  related_files/affected_files fields misrouteGuard already reads from
- *  hunch_record_decision/_correction/_finding, reached through a fourth entry
- *  point onto the identical facets rather than a new coverage boundary (issue
- *  #77). bugs carries affected_files too, with the same exposure as findings,
- *  so it is covered here even though the three older tools never wrote bugs.
- *  Every other facet (constraints, receipts, commitments, derived, entities,
- *  relationships, conventions) carries no comparable field and is left
- *  unguarded rather than inventing one. `record` is caller-supplied
- *  z.record(string, unknown) — defensive by construction, so anything other
- *  than an array of strings reads as no evidence instead of throwing. */
+/** The file-evidence field, if any, a nuryel_write facet carries: related_files for
+ *  decisions, affected_files for findings/bugs, and scope (the glob list a
+ *  constraint applies to — the same role hunch_record_correction's
+ *  scope_hint_file plays) for constraints. Every other facet (receipts,
+ *  commitments, derived, entities, relationships, conventions) carries no
+ *  comparable field and is left unguarded rather than inventing one. `record` is
+ *  caller-supplied z.record(string, unknown) — defensive by construction, so
+ *  anything other than an array of strings reads as no evidence instead of
+ *  throwing. */
 function fileEvidenceFor(facet: StateFacet, record: Record<string, unknown>): string[] {
-  const field = facet === "decisions" ? "related_files" : facet === "findings" || facet === "bugs" ? "affected_files" : null;
+  const field = facet === "decisions" ? "related_files"
+    : facet === "findings" || facet === "bugs" ? "affected_files"
+    : facet === "constraints" ? "scope"
+    : null;
   if (!field) return [];
   const value = record[field];
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+}
+
+/** The misrouteGuard `subject` for a nuryel_write call, matching the
+ *  "<kind> \"<label>\"" style hunch_record_decision/_correction/_finding use for
+ *  the same refusal text. Constraints have no title, only a statement. */
+function nuryelWriteSubject(facet: StateFacet, record: Record<string, unknown>): string {
+  const labelField = facet === "decisions" || facet === "findings" || facet === "bugs" ? "title" : facet === "constraints" ? "statement" : null;
+  const label = labelField ? record[labelField] : undefined;
+  const kind = facet.endsWith("s") ? facet.slice(0, -1) : facet;
+  return `${kind}${typeof label === "string" ? ` "${label.slice(0, 60)}"` : ""} (nuryel_write)`;
 }
 
 /** Where a capture keyed to `home` actually lands: the private overlay directory when
@@ -2663,13 +2675,15 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     },
     async ({ cwd: _cwd, ...input }): Promise<ToolResult> => {
       try {
-        // Same misroute guard as hunch_record_decision/_correction/_finding (issue #54,
-        // #62) — nuryel_write is a fourth entry point onto the same auto-committing,
-        // cwd-hinted, file-naming facets and was missing it (issue #77).
-        const title = input.record?.title;
-        const subject = `${input.facet} write${typeof title === "string" ? ` "${title.slice(0, 60)}"` : ""}`;
-        const misroute = misrouteGuard(root, subject, fileEvidenceFor(input.facet, input.record).map(toPosixTarget));
-        if (misroute) return misroute;
+        // Same misroute guard as hunch_record_decision/_correction/_finding.
+        const misroute = misrouteGuard(root, nuryelWriteSubject(input.facet, input.record), fileEvidenceFor(input.facet, input.record).map(toPosixTarget));
+        if (misroute) {
+          // Unlike the three hunch_* tools, nuryel_write's `scope`/`principal.grants` are a
+          // repository partition tied to the CURRENT root: retrying with only `cwd` moved
+          // re-homes the store but leaves the request scoped to the old root's partition,
+          // which fails loudly (not silently) on the retry. Spell out the extra step.
+          return err(`${misroute.content[0]?.text ?? ""} Also move \`scope\` (and \`principal.grants\`) to the repository partition for that worktree — nuryel_write's scope does not follow \`cwd\` automatically.`);
+        }
         // Same cross-process lock `hunch serve` takes: a second agent writing over stdio must
         // not race the HTTP server between the ledger read and the record write.
         const { hunchDir } = stateHomeFor(store, input.scope);

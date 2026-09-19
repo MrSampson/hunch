@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
@@ -1666,70 +1666,74 @@ test("hunch_record_finding with affected_files that exist nowhere still succeeds
 
 // nuryel_write is a fourth auto-committing, cwd-hinted, file-naming tool with the
 // identical #54 exposure as the three hunch_record_* tools above — its decisions,
-// findings and bugs facets carry related_files/affected_files just like them
-// (issue #77). These tests reproduce that gap and pin the fix. The nuryel tool
-// group is hidden unless the root already stores state or HUNCH_MCP_TOOLS opts in
-// (src/mcp/toolset.ts), so each test enables it via the env var and restores it.
+// findings, bugs and constraints facets each carry a file-evidence field just like
+// them (issue #77). These tests reproduce that gap and pin the fix. The nuryel
+// tool group is hidden unless the root already stores state or HUNCH_MCP_TOOLS
+// opts in (src/mcp/toolset.ts), so the helper below enables it and restores it.
 async function nuryelRepoScope(client: Client): Promise<{ kind: string; id: string }> {
   const caps = await client.callTool({ name: "nuryel_capabilities", arguments: {} });
   return (caps.structuredContent as { repository: { kind: string; id: string } }).repository;
 }
 
-test("nuryel_write (decisions facet) is refused when related_files only exist in a linked worktree (issue #77)", async (t) => {
-  const fixture = repoWithWorktree();
-  writeFileSync(join(fixture.worktree, "worktree-only.ts"), "export const onlyHere = 1;\n");
+/** A connected nuryel_write-capable client against `root`, plus its repository scope.
+ *  Registers the same cleanup every one of these tests needs (client, server, the
+ *  HUNCH_MCP_TOOLS override, and an optional extra teardown) in one t.after. */
+async function nuryelClient(t: TestContext, root: string, extraCleanup?: () => void): Promise<{ client: Client; repo: { kind: string; id: string } }> {
   const priorTools = process.env.HUNCH_MCP_TOOLS;
   process.env.HUNCH_MCP_TOOLS = "all";
-  const control = buildServerWithRootControl(fixture.root);
-  const client = new Client({ name: "misroute-guard-nuryel-decisions-test", version: "0.0.0" });
+  const control = buildServerWithRootControl(root);
+  const client = new Client({ name: `nuryel-misroute-test-${Math.random().toString(36).slice(2, 8)}`, version: "0.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   t.after(async () => {
     await client.close().catch(() => {});
     await control.server.close().catch(() => {});
-    fixture.cleanup();
+    extraCleanup?.();
     if (priorTools === undefined) delete process.env.HUNCH_MCP_TOOLS; else process.env.HUNCH_MCP_TOOLS = priorTools;
   });
-
   await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
-  const repo = await nuryelRepoScope(client);
-  const principal = { id: "misroute-nuryel-test", kind: "agent", grants: [repo] };
+  return { client, repo: await nuryelRepoScope(client) };
+}
 
-  const result = await client.callTool({
-    name: "nuryel_write",
-    arguments: {
-      principal,
-      scope: repo,
-      facet: "decisions",
-      record: { title: "worktree-only.ts drives the retry policy", related_files: ["worktree-only.ts"] },
-      idempotency_key: "nuryel-misroute-decisions-1",
-      // Deliberately no `cwd`.
-    },
-  }) as { content: Array<{ text: string }>; isError?: boolean };
+// One table entry per guarded facet: a minimal record carrying that facet's
+// file-evidence field, pointed at whatever filename the test passes in.
+const NURYEL_MISROUTE_FACETS: ReadonlyArray<{ facet: string; record: (file: string) => Record<string, unknown> }> = [
+  { facet: "decisions", record: (file) => ({ title: "worktree-only.ts drives the retry policy", related_files: [file] }) },
+  { facet: "findings", record: (file) => ({ title: "worktree-only.ts is missing null checks", observation: "audited during work entirely in the linked worktree", affected_files: [file] }) },
+  { facet: "bugs", record: (file) => ({ title: "worktree-only.ts throws on null input", symptom: "observed during work entirely in the linked worktree", affected_files: [file] }) },
+  { facet: "constraints", record: (file) => ({ statement: "worktree-only.ts must not be imported from outside its module", scope: [file] }) },
+];
 
-  assert.equal(result.isError, true, "should refuse rather than silently commit the decision against the wrong root");
-  const text = result.content.map((c) => c.text ?? "").join("\n");
-  assert.ok(text.includes(fixture.worktree), `refusal should name the likely-correct worktree: ${text}`);
-  assert.ok(/cwd/.test(text), `refusal should tell the caller to pass cwd: ${text}`);
-  assert.equal(git(fixture.root, "log", "-1", "--format=%s"), "fixture", "primary checkout must have no new commit");
-});
+for (const { facet, record } of NURYEL_MISROUTE_FACETS) {
+  test(`nuryel_write (${facet} facet) is refused when its file-evidence only exists in a linked worktree (issue #77)`, async (t) => {
+    const fixture = repoWithWorktree();
+    writeFileSync(join(fixture.worktree, "worktree-only.ts"), "export const onlyHere = 1;\n");
+    const { client, repo } = await nuryelClient(t, fixture.root, fixture.cleanup);
+    const principal = { id: `misroute-nuryel-${facet}-test`, kind: "agent", grants: [repo] };
+
+    const result = await client.callTool({
+      name: "nuryel_write",
+      arguments: {
+        principal,
+        scope: repo,
+        facet,
+        record: record("worktree-only.ts"),
+        idempotency_key: `nuryel-misroute-${facet}-1`,
+        // Deliberately no `cwd`.
+      },
+    }) as { content: Array<{ text: string }>; isError?: boolean };
+
+    assert.equal(result.isError, true, `should refuse rather than silently commit the ${facet} record against the wrong root`);
+    const text = result.content.map((c) => c.text ?? "").join("\n");
+    assert.ok(text.includes(fixture.worktree), `refusal should name the likely-correct worktree: ${text}`);
+    assert.ok(/cwd/.test(text), `refusal should tell the caller to pass cwd: ${text}`);
+    assert.equal(git(fixture.root, "log", "-1", "--format=%s"), "fixture", `primary checkout must have no new commit (facet ${facet})`);
+  });
+}
 
 test("nuryel_write: retrying the refused decisions-facet call WITH cwd actually lands the record in the worktree (issue #77)", async (t) => {
   const fixture = repoWithWorktree();
   writeFileSync(join(fixture.worktree, "worktree-only.ts"), "export const onlyHere = 1;\n");
-  const priorTools = process.env.HUNCH_MCP_TOOLS;
-  process.env.HUNCH_MCP_TOOLS = "all";
-  const control = buildServerWithRootControl(fixture.root);
-  const client = new Client({ name: "misroute-guard-nuryel-decisions-remedy-test", version: "0.0.0" });
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  t.after(async () => {
-    await client.close().catch(() => {});
-    await control.server.close().catch(() => {});
-    fixture.cleanup();
-    if (priorTools === undefined) delete process.env.HUNCH_MCP_TOOLS; else process.env.HUNCH_MCP_TOOLS = priorTools;
-  });
-
-  await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
-  const repo = await nuryelRepoScope(client);
+  const { client, repo } = await nuryelClient(t, fixture.root, fixture.cleanup);
   // A `cwd` hint re-homes the store to the worktree's OWN partition (its basename), not
   // the primary root's — the repository scope legacy facets require must follow it.
   const worktreeRepo = { ...repo, id: basename(fixture.worktree) };
@@ -1756,106 +1760,9 @@ test("nuryel_write: retrying the refused decisions-facet call WITH cwd actually 
   assert.equal(existsSync(join(fixture.worktree, ".hunch", "decisions")), true, "the decision must land in the worktree");
 });
 
-test("nuryel_write (findings facet) is refused when affected_files only exist in a linked worktree (issue #77)", async (t) => {
-  const fixture = repoWithWorktree();
-  writeFileSync(join(fixture.worktree, "worktree-only.ts"), "export const onlyHere = 1;\n");
-  const priorTools = process.env.HUNCH_MCP_TOOLS;
-  process.env.HUNCH_MCP_TOOLS = "all";
-  const control = buildServerWithRootControl(fixture.root);
-  const client = new Client({ name: "misroute-guard-nuryel-findings-test", version: "0.0.0" });
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  t.after(async () => {
-    await client.close().catch(() => {});
-    await control.server.close().catch(() => {});
-    fixture.cleanup();
-    if (priorTools === undefined) delete process.env.HUNCH_MCP_TOOLS; else process.env.HUNCH_MCP_TOOLS = priorTools;
-  });
-
-  await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
-  const repo = await nuryelRepoScope(client);
-  const principal = { id: "misroute-nuryel-findings-test", kind: "agent", grants: [repo] };
-
-  const result = await client.callTool({
-    name: "nuryel_write",
-    arguments: {
-      principal,
-      scope: repo,
-      facet: "findings",
-      record: {
-        title: "worktree-only.ts is missing null checks",
-        observation: "audited during work entirely in the linked worktree",
-        affected_files: ["worktree-only.ts"],
-      },
-      idempotency_key: "nuryel-misroute-findings-1",
-      // Deliberately no `cwd`.
-    },
-  }) as { content: Array<{ text: string }>; isError?: boolean };
-
-  assert.equal(result.isError, true, "should refuse rather than silently commit the finding against the wrong root");
-  const text = result.content.map((c) => c.text ?? "").join("\n");
-  assert.ok(text.includes(fixture.worktree), `refusal should name the likely-correct worktree: ${text}`);
-  assert.ok(/cwd/.test(text), `refusal should tell the caller to pass cwd: ${text}`);
-  assert.equal(git(fixture.root, "log", "-1", "--format=%s"), "fixture", "primary checkout must have no new commit");
-});
-
-test("nuryel_write (bugs facet) is refused when affected_files only exist in a linked worktree (issue #77)", async (t) => {
-  const fixture = repoWithWorktree();
-  writeFileSync(join(fixture.worktree, "worktree-only.ts"), "export const onlyHere = 1;\n");
-  const priorTools = process.env.HUNCH_MCP_TOOLS;
-  process.env.HUNCH_MCP_TOOLS = "all";
-  const control = buildServerWithRootControl(fixture.root);
-  const client = new Client({ name: "misroute-guard-nuryel-bugs-test", version: "0.0.0" });
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  t.after(async () => {
-    await client.close().catch(() => {});
-    await control.server.close().catch(() => {});
-    fixture.cleanup();
-    if (priorTools === undefined) delete process.env.HUNCH_MCP_TOOLS; else process.env.HUNCH_MCP_TOOLS = priorTools;
-  });
-
-  await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
-  const repo = await nuryelRepoScope(client);
-  const principal = { id: "misroute-nuryel-bugs-test", kind: "agent", grants: [repo] };
-
-  const result = await client.callTool({
-    name: "nuryel_write",
-    arguments: {
-      principal,
-      scope: repo,
-      facet: "bugs",
-      record: {
-        title: "worktree-only.ts throws on null input",
-        symptom: "observed during work entirely in the linked worktree",
-        affected_files: ["worktree-only.ts"],
-      },
-      idempotency_key: "nuryel-misroute-bugs-1",
-      // Deliberately no `cwd`.
-    },
-  }) as { content: Array<{ text: string }>; isError?: boolean };
-
-  assert.equal(result.isError, true, "should refuse rather than silently commit the bug against the wrong root");
-  const text = result.content.map((c) => c.text ?? "").join("\n");
-  assert.ok(text.includes(fixture.worktree), `refusal should name the likely-correct worktree: ${text}`);
-  assert.ok(/cwd/.test(text), `refusal should tell the caller to pass cwd: ${text}`);
-  assert.equal(git(fixture.root, "log", "-1", "--format=%s"), "fixture", "primary checkout must have no new commit");
-});
-
 test("nuryel_write with affected_files that exist nowhere still succeeds (no false positive, issue #77)", async (t) => {
   const fixture = repoWithWorktree();
-  const priorTools = process.env.HUNCH_MCP_TOOLS;
-  process.env.HUNCH_MCP_TOOLS = "all";
-  const control = buildServerWithRootControl(fixture.root);
-  const client = new Client({ name: "misroute-guard-nuryel-negative-test", version: "0.0.0" });
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  t.after(async () => {
-    await client.close().catch(() => {});
-    await control.server.close().catch(() => {});
-    fixture.cleanup();
-    if (priorTools === undefined) delete process.env.HUNCH_MCP_TOOLS; else process.env.HUNCH_MCP_TOOLS = priorTools;
-  });
-
-  await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
-  const repo = await nuryelRepoScope(client);
+  const { client, repo } = await nuryelClient(t, fixture.root, fixture.cleanup);
   const principal = { id: "misroute-nuryel-negative-test", kind: "agent", grants: [repo] };
 
   const result = await client.callTool({
@@ -1882,23 +1789,10 @@ test("nuryel_write with affected_files that exist nowhere still succeeds (no fal
 test("nuryel_write is unaffected by the misroute guard for facets with no file-evidence field, e.g. receipts (issue #77)", async (t) => {
   const fixture = repoWithWorktree();
   writeFileSync(join(fixture.worktree, "worktree-only.ts"), "export const onlyHere = 1;\n");
-  const priorTools = process.env.HUNCH_MCP_TOOLS;
-  process.env.HUNCH_MCP_TOOLS = "all";
-  const control = buildServerWithRootControl(fixture.root);
-  const client = new Client({ name: "misroute-guard-nuryel-receipts-test", version: "0.0.0" });
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  t.after(async () => {
-    await client.close().catch(() => {});
-    await control.server.close().catch(() => {});
-    fixture.cleanup();
-    if (priorTools === undefined) delete process.env.HUNCH_MCP_TOOLS; else process.env.HUNCH_MCP_TOOLS = priorTools;
-  });
-
-  await Promise.all([control.server.connect(serverTransport), client.connect(clientTransport)]);
-  const repo = await nuryelRepoScope(client);
+  const { client, repo } = await nuryelClient(t, fixture.root, fixture.cleanup);
   const principal = { id: "misroute-nuryel-receipts-test", kind: "agent", grants: [repo] };
 
-  // A receipts record carries no related_files/affected_files field at all — even
+  // A receipts record carries no related_files/affected_files/scope field at all — even
   // though "worktree-only.ts" only exists in the linked worktree, there is no file
   // evidence for the guard to read here, so it must stay silent (issue #77: don't
   // invent a field the facet doesn't have).
