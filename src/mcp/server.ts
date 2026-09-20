@@ -543,6 +543,46 @@ function existsUnder(dir: string, f: string, worktrees: readonly string[]): bool
   return isFile(join(dir, f));
 }
 
+/** True when `f` names evidence the disambiguation in `guardEvidence` can trust
+ *  as real: an existing file on disk (absolute, or relative under `root`), or —
+ *  for a relative entry only — one git already knows was tracked at `root`
+ *  (covers a since-deleted/renamed file, which has nothing left on disk to
+ *  check). */
+function namesRealEvidence(root: string, f: string): boolean {
+  return isFile(isAbsolute(f) ? f : join(root, f)) || (!isAbsolute(f) && pathKnownToHistory(root, f));
+}
+
+/** Normalizes file evidence for the misroute guard specifically. A literal
+ *  backslash byte is a legal POSIX filename character, not a path separator,
+ *  so blindly running every entry through `toPosixTarget` before
+ *  `misroutedWorktreeCandidates` sees it can rewrite a real file's name into a
+ *  fake extra path segment. The string alone can't disambiguate "Windows
+ *  separator" from "literal POSIX byte", so this asks the filesystem AND git
+ *  history instead (`namesRealEvidence`): when the RAW, un-normalized entry
+ *  already names a real file, or is a relative path git knows was tracked at
+ *  `root` (possibly since deleted/renamed), that settles it — the byte was
+ *  literal — and the raw string is kept as-is, bypassing `toPosixTarget`
+ *  entirely. Otherwise it normalizes through `toPosixTarget` exactly as
+ *  before, preserving the legitimate Windows-separator case (a Windows-style
+ *  path can never collide with a real or once-tracked POSIX file, since `\`
+ *  cannot appear in a Windows filename to begin with). Used at every
+ *  misroute-guard call site (hunch_record_decision/_correction/_finding, and
+ *  nuryel_write's decisions/findings/bugs/constraints facets via
+ *  fileEvidenceFor) — the stored related_files/affected_files fields
+ *  themselves are still normalized separately (tracked in #93).
+ *
+ *  Known accepted gap: a contrived collision — a file legitimately deleted
+ *  from `root`'s history AND a genuine Windows-style path meaning something
+ *  else present in a sibling worktree — resolves in favor of history and
+ *  fails OPEN (no misroute reported), the same fail-open tradeoff
+ *  `misroutedWorktreeCandidates` itself already documents elsewhere. */
+export function guardEvidence(root: string, files: readonly string[]): string[] {
+  return files.map((f) => {
+    const normalized = toPosixTarget(f);
+    return f && normalized !== f && namesRealEvidence(root, f) ? f : normalized;
+  });
+}
+
 /** Shared misroute-guard refusal for the auto-committing write tools that name
  *  files (hunch_record_decision, hunch_record_correction, hunch_record_finding,
  *  and nuryel_write's decisions/findings/bugs/constraints facets via
@@ -2171,7 +2211,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
     },
     async ({ decision, capture_token, task_id }): Promise<ToolResult> => {
       try {
-        const misroute = misrouteGuard(root, `"${decision.title.slice(0, 60)}"`, (decision.related_files ?? []).map(toPosixTarget));
+        const misroute = misrouteGuard(root, `"${decision.title.slice(0, 60)}"`, guardEvidence(root, decision.related_files ?? []));
         if (misroute) return misroute;
         // Commit-keyed on the CANONICAL full sha (resolved via git rev-parse), so a
         // human passing the short sha they see in `commit` produces the SAME id as
@@ -2427,7 +2467,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         // Same misroute guard as hunch_record_decision (issue #54, extended here by #62):
         // a scope_hint_file that exists in a sibling linked worktree but not here is very
         // likely a subagent that forgot cwd, about to silently scope-and-commit a
-        // constraint against the wrong checkout. Passed RAW (posix-normalized only) —
+        // constraint against the wrong checkout. Passed RAW (guardEvidence-normalized) —
         // misroutedWorktreeCandidates understands absolute paths itself (see its doc
         // comment). The constraint's own scope glob below is a DIFFERENT job, still
         // relativized against root by buildCorrectionConstraint internally — a sibling
@@ -2436,7 +2476,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         const correctionMisroute = misrouteGuard(
           root,
           `correction "${input.rule.slice(0, 60)}"`,
-          input.scope_hint_file ? [toPosixTarget(input.scope_hint_file)] : [],
+          input.scope_hint_file ? guardEvidence(root, [input.scope_hint_file]) : [],
         );
         if (correctionMisroute) return correctionMisroute;
         // root: relativizes an ABSOLUTE scope_hint_file. Agents naturally send absolute
@@ -2539,7 +2579,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         if (!finding.title.trim()) return invalid("title is required.");
         if (!finding.observation.trim()) return invalid("observation is required — state what you saw.");
         // Same misroute guard as hunch_record_decision (issue #54, extended here by #62).
-        const findingMisroute = misrouteGuard(root, `finding "${finding.title.slice(0, 60)}"`, (finding.affected_files ?? []).map(toPosixTarget));
+        const findingMisroute = misrouteGuard(root, `finding "${finding.title.slice(0, 60)}"`, guardEvidence(root, finding.affected_files ?? []));
         if (findingMisroute) return findingMisroute;
         const id = findingId(finding.title);
         const home = store.captureHome(!!finding.private);
@@ -2698,7 +2738,7 @@ export function buildServerWithRootControl(initialRoot: string, options: RootCon
         const misroute = misrouteGuard(
           root,
           nuryelWriteSubject(input.facet, input.record),
-          fileEvidenceFor(input.facet, input.record).map(toPosixTarget),
+          guardEvidence(root, fileEvidenceFor(input.facet, input.record)),
           "Also move `scope` (and `principal.grants`) to the repository partition for that worktree — nuryel_write's scope does not follow `cwd` automatically.",
         );
         if (misroute) return misroute;

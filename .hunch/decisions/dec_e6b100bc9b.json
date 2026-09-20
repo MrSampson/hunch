@@ -1,0 +1,80 @@
+{
+  "id": "dec_e6b100bc9b",
+  "title": "Skip disk/history validation when path normalization is a no-op",
+  "topic": "guard-evidence-path-disambiguation",
+  "status": "accepted",
+  "context": "The guard needs to disambiguate whether a backslash in a path entry is a literal POSIX filename character or a Windows path separator, using a disk/history check. But when a path has no backslash, toPosixTarget() doesn't change it, making the expensive check redundant. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.); con_e04226bd05 (The MCP server must stay client-agnostic: all assistants point to the same .hunch/ graph; no Claude-only behavior in the server).",
+  "decision": "Only call namesRealEvidence (disk/history lookup) when toPosixTarget(f) actually changes the string. For entries with no backslashes, skip the validation entirely since normalization is already a no-op.",
+  "consequences": [
+    "Eliminates unnecessary filesystem and git history checks for paths that don't require normalization",
+    "Accepts an edge case gap: a file deleted from history that coincidentally matches a Windows-style path in a sibling worktree now fails open (no misroute reported) instead of being disambiguated",
+    "Identical behavior for all inputs that actually need normalization—optimization is purely internal"
+  ],
+  "alternatives_rejected": [
+    "Always perform namesRealEvidence check regardless (original code)—wastes I/O when normalization changes nothing",
+    "Remove the check entirely—loses disambiguation capability for genuine Windows-style paths"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Always perform namesRealEvidence check regardless (original code)—wastes I/O when normalization changes nothing",
+      "scope": [
+        "src/mcp/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Remove the check entirely—loses disambiguation capability for genuine Windows-style paths",
+      "scope": [
+        "src/mcp/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_dfa5b5acde",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/mcp/server.ts"
+  ],
+  "supersedes": "dec_dd3bb04286",
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "87810475",
+  "valid_from": "2026-09-19T17:52:44+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:87810475",
+      "synth:provider=claude-cli",
+      "branch:80-guard-backslash-byte",
+      "src/mcp/server.ts"
+    ],
+    "last_verified": "2026-09-19T15:53:02.954Z"
+  },
+  "date": "2026-09-19T17:52:44+02:00"
+}
