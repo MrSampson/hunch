@@ -1,0 +1,107 @@
+{
+  "id": "dec_8febe204ef",
+  "title": "Anchor shared hooks to main worktree, not ephemeral install source",
+  "topic": null,
+  "status": "accepted",
+  "context": "Hooks are stored in .git/hooks and shared across all linked worktrees of a repo, but the `root` parameter points only to whichever specific worktree ran the install. Baking a linked worktree's path into a shared hook breaks that hook for all other worktrees the moment the installing worktree is deleted via `git worktree remove`. This is the same invisible-staleness failure #74 exists to close, just moved one step further. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.).",
+  "decision": "selfBuildInvocation now resolves paths against mainWorktreeRoot(root) instead of root itself. The hook file points to the canonical, permanent main worktree's entry points, not the ephemeral linked worktree's path. Also added existence checks (entry file + tsx binary) to fall back gracefully for sparse/published-tarball checkouts that ship no src/. Changed invocation pattern from `npx tsx` to `process.execPath + tsx/dist/cli.mjs` for PATH robustness in non-interactive shells.",
+  "consequences": [
+    "Hooks installed from linked worktrees now remain valid for all other worktrees after the installing worktree is deleted",
+    "Sparse checkouts and published tarball distributions correctly fall back to the passed invocation instead of silently no-opping",
+    "Hook invocation no longer relies on nvm's npx/tsx, working in GUI git clients and non-interactive shells"
+  ],
+  "alternatives_rejected": [
+    "Keep resolving against the installing worktree's root — breaks hooks in other worktrees on deletion",
+    "Assume entry and tsx binary exist — reintroduces invisible-staleness failure for dist-only checkouts",
+    "Use bare `npx tsx` invocation — fails in environments without nvm on PATH"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Keep resolving against the installing worktree's root — breaks hooks in other worktrees on deletion",
+      "scope": [
+        "src/integrations/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Assume entry and tsx binary exist — reintroduces invisible-staleness failure for dist-only checkouts",
+      "scope": [
+        "src/integrations/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [
+          "tsx"
+        ],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Use bare `npx tsx` invocation — fails in environments without nvm on PATH",
+      "scope": [
+        "src/integrations/**",
+        "test/**"
+      ],
+      "forbids": {
+        "deps": [
+          "tsx"
+        ],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_863ac67d4a",
+    "cmp_a94a8fe5cc",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/integrations/hooks.ts",
+    "test/hooks.test.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "7871fb6e",
+  "valid_from": "2026-09-19T17:21:38+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:7871fb6e",
+      "synth:provider=claude-cli",
+      "branch:74-post-commit-hook-in-tree-build",
+      "src/integrations/hooks.ts",
+      "test/hooks.test.ts"
+    ],
+    "last_verified": "2026-09-19T15:21:58.413Z"
+  },
+  "date": "2026-09-19T17:21:38+02:00"
+}
