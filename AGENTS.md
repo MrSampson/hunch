@@ -15,7 +15,7 @@ This repo has **Hunch** — a curated graph of *why* the code is the way it is (
 - `hunch_workspaces(view?)` — which worktrees and branches are open on which machine, what is merged and deletable (read-only; this machine live, others from memory). Call it instead of `git branch` / `git worktree list`; never delete on its say-so.
 - `hunch_runbook(task)` — the proven steps for a recurring task, before re-deriving them.
 - `hunch_escalations()` — the decisions only the HUMAN can make (including one exact imported ADR at a time, topic conflicts, and policy calls). Normally empty; when it isn't, ASK the user inline — an entry is a question, silence is never approval. Apply an ADR answer only through `hunch_review_imported_adr` with its printed source and review hashes.
-- `hunch now` (CLI) — recent decisions + the live roadmap; `hunch log` — the memory-move timeline (every capture/adopt/supersede/prune/repair, each revertable).
+- `hunch now` (CLI) — recent decisions + the live roadmap; `hunch log` — the memory-move timeline (every capture/adopt/supersede/retire/prune/repair, each revertable).
 
 **Before designing / choosing an approach:**
 - `hunch_why(target)` — why a file/symbol is shaped this way (decisions, bugs, constraints) — including what was already REJECTED.

@@ -29,7 +29,7 @@ A source-control-style view of everything Hunch does:
   advisory or blocking, your username recorded as the authority); active rules carry audited
   **Demote / Withdraw / Retire**. The full authority lifecycle, one explicit human click per
   transition.
-- **Memory timeline** — every move Hunch made: ✚ capture, ✓ adopt, ↻ supersede, ✗ prune,
+- **Memory timeline** — every move Hunch made: ✚ capture, ✓ adopt, ↻ supersede, ⊘ retire, ✗ prune,
   🔧 repair. Click a move for its diff; right-click to revert it locally (never pushed).
 - **Title actions** — 🛡 Strictness (advisory ↔ strict gate), Sync now, Adopt drafts, and
   **Approve-to-push**: memory auto-commits locally; publishing it to your remote is deliberately

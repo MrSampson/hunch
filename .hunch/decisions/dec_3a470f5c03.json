@@ -1,0 +1,124 @@
+{
+  "id": "dec_3a470f5c03",
+  "title": "Deterministic commit subject; move --reason to body to prevent misclassification",
+  "topic": null,
+  "status": "accepted",
+  "context": "The retire-constraint CLI was interpolating user-provided --reason text directly into the commit SUBJECT line. Hunch log's classify() function uses regex patterns on subjects to categorize timeline entries (matching keywords like 'supersede', 'repair', 'adopt'). A reason like 'superseded by a stricter rule' would accidentally trigger the supersede pattern, misclassifying retirements as decision supersessions instead of constraint retirements. Touches invariant(s): con_039cee7367 (Memory hygiene is the agent's job, done without waiting for the human: accept shipped roadmap proposals, settle provenance-repair escalations (apply the true commit or drop), re-anchor or stale findings, and land the resulting capture commits through a PR. Only decisions that need genuine product judgment are queued for the human.); con_7217ab24ab (Regression guard: \"Flaky test failure under parallelism: native tree-sitter module resolution race on Windows\" must not recur.); con_902759b3dc (All JSON writes to .hunch/ must be atomic (temp-file + rename) so an interrupted write can never truncate the index); con_a87360128b (Semantic vectors are a derived layer in SQLite, never the source of truth; reconcile by content hash on reindex).",
+  "decision": "Make commit SUBJECT always deterministic: `hunch: retire constraint <id>`. Move optional --reason to commit BODY (git's %s log format only reads the first line, so body is safe from regex classification). Added 'retire' as an explicit MemoryMoveKind checked first in classify(), so it categorizes distinctly and isn't shadowed by rival keywords.",
+  "consequences": [
+    "Commit subjects are now guaranteed deterministic and cannot accidentally trigger keywords in classification",
+    "The reason is preserved in commit history (in body) and visible to users, but won't interfere with timeline categorization",
+    "Retire moves now have their own UI icon (⊘ in CLI, circle-slash in VS Code) instead of falling through to 'edit'",
+    "All callers must be aware that reason text no longer appears in the subject line"
+  ],
+  "alternatives_rejected": [
+    "Escape or sanitize the reason in the subject (brittle; any new keyword in classify() could break again)",
+    "Store the reason as structured metadata in the commit message format (overengineered for simple case)",
+    "Drop the reason silently when auto-commit is off (instead chose to warn the user about the loss)"
+  ],
+  "rejected_tripwires": [
+    {
+      "alternative": "Escape or sanitize the reason in the subject (brittle; any new keyword in classify() could break again)",
+      "scope": [
+        "src/cli/**",
+        "src/core/**",
+        "src/store/**",
+        "test/**",
+        "vscode-extension/src/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Store the reason as structured metadata in the commit message format (overengineered for simple case)",
+      "scope": [
+        "src/cli/**",
+        "src/core/**",
+        "src/store/**",
+        "test/**",
+        "vscode-extension/src/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    },
+    {
+      "alternative": "Drop the reason silently when auto-commit is off (instead chose to warn the user about the loss)",
+      "scope": [
+        "src/cli/**",
+        "src/core/**",
+        "src/store/**",
+        "test/**",
+        "vscode-extension/src/**"
+      ],
+      "forbids": {
+        "deps": [],
+        "symbols": [],
+        "patterns": []
+      },
+      "provenance": {
+        "source": "llm_draft",
+        "confidence": 0.5,
+        "evidence": []
+      }
+    }
+  ],
+  "related_components": [
+    "cmp_50037f41a9",
+    "cmp_555e43ab1a",
+    "cmp_a94a8fe5cc",
+    "cmp_b256a6aed0",
+    "cmp_cdfb395bb7",
+    "cmp_f27fede222"
+  ],
+  "related_files": [
+    "src/cli/index.ts",
+    "src/core/memorylog.ts",
+    "src/store/hunchStore.ts",
+    "test/memorylog.test.ts",
+    "test/retire-constraint-cli.test.ts",
+    "vscode-extension/src/memoryView.ts"
+  ],
+  "supersedes": null,
+  "superseded_by": null,
+  "caused_by_bug": null,
+  "commit": "59ed5cb6",
+  "valid_from": "2026-09-19T17:26:53+02:00",
+  "valid_to": null,
+  "retired": {
+    "symbols": [],
+    "deps": []
+  },
+  "provenance": {
+    "source": "llm_draft",
+    "confidence": 0.65,
+    "evidence": [
+      "commit:59ed5cb6",
+      "synth:provider=claude-cli",
+      "branch:27-retire-constraint-cli",
+      "src/cli/index.ts",
+      "src/core/memorylog.ts",
+      "src/store/hunchStore.ts",
+      "test/memorylog.test.ts",
+      "test/retire-constraint-cli.test.ts",
+      "vscode-extension/src/memoryView.ts"
+    ],
+    "last_verified": "2026-09-19T15:27:12.084Z"
+  },
+  "date": "2026-09-19T17:26:53+02:00"
+}
